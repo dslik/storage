@@ -589,7 +589,7 @@ A complete submission for one workload (3D-Unet, ResNet, or Cosmoflow) contains 
 
 11.3.2.  Within the top-level directory of the submission structure there must be a directory named "closed" and/or one named "open", and nothing more.
 
-11.3.3.  Within the Closed or Open directories there must be a single directory whose name if the name of the submitter (the same as the top-level directory).
+11.3.3.  Within the Closed or Open directories there must be a single directory whose name is the name of the submitter (the same as the top-level directory).
 
 11.3.4.  Within the submitter directory mentioned just above, there must be exactly three directories: "code", "results", and "systems".
 
@@ -597,13 +597,19 @@ A complete submission for one workload (3D-Unet, ResNet, or Cosmoflow) contains 
 If this is in the "open" hierarchy, any modifications made to the benchmark code must be included here, and if this is in the "closed" hierarchy, there must be no changes to the benchmark code.
 Note that in both cases this must be the code that was actually run to generate those results.
 
-11.3.6.  The "results" directory must include one or more directories that are the names of the "systems under test".  Eg: a system name could be "Big_and_Fast_4000".
+11.3.6.  The "results" directory, whether it is wihin the "closed' or "open" hierarchies, must include one or more directories that are the names of the "systems under test".  Eg: a system name could be "Big_and_Fast_4000".
 This name can be anything the submitter wants, it is just a name to both idenfity the set of results that were collected from a given
 configuration of storage system and to link together those results with the .pdf and .yaml files that describe the system-under-test.
 Note that only results from a given set of configuration parameters and hardware and software components of the system-under-test can be part of a given "system name",
 any change to the configuration parameters or hardware or software will force the results that come from those runs to be held in a different "system name".
 
-11.3.7.  The "systems" directory must contain two files for each "system name", a .yaml file and a .pdf file.  Each of those files must be named with the "system name".
+11.3.7.  Within a "system name" directory in the "results" directory, there must be one or both of the following directories, and nothing else: "training", and/or "checkpointing".
+
+11.3.8.  Within the "training" directory, there must be one or more of the following directories, and nothing else: "unet3d", "resnet50" and/or "cosmoflow".
+
+11.3.9.  Within the "checkpointing" directory, there must be one or more of the following directories, and nothing else: "llama3-8b", "llama3-70b", "llama3-405b", and/or "llama3-1t".
+
+11.3.10.  The "systems" directory must contain two files for each "system name", a .yaml file and a .pdf file, and nothing more.  Each of those files must be named with the "system name".
 Eg: for a system-under-test named "Big_and_Fast_4000", there must be a "Big_and_Fast_4000.yaml" and a "Big_and_Fast_4000.pdf" file.
 
 
