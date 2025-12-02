@@ -553,6 +553,8 @@ OPEN division benchmarks must be referred to using the benchmark name plus the t
 
 ## 11. Submission
 
+11.1.  
+
 A successful run result consists of a directory tree structure containing the set of files produced by the benchmark as the result, plus the manually created SystemDescription files (both PDF and yaml) that describe the storage solution under test and the environment the test was run in.
 
 The whole package must be uploaded to MLCommons via the UI provided to submitters.
@@ -585,34 +587,67 @@ A complete submission for one workload (3D-Unet, ResNet, or Cosmoflow) contains 
 
 ### 11.3 Directory Structure for CLOSED or OPEN Submissions
 
+The output directory hierarchy and the files that populate it should be automatically created and filled in by the `mplstorage` command,
+but it is documented here to ensure that the `mlpstorage` command the the submission validation checker command are operating upon a single definition for that structure.
+
+The submission validation checker should check that the tested directory hierarachy matches the below requirements and output messages for all cases where it does not match.
+The tool should make it's best effort to continue testing all the other aspects of the directory hierarchy after any given failure.
+If the tested directory hierarchy does not meet all of the below requirements, then it should be labelled as invalid and tghe validation check should fail.
+
 11.3.1.  The submission structure must start from a single directory whose name is the name of the submitter.
 
-11.3.2.  Within the top-level directory of the submission structure there must be a directory named "closed" and/or one named "open", and nothing more.
+11.3.2.  Within the top-level directory of the submission structure there must be a directory named "closed" and/or one named "open", and nothing more.  These names are case-sensitive.
 
-11.3.3.  Within the Closed or Open directories there must be a single directory whose name is the name of the submitter (the same as the top-level directory).
+11.3.3.  The "open" directory hierarchy should be constructed identically to the "closed" directory hierarchy describe just below.
 
-11.3.4.  Within the submitter directory mentioned just above, there must be exactly three directories: "code", "results", and "systems".
+11.3.4.  Within the "closed" directory there must be a single directory whose name is the name of the submitter (the same as the top-level directory).
 
-11.3.5.  The "code" directory must include a complete copy of the MLPerf Storage github repo that was used to run the test that resulted in the "results" directory's contents.
+11.3.5.  Within the submitter directory mentioned just above, there must be exactly three directories: "code", "results", and "systems".  These names are case-sensitive.
+
+11.3.6.  The "code" directory must include a complete copy of the MLPerf Storage github repo that was used to run the test that resulted in the "results" directory's contents.
 If this is in the "open" hierarchy, any modifications made to the benchmark code must be included here, and if this is in the "closed" hierarchy, there must be no changes to the benchmark code.
 Note that in both cases this must be the code that was actually run to generate those results.
 
-11.3.6.  The "results" directory, whether it is wihin the "closed' or "open" hierarchies, must include one or more directories that are the names of the "systems under test".  Eg: a system name could be "Big_and_Fast_4000".
+11.3.7.  The "systems" directory must contain two files for each "system name", a .yaml file and a .pdf file, and nothing more.  Each of those files must be named with the "system name".
+Eg: for a system-under-test named "Big_and_Fast_4000_buffered", there must be a "Big_and_Fast_4000_buffered.yaml" and a "Big_and_Fast_4000_buffered.pdf" file.  These names are case-sensitive.
+
+11.3.8.  The "results" directory, whether it is within the "closed' or "open" hierarchies, must include one or more directories that are the names of the systems-under-test.  Eg: a system name could be "Big_and_Fast_4000_buffered".
 This name can be anything the submitter wants, it is just a name to both idenfity the set of results that were collected from a given
 configuration of storage system and to link together those results with the .pdf and .yaml files that describe the system-under-test.
-Note that only results from a given set of configuration parameters and hardware and software components of the system-under-test can be part of a given "system name",
-any change to the configuration parameters or hardware or software will force the results that come from those runs to be held in a different "system name".
 
-11.3.7.  Within a "system name" directory in the "results" directory, there must be one or both of the following directories, and nothing else: "training", and/or "checkpointing".
+11.3.9. All the configuration parameters and hardware and software components of the system-under-test that are part of a given *system name* must be identical.  Any changes to those configuration parameters or hardware or software must be submitted as a separate *system name*.  These names are case-sensitive.
 
-11.3.8.  Within the "training" directory, there must be one or more of the following directories, and nothing else: "unet3d", "resnet50" and/or "cosmoflow".
+11.3.10.  Within a *system name* directory in the "results" directory, there must be one or both of the following directories, and nothing else: "training", and/or "checkpointing".  These names are case-sensitive.
 
-11.3.9.  Within the "checkpointing" directory, there must be one or more of the following directories, and nothing else: "llama3-8b", "llama3-70b", "llama3-405b", and/or "llama3-1t".
+11.3.11.  Within the "training" directory, there must be one or more of the following *workload directories*, and nothing else: "unet3d", "resnet50" and/or "cosmoflow".  These names are case-sensitive.
 
-11.3.10.  The "systems" directory must contain two files for each "system name", a .yaml file and a .pdf file, and nothing more.  Each of those files must be named with the "system name".
-Eg: for a system-under-test named "Big_and_Fast_4000", there must be a "Big_and_Fast_4000.yaml" and a "Big_and_Fast_4000.pdf" file.
+11.3.12.  Within the *workload directories* in the "training" hierarchy, there must exist *phase directories* named "datagen" and "run", and nothing else.  These names are case-sensitive.
 
+11.3.13.  Within the "datagen" *phase directory* within the "training" directory hierarchy, there must be exactly one *timestamp directory* named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
 
+11.3.14.  Within the *timestamp directory* within the "datagen" *phase*, there must exist the following files: "training_datagen.stdout.log", "training_datagen.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
+
+11.3.15.  The "dlio_config" subdirectory in each *timestamp directory*  must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
+
+11.3.16.  Within the "run" *phase directory* within the "training" directory hierarchy, there must be one "results.json" file.  This name is case-sensitive.
+
+11.3.17.  Within the "run" *phase directory* within the "training" directory hierarchy, there must also be exactly 5 subdirectories named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
+
+11.3.18.  Within each *timestamp directory* within the "run" *phase*, there must exist the following files: "training_run.stdout.log", "training_run.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
+
+11.3.19.  The "dlio_config" subdirectory in each *timestamp directory* must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
+
+11.3.20.  Within the "checkpointing" directory, there must be one or more of the following *workload directories*, and nothing else: "llama3-8b", "llama3-70b", "llama3-405b", and/or "llama3-1t".  These names are case-sensitive.
+
+11.3.21.  Within the *workload directories* within the "checkpointing" directory hierarchy, there must be one "results.json" file.  This name is case-sensitive.
+
+11.3.22.  Within the *workload directories* within the "checkpointing" directory hierarchy, there must also be exactly ten *timestamp directories* named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
+
+11.3.23.  Within the *timestamp directories* within the "checkpointing" directory hierarchy, there must exist the following files: "checkpointing_run.stdout.log", "checkpointing_run.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
+
+11.3.24.  The "dlio_config" subdirectory in each *timestamp directory* must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
+
+11.3.25.  Pictorially, here is what this looks like:
 ```
 root_folder (or any name you prefer)
 ├── Closed
@@ -624,65 +659,65 @@ root_folder (or any name you prefer)
 │	  	│	 	│	├── unet3d
 │	  	│		│	│	├── datagen
 │	  	│		│	│	│	└── YYYYMMDD_HHmmss
-│	  	│		│	│	│		└── dlio_log_files
+│	  	│		│	│	│		└── dlio_config
 │	  	│		│	│	└── run
 │	  	│		│	│		├──results.json
 │	  	│		│	│		├── YYYYMMDD_HHmmss
-│	  	│		│	│		│	└── dlio_log_files 
+│	  	│		│	│		│	└── dlio_config 
 │	  	│		│	│		... (5x Runs per Emulated Accelerator Type)
 │	  	│		│	│		└── YYYYMMDD_HHmmss
-│	  	│		│	│			└── dlio_log_files
+│	  	│		│	│			└── dlio_config
 │	  	│	 	│	├── resnet50
 │	  	│		│	│	├── datagen
 │	  	│		│	│	│	└── YYYYMMDD_HHmmss
-│	  	│		│	│	│		└── dlio_log_files
+│	  	│		│	│	│		└── dlio_config
 │	  	│		│	│	└── run
 │	  	│		│	│		├──results.json
 │	  	│		│	│		├── YYYYMMDD_HHmmss
-│	  	│		│	│		│	└── dlio_log_files 
+│	  	│		│	│		│	└── dlio_config 
 │	  	│		│	│		... (5x Runs per Emulated Accelerator Type)
 │	  	│		│	│		└── YYYYMMDD_HHmmss
-│	  	│		│	│			└── dlio_log_files
+│	  	│		│	│			└── dlio_config
 │	  	│	 	│	└── cosmoflow
 │	  	│		│	 	├── datagen
 │	  	│		│	 	│	└── YYYYMMDD_HHmmss
-│	  	│		│	 	│		└── dlio_log_files
+│	  	│		│	 	│		└── dlio_config
 │	  	│		│	 	└── run
 │	  	│		│			├──results.json
 │	  	│		│	 		├── YYYYMMDD_HHmmss
-│	  	│		│	 		│	└── dlio_log_files 
+│	  	│		│	 		│	└── dlio_config 
 │	  	│		│	 		... (5x Runs per Emulated Accelerator Type)
 │	  	│		│	 		└── YYYYMMDD_HHmmss
-│	  	│		│	 			└── dlio_log_files
+│	  	│		│	 			└── dlio_config
 │	  	│	 	└── checkpointing
 │	  	│	 		├── llama3-8b
 │	  	│			│	├──results.json
 │	  	│			│	├── YYYYMMDD_HHmmss
-│	  	│			│	│	└── dlio_log_files 
+│	  	│			│	│	└── dlio_config 
 │	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
 │	  	│			│	└── YYYYMMDD_HHmmss
-│	  	│			│		└── dlio_log_files
+│	  	│			│		└── dlio_config
 │	  	│	 		├── llama3-70b
 │	  	│			│	├──results.json
 │	  	│			│	├── YYYYMMDD_HHmmss
-│	  	│			│	│	└── dlio_log_files 
+│	  	│			│	│	└── dlio_config 
 │	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
 │	  	│			│	└── YYYYMMDD_HHmmss
-│	  	│			│		└── dlio_log_files
+│	  	│			│		└── dlio_config
 │	  	│	 		├── llama3-405b
 │	  	│			│	├──results.json
 │	  	│			│	├── YYYYMMDD_HHmmss
-│	  	│			│	│	└── dlio_log_files 
+│	  	│			│	│	└── dlio_config 
 │	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
 │	  	│			│	└── YYYYMMDD_HHmmss
-│	  	│			│		└── dlio_log_files
+│	  	│			│		└── dlio_config
 │	  	│	 		└── llama3-1t
 │	  	│				├──results.json
 │	  	│			 	├── YYYYMMDD_HHmmss
-│	  	│			 	│	└── dlio_log_files 
+│	  	│			 	│	└── dlio_config 
 │	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
 │	  	│				└── YYYYMMDD_HHmmss
-│	  	│			 		└── dlio_log_files
+│	  	│			 		└── dlio_config
 │	  	└── systems
 │	  		├──system-name-1.yaml
 │	  		├──system-name-1.pdf
@@ -698,116 +733,92 @@ root_folder (or any name you prefer)
 		│	 	│	├── unet3d
 		│		│	│	├── datagen
 		│		│	│	│	└── YYYYMMDD_HHmmss
-		│		│	│	│		└── dlio_log_files
+		│		│	│	│		└── dlio_config
 		│		│	│	└── run
 		│		│	|		├──results.json
 		│		│	│		├── YYYYMMDD_HHmmss
-		│		│	│		│	└── dlio_log_files 
+		│		│	│		│	└── dlio_config 
 		│		│	│		... (5x Runs per Emulated Accelerator Type)
 		│		│	│		└── YYYYMMDD_HHmmss
-		│		│	│			└── dlio_log_files
+		│		│	│			└── dlio_config
 		│	 	│	├── resnet50
 		│		│	│	├── datagen
 		│		│	│	│	└── YYYYMMDD_HHmmss
-		│		│	│	│		└── dlio_log_files
+		│		│	│	│		└── dlio_config
 		│		│	│	└── run
 		│		│	|		├──results.json
 		│		│	│		├── YYYYMMDD_HHmmss
-		│		│	│		│	└── dlio_log_files 
+		│		│	│		│	└── dlio_config 
 		│		│	│		... (5x Runs per Emulated Accelerator Type)
 		│		│	│		└── YYYYMMDD_HHmmss
-		│		│	│			└── dlio_log_files
+		│		│	│			└── dlio_config
 		│	 	│	└── cosmoflow
 		│		│	 	├── datagen
 		│		│	 	│	└── YYYYMMDD_HHmmss
-		│		│	 	│		└── dlio_log_files
+		│		│	 	│		└── dlio_config
 		│		│	 	└── run
 		│		│			├──results.json
 		│		│	 		├── YYYYMMDD_HHmmss
-		│		│	 		│	└── dlio_log_files 
+		│		│	 		│	└── dlio_config 
 		│		│	 		... (5x Runs per Emulated Accelerator Type)
 		│		│	 		└── YYYYMMDD_HHmmss
-		│		│	 			└── dlio_log_files
+		│		│	 			└── dlio_config
 		│	 	└── checkpointing
 		│	 		├── llama3-8b
 		│			|	├──results.json
 		│			│	├── YYYYMMDD_HHmmss
-		│			│	│	└── dlio_log_files 
+		│			│	│	└── dlio_config 
 		│			│	... (10x Runs for Read and Write. May be combined in a single run)
 		│			│	└── YYYYMMDD_HHmmss
-		│			│		└── dlio_log_files
+		│			│		└── dlio_config
 		│	 		├── llama3-70b
 		│			|	├──results.json
 		│			│	├── YYYYMMDD_HHmmss
-		│			│	│	└── dlio_log_files 
+		│			│	│	└── dlio_config 
 		│			│	... (10x Runs for Read and Write. May be combined in a single run)
 		│			│	└── YYYYMMDD_HHmmss
-		│			│		└── dlio_log_files
+		│			│		└── dlio_config
 		│	 		├── llama3-405b
 		│			|	├──results.json
 		│			│	├── YYYYMMDD_HHmmss
-		│			│	│	└── dlio_log_files 
+		│			│	│	└── dlio_config 
 		│			│	... (10x Runs for Read and Write. May be combined in a single run)
 		│			│	└── YYYYMMDD_HHmmss
-		│			│		└── dlio_log_files
+		│			│		└── dlio_config
 		│	 		└── llama3-1t
 		│				├──results.json
 		│			 	├── YYYYMMDD_HHmmss
-		│			 	│	└── dlio_log_files 
+		│			 	│	└── dlio_config 
 		│				... (10x Runs for Read and Write. May be combined in a single run)
 		│				└── YYYYMMDD_HHmmss
-		│			 		└── dlio_log_files
+		│			 		└── dlio_config
 		└── systems
 			├──system-name-1.yaml
 			├──system-name-1.pdf
 			├──system-name-2.yaml
 			└──system-name-2.pdf
 ```
-
-#### 11.3.1 DLIO Log Files Required
-The Training and Checkpointing workloads both use DLIO to execute the test. The following files are required for every run in a submission:
+11.3.26.  Since the "dlio_log" subdirectory has a similar structure in all cases, it is describe pictorially just below:
 ```
-YYYYMMDD_HHmmss
-├── [training|checkpointing]_[datagen|run].stdout.log   # Captured manually if running DLIO directly. mlpstorage captures this automatically
-├── [training|checkpointing]_[datagen|run].stderr.log   # Captured manually if running DLIO directly. mlpstorage captures this automatically
-├── *[output|per_epoch_stats|summary].json              # Captured manually if running DLIO directly. mlpstorage captures this automatically
-├── dlio.log
-└── dlio_config | .hydra_config                         # Running DLIO manually creates a ".hydra_config" directory. mlpstorage names this "dlio_config"
-   ├── config.yaml
-   ├── hydra.yaml
-   └── overrides.yaml
-
+└── YYYYMMDD_HHmmss
+    ├── [training|checkpointing]_[datagen|run].stdout.log
+    ├── [training|checkpointing]_[datagen|run].stderr.log
+    ├── *[output|per_epoch_stats|summary].json
+    ├── dlio.log
+    └── dlio_config
+        ├── config.yaml
+        ├── hydra.yaml
+        └── overrides.yaml
 ```
 
 ### 11.4 System Description
 
-The purpose of the system description is to provide sufficient detail on the storage system under test, and the ``host nodes`` running the test, plus the network connecting them, to enable full reproduction of the benchmark results by a third party. 
+The purpose of the two system description files is to provide sufficient detail on the storage system under test, and the ``host nodes`` running the test, plus the network connecting them, to enable full reproduction of the benchmark results by a third party. 
 
-Each submission must contain a ``<system-name>.yaml`` file and a ``<system-name>.pdf`` file.  If you submit more than one benchmark result, each submission must have a unique ``<system-name>.yaml`` file and a ``<system-name>.pdf`` file that documents the system under test and the environment that generated that result, including any configuration options in effect.
+The *SystemDescription.yaml* file is a machine-readable file providing additional detail on the system, while the *SystemDescription.pdf* complements that with diagrams and human-readable text.
 
-Note that, during the review period, submitters may be asked to include additional details in the yaml and pdf to enable reproducibility by a third party.
-
-#### 11.4.1 System Description YAML
-The system description yaml is a hybrid human-readable and machine-readable description of the total system under test. It contains fields for the System overall, the Nodes that make up the solution (clients and storage), as well as Power information of the nodes.
-
-An example can be found [HERE](https://github.com/mlcommons/storage/blob/main/system_configuration.yaml)
-
-The fields in the example document are required unless otherwise called out. Of particular note are the following:
-
- - **System.type**
-   - Can choose from local-storage, hyper-converged, shared-[file|block|object], cloud-deployment
- - **System.required_rack_units**
-   - This is the total rackspace required by the solution as deployed including any required backend networking (but not including the client network)
-
-
-#### 11.4.2 System Description PDF
-
-The goal of the pdf is to complement the YAML file, providing additional detail on the system to enable full reproduction by a third party. We encourage submitters to add details that are more easily captured by diagrams and text description, rather than a YAML.
-
-This file is should include everything that a third party would need in order to recreate the results in the submission, including product model numbers or hardware config details, unit counts of drives and/or components, system and network topologies, software used with version numbers, and any non-default configuration options used by any of the above.
-
-A great example of a system description pdf can be found [here](https://github.com/mlcommons/storage_results_v0.5/tree/main/closed/DDN/systems).
-
+11.4.1.  The *SystemDescription.yaml* file must be validated by a tool that will compare it's internal YAML structure to that of a schema, and output messages describing how that file does not match the schema.
+If any schema violations are found, then validation checker should continue looking for more mistakes but should overall fail the validation check.
 
 **Cover page**
 
