@@ -5,11 +5,11 @@
   - [1. Introduction](#1-introduction)
   - [2. Directory Structure for All Submissions](#2-directory-structure-for-all-submissions)
   - [3. Validating the Training Options](#3-validating-the-training-options)
-    - [3.1. Benchmark Dataset Generation Options](#32-benchmark-dataset-generation-options)
-    - [3.2. Benchmark Run Options](#33-benchmark-run-options)
+    - [3.1. Benchmark Dataset Generation Options](#31-benchmark-dataset-generation-options)
+    - [3.2. Benchmark Run Options](#32-benchmark-run-options)
   - [4. Validating the Checkpointing Options](#3-validating-the-checkpointing-options)
-    - [4.1. Benchmark Run Options](#42-benchmark-run-options)
-    - [4.2. Storage System Must Be Simultaneously R/W or Remappable](#43-storage-system-must-be-simultaneously-rw-or-remappable)
+    - [4.1. Benchmark Run Options](#41-benchmark-run-options)
+    - [4.2. Storage System Must Be Simultaneously R/W or Remappable](#42-storage-system-must-be-simultaneously-rw-or-remappable)
 
 
 # 1.  Introduction
