@@ -1,18 +1,21 @@
 # MLPerf™ Storage V2.0 Benchmark Validation
 ——————————————————————————————————————————
 
-- [MLPerf Storage Benchmark Submission Guidelines v2.0](#mlperf-storage-benchmark-submission-guidelines-v20)
+- [MLPerf Storage V2.0 Benchmark Validation](#mlperf-storage-v20-benchmark-validation)
   - [1. Introduction](#1-introduction)
   - [2. Directory Structure for All Submissions](#2-directory-structure-for-all-submissions)
-  - [3. Sanity Checking the Training Options](#3-sanity-checking-the-training-options)
+  - [3. Checking the Training Options](#3-checking-the-training-options)
     - [3.1. CLOSED Versus OPEN Options](#31-closed-versus-open-options)
     - [3.2. Benchmark Dataset Generation Options](#32-benchmark-dataset-generation-options)
     - [3.3. Benchmark Run Options](#33-benchmark-run-options)
-  - [4. Sanity Checking the Checkpointing Options](#3-sanity-checking-the-checkpointing-options)
+  - [4. Checking the Checkpointing Options](#3-checking-the-checkpointing-options)
     - [4.1. CLOSED Versus OPEN Options](#41-closed-versus-open-options)
     - [4.2. Benchmark Run Options](#42-benchmark-run-options)
+    - [4.3. Storage System Must Be Simultaneously R/W or Remappable](#43-storage-system-must-be-simultaneously-rw-or-remappable)
+  - [5. Validating The Phases](#5-validating-the-phases)
 
-# 1. Introduction
+
+# 1.  Introduction
 
 These are the requirements for the *submission validation checker* for version 2.0 of the MLPerf™ Storage benchmark,
 but since the `mlpstorage` tool will be responsible for generating the vast majority (if not all) of the contents of a submission, it is also a spec for what `mlpstorage` should generate.
@@ -25,7 +28,7 @@ Even if the structure of a submission package matches the spec, the options that
 so we need the *submission validation checker* to check for illegal/inapproriate option settings,
 and for semantic mismatches between different options that were used.
 
-# 2. Directory Structure for All Submissions
+# 2.  Directory Structure for All Submissions
 
 **2.1.**  The submission structure must start from a single directory whose name is the name of the submitter.  This can be any string, possibly including blanks.
 
@@ -244,11 +247,7 @@ root_folder (or any name you prefer)
         └── overrides.yaml
 ```
 
-# 3. Sanity Checking the Training Options
-
-dfg
-
-## 3.1.  CLOSED Versus OPEN Options
+# 3.  Checking the Training Options
 
 dfg
 
@@ -336,7 +335,7 @@ A small number of parameters can be configured in CLOSED submissions; listed in 
 | storage.storage_root         | The storage root directory                                                                                                          | ./       |
 | storage.storage_type         | The storage type                                                                                                                    | local_fs |
 
-In addition to what can be changed in the CLOSED submission, the following parameters can be changed in the benchmark.sh script:
+In addition to what can be changed in the CLOSED submission, the following parameters can be changed in OPEN submissions:
 
 | Parameter                    | Description                                | Default                                                             |
 |------------------------------|--------------------------------------------|---------------------------------------------------------------------|
@@ -349,7 +348,7 @@ In addition to what can be changed in the CLOSED submission, the following param
 | *Reader parameters*          |                                            |                                                                     |
 | reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow |
 
-# 4. Sanity Checking the Checkpointing Options
+# 4.  Checking the Checkpointing Options
 
 dgh
 
@@ -410,7 +409,7 @@ For OPEN submissions, the total number of processes may be increased in multiple
 
 ** By default, --num-checkpoints-read and --num-checkpoints-write are set to be 10. To perform write only, one has to turn off read by explicitly setting ``--num-checkpoints-read=0``; to perform read only, one has to turn off write by explicitly set  ``--num-checkpoints-write=0``
 
-### 4.2.  Storage System Must Be Simultaneously R/W or _Remappable_
+## 4.3.  Storage System Must Be Simultaneously R/W or _Remappable_
 
 For storage systems where 1 host has write access to a volume but all hosts have read access, the above process also satisfies the requirements so long as reads can be fulfilled immediately following a write.
 
