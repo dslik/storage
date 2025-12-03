@@ -4,11 +4,10 @@
 - [MLPerf Storage V2.0 Benchmark Validation](#mlperf-storage-v20-benchmark-validation)
   - [1. Introduction](#1-introduction)
   - [2. Directory Structure for All Submissions](#2-directory-structure-for-all-submissions)
-  - [3. Checking the Training Options](#3-checking-the-training-options)
-    - [3.1. CLOSED Versus OPEN Options](#31-closed-versus-open-options)
-    - [3.2. Benchmark Dataset Generation Options](#32-benchmark-dataset-generation-options)
-    - [3.3. Benchmark Run Options](#33-benchmark-run-options)
-  - [4. Checking the Checkpointing Options](#3-checking-the-checkpointing-options)
+  - [3. Validating the Training Options](#3-validating-the-training-options)
+    - [3.1. Benchmark Dataset Generation Options](#32-benchmark-dataset-generation-options)
+    - [3.2. Benchmark Run Options](#33-benchmark-run-options)
+  - [4. Validating the Checkpointing Options](#3-validating-the-checkpointing-options)
     - [4.1. CLOSED Versus OPEN Options](#41-closed-versus-open-options)
     - [4.2. Benchmark Run Options](#42-benchmark-run-options)
     - [4.3. Storage System Must Be Simultaneously R/W or Remappable](#43-storage-system-must-be-simultaneously-rw-or-remappable)
@@ -27,6 +26,8 @@ If the tested directory hierarchy does not meet all of the below requirements, t
 Even if the structure of a submission package matches the spec, the options that were used to run the benchmark may not fall within acceptable bounds,
 so we need the *submission validation checker* to check for illegal/inapproriate option settings,
 and for semantic mismatches between different options that were used.
+
+The `mlpstorage` tool must be used to run the benchmarks, submitters are not allowed to run the underlying tools (eg: DLIO) directly to generate a submission package.
 
 # 2.  Directory Structure for All Submissions
 
@@ -247,70 +248,45 @@ root_folder (or any name you prefer)
         └── overrides.yaml
 ```
 
-# 3.  Checking the Training Options
+# 3.  Validating the Training Options
 
 dfg
 
-## 3.2.  Dataset Generation Options
+## 3.1.  Dataset Generation Options
 
-Minimum dataset size. The MLPerf Storage benchmark script must be used to run the benchmarks since it calculates the minimum dataset size for each benchmark. It does so using the provided number of simulated accelerators and the size of all of the host node’s memory in GB. The minimum dataset size computation is as follows:
+**3.1.1.** The *submission validation checker* should take the provided number of simulated accelerators and the sizes of all of the host node’s memory as reported in the logfiles and recompute the minimum dataset size as follows:
+  * Calculate required minimum samples given number of steps per epoch (NB: `num_steps_per_epoch` is a minimum of 500):
+     * `min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes`
+  * Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
+     * `min_samples_host_memory_across_all_nodes = number_of_hosts * memory_per_host_in_GB * HOST_MEMORY_MULTIPLIER * 1024 * 1024 * 1024 / record_length`
+  * Ensure we meet both constraints:
+     * `min_samples = max(min_samples_steps_per_epoch, min_samples_host_memory_across_all_nodes)`
+  * Calculate minimum files to generate
+     * `min_total_files= min_samples / num_samples_per_file`
+     * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
+  * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
 
-Calculate required minimum samples given number of steps per epoch (NB: num_steps_per_epoch is a minimum of 500):
-   min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes
-Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
-   min_samples_host_memory_across_all_nodes = number_of_hosts * memory_per_host_in_GB * HOST_MEMORY_MULTIPLIER * 1024 * 1024 * 1024 / record_length
-Ensure we meet both constraints:
-   min_samples = max(min_samples_steps_per_epoch, min_samples_host_memory_across_all_nodes)
-Calculate minimum files to generate
-   min_total_files= min_samples / num_samples_per_file
-   min_files_size = min_samples * record_length / 1024 / 1024 / 1024
-A minimum of min_total_files files are required which will consume min_files_size GB of storage.
+## 3.2.  Benchmark Run Options
 
-## 3.3.  Benchmark Run Options
+**3.2.1.** To pass a benchmark run, the AU (Accelerator Utilization) should be equal to or greater than the minimum value:
+  * `total_compute_time = (records_per_file * total_files) / simulated_accelerators / batch_size * computation_time * epochs`
+  * `AU = (total_compute_time/total_benchmark_running_time) * 100`
+  * All the I/O operations from the first step are excluded from the AU calculation. The I/O operations that are excluded from the AU calculation are included in the samples/second reported by the benchmark, however.
 
-The benchmark performance metric for Training workloads (3D-Unet, ResNet-50, and Cosmflow) is samples per second, subject to a minimum accelerator utilization (AU) defined for that workload. Higher samples per second is better.
+**3.2.2.** For single-host submissions, increase the number of simulated accelerators by changing the --num-accelerators parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
 
-To pass a benchmark run, the AU should be equal to or greater than the minimum value, and is computed as follows:
+**3.2.3.** For single-host submissions, CLOSED and OPEN division results must include benchmark runs for the maximum simulated accelerators that can be run on ONE HOST NODE, in ONE MLPerf Storage job, without going below the 90% accelerator utilization threshold.
 
-AU (percentage) = (total_compute_time/total_benchmark_running_time) * 100
-All the I/O operations from the first step are excluded from the AU calculation in order to avoid the disturbance in the averages caused by the startup costs of the data processing pipeline, allowing the AU to more-quickly converge on the steady-state performance of the pipeline. The I/O operations that are excluded from the AU calculation are included in the samples/second reported by the benchmark, however.
+**3.2.4.** For distributed Training submissions, all the data must be accessible to all the host nodes.
 
-If all I/O operations are hidden by compute time, then the total_compute_time will equal the total_benchmark_running_time and the AU will be 100%.
-
-The total compute time can be derived from the batch size, total dataset size, number of simulated accelerators, and sleep time:
-
-total_compute_time = (records_per_file * total_files) / simulated_accelerators / batch_size * computation_time * epochs.
-
-
-
-
-8. Single-host Submissions
-This section only applies to Training workloads, the equivalent topic is covered in section 2.2.2, "subset mode".
-
-Submitters can add load to the storage system in two orthogonal ways: (1) increase the number of simulated accelerators inside one host node (i.e., one machine), and/or (2) increase the number of host nodes connected to the storage system.
-
-For single-host submissions, increase the number of simulated accelerators by changing the --num-accelerators parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
-
-For single-host submissions, CLOSED and OPEN division results must include benchmark runs for the maximum simulated accelerators that can be run on ONE HOST NODE, in ONE MLPerf Storage job, without going below the 90% accelerator utilization threshold.
-
-9. Distributed Training Submissions
-This setup simulates distributed training of a single training task, spread across multiple host nodes, on a shared dataset. The current version of the benchmark only supports data parallelism, not model parallelism.
-
-Submitters must respect the following for multi-host node submissions:
-
-All the data must be accessible to all the host nodes.
-The number of simulated accelerators in each host node must be identical.
+**3.2.5.** For distributed Training submissions, the number of simulated accelerators in each host node must be identical.
 While it is recommended that all host nodes be as close as possible to identical, that is not required by these Rules. The fact that distributed training uses a pool-wide common barrier to synchronize the transition from one step to the next of all host nodes results in the overall performance of the cluster being determined by the slowest host node.
 
-Here are a few practical suggestions on how to leverage a set of non-identical hardware, but these are not requirements of these Rules. It is possible to leverage very large physical nodes by using multiple Containers or VM guest images per node, each with dedicated affinity to given CPUs cores and where DRAM capacity and NUMA locality have been configured. Alternatively, larger physical nodes that have higher numbers of cores or additional memory than the others may have those additional cores or memory disabled.
+**3.2.6.** For distributed Training submissions, the *submission validation checker* should emit a warning (not fail the validation) if the physical nodes that run the benchmark code are widely enough different in their capability.  Here are a few practical suggestions on how to leverage a set of non-identical hardware, but these are not requirements of these Rules. It is possible to leverage very large physical nodes by using multiple Containers or VM guest images per node, each with dedicated affinity to given CPUs cores and where DRAM capacity and NUMA locality have been configured. Alternatively, larger physical nodes that have higher numbers of cores or additional memory than the others may have those additional cores or memory disabled.
 
-For distributed training submissions, CLOSED and OPEN division results must include benchmark runs for the maximum number of simulated accelerators across all host nodes that can be run in the distributed training setup, without going below the 90% accelerator utilization threshold. Each host node must run the same number of simulated accelerators for the submission to be valid.
+**3.2.7.** For CLOSED submissions of this benchmark, the MLPerf Storage codebase cannot be changed, so the *submission validation checker* SHOULD do an `md5sum` of the code directory hierachy in the submission package and verify that that matches a precalculated checksum stored as a literal in the validator's codebase.
 
-
-
-For CLOSED submissions of this benchmark, the MLPerf Storage codebase takes the place of the AI/ML algorithms and framework, and therefore cannot be changed. The sole exception to this rule is if the submitter decides to apply the code change identified in PR#299 of the DLIO repo in github, the resulting codebase will be considered "unchanged" for the purposes of this rule. 
-
-A small number of parameters can be configured in CLOSED submissions; listed in the tables below.
+**3.2.8.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
 **Table: Training Workload Tunable Parameters for CLOSED**
 
@@ -328,45 +304,46 @@ A small number of parameters can be configured in CLOSED submissions; listed in 
 | reader.prefetch_size         | An int64 scalar representing the amount of prefetching done, with values of 0, 1, or 2.                                             |          |
 | reader.odirect               | Enable ODIRECT mode for Unet3D Training                                                                                             | False    |
 |                              |                                                                                                                                     |          |
-| *Checkpoint parameters*      |                                                                                                                                     |          |
-| checkpoint.checkpoint_folder | The folder to save the checkpoints                                                                                                  | --       |
-|                              |                                                                                                                                     |          |
 | *Storage parameters*         |                                                                                                                                     |          |
 | storage.storage_root         | The storage root directory                                                                                                          | ./       |
 | storage.storage_type         | The storage type                                                                                                                    | local_fs |
 
-In addition to what can be changed in the CLOSED submission, the following parameters can be changed in OPEN submissions:
+**3.2.9.** For OPEN submissions of this benchmark, only a few additional parameters can be modified over those allowed in CLOSED, and those additional parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
-| Parameter                    | Description                                | Default                                                             |
-|------------------------------|--------------------------------------------|---------------------------------------------------------------------|
-| framework                    | The machine learning framework.            | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow |
-|                              |                                            |                                                                     |
-| *Dataset parameters*         |                                            |                                                                     |
-| dataset.format               | Format of the dataset.                     | 3D U-Net: .npz<br>ResNet-50: .tfrecord<br>Cosmoflow: .tfrecord      |
-| dataset.num_samples_per_file |                                            | 3D U-Net: 1<br>ResNet-50: 1251<br>Cosmoflow: 1                      |
-|                              |                                            |                                                                     |
-| *Reader parameters*          |                                            |                                                                     |
-| reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow |
+**Table: Training Workload Tunable Parameters for OPEN**
 
-# 4.  Checking the Checkpointing Options
+| Parameter                    | Description                                | Default                                                                               |
+|------------------------------|--------------------------------------------|---------------------------------------------------------------------------------------|
+| framework                    | The machine learning framework.            | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow                   |
+|                              |                                            |                                                                                       |
+| *Dataset parameters*         |                                            |                                                                                       |
+| dataset.format               | Format of the dataset.                     | 3D U-Net: .npz<br>ResNet-50: .tfrecord<br>Cosmoflow: .tfrecord                        |
+| dataset.num_samples_per_file |                                            | 3D U-Net: 1<br>ResNet-50: 1251<br>Cosmoflow: 1                                        |
+|                              |                                            |                                                                                       |
+| *Reader parameters*          |                                            |                                                                                       |
+| reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow                   |
 
-dgh
-
-## 4.1.  CLOSED Versus OPEN Options
+# 4.  Validating the Checkpointing Options
 
 dgh
 
-## 4.2.  Benchmark Run Options
+## 4.1.  Benchmark Run Options
 
-The checkpoints that are written are quite large. If the checkpoint size per client node is less than 3x the client node's memory capacity, then the filesystem cache needs to be cleared between the write and read phases.
+**4.1.1.** A checkpoint workload submission must include 10 checkpoints written and 10 checkpoints read as well as the logs for any optional processes.
 
-We enforce fsync to be applied during checkpoint writes to ensure data is flushed to persistent storage. fsync is enabled by default in all workload configuration files.
+**4.1.2.** The checkpoint data written per client node musyt be more than 3x the client node's memory capacity, otherwise  the filesystem cache needs to be cleared between the write and read phases.
 
-A checkpoint workload submission must include 10 checkpoints written and 10 checkpoints read as well as the logs for any optional processes as outlined in section 2.2.5 (clearing caches, storage remapping, etc)
+**4.1.3.** We must verify that all the benchmark workload configuration files have set to do an fsync call at the end of each of the 10 checkpoint writes.
 
-Benchmark results may be submitted for the following four model configurations. The associated model architectures and parallelism settings are listed below. The number of MPI processes must be set to 8, 64, 512, and 1024 for the respective models for CLOSED submission. 
+**4.1.4.** The benchmark must be run with one of the four model configuration detailed below.
 
-For CLOSED submissions, participants are not permitted to change the total number of simulated accelerators. However, they may adjust the number of simulated accelerators per host, as long as each host uses more than 4 simulated accelerators. This allows the use of nodes with higher simulated accelerator density and fewer total nodes. Note: the aggregate simulated accelerator memory across all nodes must be sufficient to accommodate the model’s checkpoint size.
+**4.1.5.** For CLOSED submissions, the number of MPI processes must be set to 8, 64, 512, and 1024 for the respective models.
+
+**4.1.6.** For CLOSED submissions, submitters are not permitted to change the total number of simulated accelerators.
+
+**4.1.7.** For CLOSED submissions, submitters may adjust the number of simulated accelerators **per host**, as long as each host uses more than 4 simulated accelerators.
+
+**4.1.8.** The aggregate simulated accelerator memory across all nodes must be sufficient to accommodate the model’s checkpoint size.
 
 **Table 2 LLM models**
 
@@ -383,17 +360,16 @@ For CLOSED submissions, participants are not permitted to change the total numbe
 | Checkpoint size        | 105 GB | 912 GB | 5.29 TB | 18 TB  |
 | Subset: 8-Process Size | 105 GB | 114 GB | 94 GB   | 161 GB |
 
+**4.1.9.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
+
 
 **Table: Checkpoint Workload Tunable Parameters for CLOSED**
 
 | Parameter                        | Description                                                 | Default               |
 |----------------------------------|-------------------------------------------------------------|-----------------------|
 | checkpoint.checkpoint_folder     | The storage directory for writing and reading checkpoints   | ./checkpoints/<model> |
-| checkpoint.num_checkpoints_write | The number of checkpoint writes to do in a single dlio call | 10                    |
-| checkpoint.num_checkpoints_read  | The number of checkpoint reads to do in a single dlio call  | 10                    |
 
-
-For OPEN submissions, the total number of processes may be increased in multiples of (TP×PP) to showcase the scalability of the storage solution.
+**4.1.10.** For OPEN submissions of this benchmark, the total number of processes may be increased in multiples of (TP×PP) to showcase the scalability of the storage solution.
 
 **Table 3: Configuration parameters and their mutability in CLOSED and OPEN divisions**
 
@@ -405,28 +381,24 @@ For OPEN submissions, the total number of processes may be increased in multiple
 | --num-checkpoints-write            | Number of write checkpoints                  | 10 or 0**                                     | NO                   | NO                 |
 | --num-checkpoints-read             | Number of write checkpoints                  | 10 or 0**                                     | NO                   | NO                 |
 
-**In the ``--ppn`` syntax above, the ``slotcount`` value has the same meaning as the ``ppn`` value, the number of processes per node to run.**
+**NOTE: In the ``--ppn`` syntax above, the ``slotcount`` value means the number of processes per node to run.**
 
-** By default, --num-checkpoints-read and --num-checkpoints-write are set to be 10. To perform write only, one has to turn off read by explicitly setting ``--num-checkpoints-read=0``; to perform read only, one has to turn off write by explicitly set  ``--num-checkpoints-write=0``
+## 4.2.  Storage System Must Be Simultaneously R/W or _Remappable_
 
-## 4.3.  Storage System Must Be Simultaneously R/W or _Remappable_
+**4.2.1.** If a submitter needs to issue a cache flush operation between the write phase and the read phase of a checkpoint benchmark run, then the validator needs to check that ``--num-checkpoints-read=0`` was set during the write phase, that there was a short pause of up to 30 seconds maximum, then the write phase was started with ``--num-checkpoints-write=0`` set.
 
-For storage systems where 1 host has write access to a volume but all hosts have read access, the above process also satisfies the requirements so long as reads can be fulfilled immediately following a write.
+**4.2.2.** The validator must verify that the total test duration starts from the timestamp of the first checkpoint written and ends at the ending timestamp of the last checkpoint read, notably including the "remapping" time.
 
-For storage systems where 1 host has write access to a volume and a "remapping" process is required for other hosts to read the same data, the time to remap must be measured and included in the submission.
+**4.2.3.** For a _remapping_ solution, the time duration between the checkpoint being completed and the earliest time that that checkpoint could be read by a different host node must be reported in the `SystemDescription.yaml` file.
 
-When a checkpoint is taken/written, it must be written to stable storage, but that checkpoint does not need to be readable by other other hosts yet. If it is not readable by other hosts immediately after the checkpoint write is complete, if it requires some additional processing or reconfiguration before the checkpoint is readable by other hosts, the time duration between the checkpoint being completed and the earliest time that that checkpoint could be read by a different host node must be reported in the SystemDescription.yaml file. That duration between write completion and availability for reading will be added to the time to read/recover from the benchmark.
-
-Any processes between the write and read phases of checkpointing that are required before data can be read by a different host than wrote the data must be measured and included in the submission. The time for these processes will be added to the recovery time and throughput calculation for submitted scores
-
-The system_configuration.yaml document must list whether the solution support simultaneous reads and/or writes as such:
-
+**4.2.4.** The system_configuration.yaml document must list whether the solution support simultaneous reads and/or writes as such:
+```
 System:
   shared_capabilities:
     multi_host_support: True            # False is used for local storage
     simultaneous_write_support: False   # Are simultaneous writes by multiple hosts supported in the submitted configuration
     simultaneous_read__support: True    # Are simultaneous reads by multiple hosts supported in the submitted configuration
-
+```
 
 ## 5.  Validating The Phases
 
