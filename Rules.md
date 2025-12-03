@@ -11,7 +11,6 @@
     - [4.1. CLOSED Versus OPEN Options](#41-closed-versus-open-options)
     - [4.2. Benchmark Run Options](#42-benchmark-run-options)
     - [4.3. Storage System Must Be Simultaneously R/W or Remappable](#43-storage-system-must-be-simultaneously-rw-or-remappable)
-  - [5. Validating The Phases](#5-validating-the-phases)
 
 
 # 1.  Introduction
@@ -399,19 +398,6 @@ System:
     simultaneous_write_support: False   # Are simultaneous writes by multiple hosts supported in the submitted configuration
     simultaneous_read__support: True    # Are simultaneous reads by multiple hosts supported in the submitted configuration
 ```
-
-## 5.  Validating The Phases
-
-The MLPerf Storage working group provides a benchmark implementation which includes:
-
-* Scripts to determine the minimum dataset size required for your system, for a given benchmark.
-* Scripts for data generation.
-* Benchmark tool, based on DLIO, with configuration files for the benchmarks.
-* A script for running the benchmark on one host (additional setup is required if you are running a distributed training benchmark – see Section 5).
-* A script for generating the results report (additional scripting and setup may be required if you are running a distributed training benchmark – see Section 5), and potentially additional supporting scripts.
-
-Each of the benchmarks described in this document have a requirement for multiple runs. This is to ensure consistency of operation of the system under test as well as ensure statistical significance of the measurements.  Unless otherwise noted, the multiple runs for a workload need to be run consecutively. To ensure this requirement is met, the time between runs (from the stop time of one run and the start time to the next run) needs to be less than the time to execute a single run. This is to discourage cherry-picking of results which is expressly forbidden and against the spirit of the rules.
-
 
 
 
