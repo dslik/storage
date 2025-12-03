@@ -1,7 +1,7 @@
-# MLPerf™ Storage V2.0 Benchmark Validation
+# MLPerf™ Storage V2.0 Benchmark Validation Rules
 ——————————————————————————————————————————
 
-- [MLPerf Storage V2.0 Benchmark Validation](#mlperf-storage-v20-benchmark-validation)
+- [MLPerf Storage V2.0 Benchmark Validation](#mlperf-storage-v20-benchmark-validation-rules)
   - [1. Introduction](#1-introduction)
   - [2. Directory Structure for All Submissions](#2-directory-structure-for-all-submissions)
   - [3. Validating the Training Options](#3-validating-the-training-options)
