@@ -8,9 +8,8 @@
     - [3.1. Benchmark Dataset Generation Options](#32-benchmark-dataset-generation-options)
     - [3.2. Benchmark Run Options](#33-benchmark-run-options)
   - [4. Validating the Checkpointing Options](#3-validating-the-checkpointing-options)
-    - [4.1. CLOSED Versus OPEN Options](#41-closed-versus-open-options)
-    - [4.2. Benchmark Run Options](#42-benchmark-run-options)
-    - [4.3. Storage System Must Be Simultaneously R/W or Remappable](#43-storage-system-must-be-simultaneously-rw-or-remappable)
+    - [4.1. Benchmark Run Options](#42-benchmark-run-options)
+    - [4.2. Storage System Must Be Simultaneously R/W or Remappable](#43-storage-system-must-be-simultaneously-rw-or-remappable)
 
 
 # 1.  Introduction
@@ -323,8 +322,6 @@ While it is recommended that all host nodes be as close as possible to identical
 | reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow                   |
 
 # 4.  Validating the Checkpointing Options
-
-dgh
 
 ## 4.1.  Benchmark Run Options
 
