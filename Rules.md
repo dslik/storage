@@ -248,11 +248,13 @@ root_folder (or any name you prefer)
 
 # 3.  Validating the Training Options
 
-dfg
+## 3.1.  Datasize Options
 
-## 3.1.  Dataset Generation Options
+**3.1.1.** The *submission validation checker* should...
 
-**3.1.1.** The *submission validation checker* should take the provided number of simulated accelerators and the sizes of all of the host node’s memory as reported in the logfiles and recompute the minimum dataset size as follows:
+## 3.2.  Datagen Options
+
+**3.2.1.** The *submission validation checker* should take the provided number of simulated accelerators and the sizes of all of the host node’s memory as reported in the logfiles and recompute the minimum dataset size as follows:
   * Calculate required minimum samples given number of steps per epoch (NB: `num_steps_per_epoch` is a minimum of 500):
      * `min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes`
   * Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
@@ -264,27 +266,27 @@ dfg
      * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
   * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
 
-## 3.2.  Benchmark Run Options
+## 3.3.  Run Options
 
-**3.2.1.** To pass a benchmark run, the AU (Accelerator Utilization) should be equal to or greater than the minimum value:
+**3.3.1.** To pass a benchmark run, the AU (Accelerator Utilization) should be equal to or greater than the minimum value:
   * `total_compute_time = (records_per_file * total_files) / simulated_accelerators / batch_size * computation_time * epochs`
   * `AU = (total_compute_time/total_benchmark_running_time) * 100`
   * All the I/O operations from the first step are excluded from the AU calculation. The I/O operations that are excluded from the AU calculation are included in the samples/second reported by the benchmark, however.
 
-**3.2.2.** For single-host submissions, increase the number of simulated accelerators by changing the --num-accelerators parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
+**3.3.2.** For single-host submissions, increase the number of simulated accelerators by changing the --num-accelerators parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
 
 **3.2.3.** For single-host submissions, CLOSED and OPEN division results must include benchmark runs for the maximum simulated accelerators that can be run on ONE HOST NODE, in ONE MLPerf Storage job, without going below the 90% accelerator utilization threshold.
 
-**3.2.4.** For distributed Training submissions, all the data must be accessible to all the host nodes.
+**3.3.4.** For distributed Training submissions, all the data must be accessible to all the host nodes.
 
-**3.2.5.** For distributed Training submissions, the number of simulated accelerators in each host node must be identical.
+**3.3.5.** For distributed Training submissions, the number of simulated accelerators in each host node must be identical.
 While it is recommended that all host nodes be as close as possible to identical, that is not required by these Rules. The fact that distributed training uses a pool-wide common barrier to synchronize the transition from one step to the next of all host nodes results in the overall performance of the cluster being determined by the slowest host node.
 
-**3.2.6.** For distributed Training submissions, the *submission validation checker* should emit a warning (not fail the validation) if the physical nodes that run the benchmark code are widely enough different in their capability.  Here are a few practical suggestions on how to leverage a set of non-identical hardware, but these are not requirements of these Rules. It is possible to leverage very large physical nodes by using multiple Containers or VM guest images per node, each with dedicated affinity to given CPUs cores and where DRAM capacity and NUMA locality have been configured. Alternatively, larger physical nodes that have higher numbers of cores or additional memory than the others may have those additional cores or memory disabled.
+**3.3.6.** For distributed Training submissions, the *submission validation checker* should emit a warning (not fail the validation) if the physical nodes that run the benchmark code are widely enough different in their capability.  Here are a few practical suggestions on how to leverage a set of non-identical hardware, but these are not requirements of these Rules. It is possible to leverage very large physical nodes by using multiple Containers or VM guest images per node, each with dedicated affinity to given CPUs cores and where DRAM capacity and NUMA locality have been configured. Alternatively, larger physical nodes that have higher numbers of cores or additional memory than the others may have those additional cores or memory disabled.
 
-**3.2.7.** For CLOSED submissions of this benchmark, the MLPerf Storage codebase cannot be changed, so the *submission validation checker* SHOULD do an `md5sum` of the code directory hierachy in the submission package and verify that that matches a precalculated checksum stored as a literal in the validator's codebase.
+**3.3.7.** For CLOSED submissions of this benchmark, the MLPerf Storage codebase cannot be changed, so the *submission validation checker* SHOULD do an `md5sum` of the code directory hierachy in the submission package and verify that that matches a precalculated checksum stored as a literal in the validator's codebase.
 
-**3.2.8.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
+**3.3.8.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
 **Table: Training Workload Tunable Parameters for CLOSED**
 
@@ -306,7 +308,7 @@ While it is recommended that all host nodes be as close as possible to identical
 | storage.storage_root         | The storage root directory                                                                                                          | ./       |
 | storage.storage_type         | The storage type                                                                                                                    | local_fs |
 
-**3.2.9.** For OPEN submissions of this benchmark, only a few additional parameters can be modified over those allowed in CLOSED, and those additional parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
+**3.3.9.** For OPEN submissions of this benchmark, only a few additional parameters can be modified over those allowed in CLOSED, and those additional parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
 **Table: Training Workload Tunable Parameters for OPEN**
 
