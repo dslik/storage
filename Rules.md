@@ -259,16 +259,16 @@ root_folder (or any name you prefer)
 **3.1.1.** The *submission validator* must verify that the *datasize* option was used by finding the entry(s) in the log file showing its use.
 
 **3.1.2.** The *submission validator* must recalculate the minimum dataset size by using the provided number of simulated accelerators and the sizes of all of the host node’s memory as reported in the logfiles as described below and fail the run if the size recorded in the run's logfile doesn't exactly match the recalculated value.
-    * Calculate required minimum samples given number of steps per epoch (NB: `num_steps_per_epoch` is a minimum of 500):
-       * `min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes`
-    * Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
-       * `min_samples_host_memory_across_all_nodes = number_of_hosts * memory_per_host_in_GB * HOST_MEMORY_MULTIPLIER * 1024 * 1024 * 1024 / record_length`
-    * Ensure we meet both constraints:
-       * `min_samples = max(min_samples_steps_per_epoch, min_samples_host_memory_across_all_nodes)`
-    * Calculate minimum files to generate
-       * `min_total_files= min_samples / num_samples_per_file`
-       * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
-    * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
+  * Calculate required minimum samples given number of steps per epoch (NB: `num_steps_per_epoch` is a minimum of 500):
+     * `min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes`
+  * Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
+     * `min_samples_host_memory_across_all_nodes = number_of_hosts * memory_per_host_in_GB * HOST_MEMORY_MULTIPLIER * 1024 * 1024 * 1024 / record_length`
+  * Ensure we meet both constraints:
+     * `min_samples = max(min_samples_steps_per_epoch, min_samples_host_memory_across_all_nodes)`
+  * Calculate minimum files to generate
+     * `min_total_files= min_samples / num_samples_per_file`
+     * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
+  * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
 
 ## 3.2.  Datagen Options
 
