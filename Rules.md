@@ -27,6 +27,8 @@ and for semantic mismatches between different options that were used.
 
 The `mlpstorage` tool must be used to run the benchmarks, submitters are not allowed to run the underlying tools (eg: DLIO) directly to generate a submission package.
 
+**1.1.** The `mlpstorage` command must obtain (somehow) the pathname of the output file directory hierarchy and directly create and/or append to the files within that hierarchy to successively build out the submission folder.  We don't want the submitter to manually create anything in that hierarchy except for the SystemDescription.* files (if we can help it).
+
 # 2.  Directory Structure for All Submissions
 
 **2.1.**  The submission structure must start from a single directory whose name is the name of the submitter.  This can be any string, possibly including blanks.
@@ -41,7 +43,7 @@ The `mlpstorage` tool must be used to run the benchmarks, submitters are not all
 
 **2.6.**  The "code" directory must include a complete copy of the MLPerf Storage github repo that was used to run the test that resulted in the "results" directory's contents.
 If this is in the "open" hierarchy, any modifications made to the benchmark code must be included here, and if this is in the "closed" hierarchy, there must be no changes to the benchmark code.
-Note that in both cases this must be the code that was actually run to generate those results.
+Note that in both cases this must be the code that was actually run to generate those results.  In a CLOSED submission, the *submission validator* should do an md5sum of the code directory hierarchy, compare that to a value hard-coded into the validator code, and fail the validation if there is a difference.
 
 **2.7.**  The "systems" directory must contain two files for each "system name", a .yaml file and a .pdf file, and nothing more.  Each of those files must be named with the "system name".
 Eg: for a system-under-test named "Big_and_Fast_4000_buffered", there must be a "Big_and_Fast_4000_buffered.yaml" and a "Big_and_Fast_4000_buffered.pdf" file.  These names are case-sensitive.
@@ -274,27 +276,26 @@ root_folder (or any name you prefer)
 
 ## 3.3.  Run Options
 
-**3.3.0.** The amount of data the *run* phase is told to use must be exactly equal to the *datasize* value calculated earlier, but can be less than the value used in the *datagen* phase.
+**3.3.1.** The amount of data the *run* phase is told to use must be exactly equal to the *datasize* value calculated earlier, but can be less than the value used in the *datagen* phase.  To express that, you can run the benchmark on a subset of that dataset by setting `num_files_train` or `num_files_eval` smaller than the number of files available in the dataset folder, but `num_subfolders_train` and `num_subfolders_eval` must be to be equal to the actual number of subfolders inside the dataset folder in order to generate valid results.
 
-**3.3.1.** To pass a benchmark run, the AU (Accelerator Utilization) should be equal to or greater than the minimum value:
+**3.3.2.** To pass a benchmark run, the AU (Accelerator Utilization) should be equal to or greater than the minimum value:
   * `total_compute_time = (records_per_file * total_files) / simulated_accelerators / batch_size * computation_time * epochs`
   * `AU = (total_compute_time/total_benchmark_running_time) * 100`
   * All the I/O operations from the first step are excluded from the AU calculation. The I/O operations that are excluded from the AU calculation are included in the samples/second reported by the benchmark, however.
 
-**3.3.2.** For single-host submissions, increase the number of simulated accelerators by changing the --num-accelerators parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
+**3.3.3.** For single-host submissions, increase the number of simulated accelerators by changing the `--num-accelerators` parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
 
-**3.2.3.** For single-host submissions, CLOSED and OPEN division results must include benchmark runs for the maximum simulated accelerators that can be run on ONE HOST NODE, in ONE MLPerf Storage job, without going below the 90% accelerator utilization threshold.
+**3.2.4.** For single-host submissions, CLOSED and OPEN division results must include benchmark runs for the maximum simulated accelerators that can be run on one host node, in one MLPerf Storage job, without going below the 90% accelerator utilization threshold.
 
-**3.3.4.** For distributed Training submissions, all the data must be accessible to all the host nodes.
+**3.3.5.** For distributed Training submissions, all the data must be accessible to all the host nodes.  **_(not clear how to check this, so maybe remove?)_**
 
-**3.3.5.** For distributed Training submissions, the number of simulated accelerators in each host node must be identical.
-While it is recommended that all host nodes be as close as possible to identical, that is not required by these Rules. The fact that distributed training uses a pool-wide common barrier to synchronize the transition from one step to the next of all host nodes results in the overall performance of the cluster being determined by the slowest host node.
+**3.3.6.** For distributed Training submissions, the number of simulated accelerators in each host node must be identical.
 
-**3.3.6.** For distributed Training submissions, the *submission validation checker* should emit a warning (not fail the validation) if the physical nodes that run the benchmark code are widely enough different in their capability.  Here are a few practical suggestions on how to leverage a set of non-identical hardware, but these are not requirements of these Rules. It is possible to leverage very large physical nodes by using multiple Containers or VM guest images per node, each with dedicated affinity to given CPUs cores and where DRAM capacity and NUMA locality have been configured. Alternatively, larger physical nodes that have higher numbers of cores or additional memory than the others may have those additional cores or memory disabled.
+**3.3.7.** For distributed Training submissions, the *submission validation checker* should emit a warning (not fail the validation) if the physical nodes that run the benchmark code are widely enough different in their capability.  **_(not clear we should do this, so maybe remove?)_**
 
-**3.3.7.** For CLOSED submissions of this benchmark, the MLPerf Storage codebase cannot be changed, so the *submission validation checker* SHOULD do an `md5sum` of the code directory hierachy in the submission package and verify that that matches a precalculated checksum stored as a literal in the validator's codebase.
+**3.3.8.** For CLOSED submissions of this benchmark, the MLPerf Storage codebase cannot be changed, so the *submission validation checker* SHOULD do an `md5sum` of the code directory hierachy in the submission package and verify that that matches a precalculated checksum stored as a literal in the validator's codebase.
 
-**3.3.8.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
+**3.3.9.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
 **Table: Training Workload Tunable Parameters for CLOSED**
 
@@ -316,7 +317,7 @@ While it is recommended that all host nodes be as close as possible to identical
 | storage.storage_root         | The storage root directory                                                                                                          | ./       |
 | storage.storage_type         | The storage type                                                                                                                    | local_fs |
 
-**3.3.9.** For OPEN submissions of this benchmark, only a few additional parameters can be modified over those allowed in CLOSED, and those additional parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
+**3.3.10.** For OPEN submissions of this benchmark, only a few additional parameters can be modified over those allowed in CLOSED, and those additional parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
 **Table: Training Workload Tunable Parameters for OPEN**
 
@@ -331,9 +332,9 @@ While it is recommended that all host nodes be as close as possible to identical
 | *Reader parameters*          |                                            |                                                                                       |
 | reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow                   |
 
-**3.3.10**  The arguments to `mlpstorage` that set the directory pathname where the dataset is stored and the directory where the output logfiles are stored must both be set and must be set to different values.
+**3.3.11**  The arguments to `mlpstorage` that set the directory pathname where the dataset is stored and the directory where the output logfiles are stored must both be set and must be set to different values.
 
-**3.3.11**  The `mlpstorage` command should do a "df" command on the directory pathname where the dataset is stored and another one on the directory pathname where the output logfiles are stored and record those values in the logfile.  The *submission validator* should find those entries in the run's logfile and verify that they are different filesystems.  We don't want the submitter to, by acccident, place the logfiles onto the storage system under test since that would skew the results.
+**3.3.12**  The `mlpstorage` command should do a "df" command on the directory pathname where the dataset is stored and another one on the directory pathname where the output logfiles are stored and record those values in the logfile.  The *submission validator* should find those entries in the run's logfile and verify that they are different filesystems.  We don't want the submitter to, by acccident, place the logfiles onto the storage system under test since that would skew the results.
 
 # 4.  Validating the Checkpointing Workloads
 
