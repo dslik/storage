@@ -66,7 +66,7 @@ configuration of storage system and to link together those results with the .pdf
 
 **2.16.**  Within the "run" *phase directory* within the "training" directory hierarchy, there must be one "results.json" file.  This name is case-sensitive.
 
-**2.17.**  Within the "run" *phase directory* within the "training" directory hierarchy, there must also be exactly 5 subdirectories named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
+**2.17.**  Within the "run" *phase directory* within the "training" directory hierarchy, there must also be exactly 6 subdirectories named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.  Note that the 1st of those 6 is the *warm up* run and will not be included in the reported performance.
 
 **2.18**  The timestamp (the day and time) represented by the name of each *timestamp directory* must be separated by less than the duration of a single *timestamp directory* from it's neighboring *timestamp directories*.  Ie: the gap between a consecutive pair of *timestamp directories* must be short enough that we can be sure that there was no benchmark activity between them.
 
@@ -254,23 +254,27 @@ root_folder (or any name you prefer)
 
 ## 3.1.  Datasize Options
 
-**3.1.1.** The *submission validation checker* should...
+**3.1.1.** The *submission validator* must verify that the *datasize* option was used by finding the entry(s) in the log file showing its use.
+
+**3.1.2.** The *submission validator* must recalculate the minimum dataset size by using the provided number of simulated accelerators and the sizes of all of the host node’s memory as reported in the logfiles as described below and fail the run if the size recorded in the run's logfile doesn't exactly match the recalculated value.
+    * Calculate required minimum samples given number of steps per epoch (NB: `num_steps_per_epoch` is a minimum of 500):
+       * `min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes`
+    * Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
+       * `min_samples_host_memory_across_all_nodes = number_of_hosts * memory_per_host_in_GB * HOST_MEMORY_MULTIPLIER * 1024 * 1024 * 1024 / record_length`
+    * Ensure we meet both constraints:
+       * `min_samples = max(min_samples_steps_per_epoch, min_samples_host_memory_across_all_nodes)`
+    * Calculate minimum files to generate
+       * `min_total_files= min_samples / num_samples_per_file`
+       * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
+    * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
 
 ## 3.2.  Datagen Options
 
-**3.2.1.** The *submission validation checker* should take the provided number of simulated accelerators and the sizes of all of the host node’s memory as reported in the logfiles and recompute the minimum dataset size as follows:
-  * Calculate required minimum samples given number of steps per epoch (NB: `num_steps_per_epoch` is a minimum of 500):
-     * `min_samples_steps_per_epoch = num_steps_per_epoch * batch_size * num_accelerators_across_all_nodes`
-  * Calculate required minimum samples given host memory to eliminate client-side caching effects; (NB: HOST_MEMORY_MULTIPLIER = 5):
-     * `min_samples_host_memory_across_all_nodes = number_of_hosts * memory_per_host_in_GB * HOST_MEMORY_MULTIPLIER * 1024 * 1024 * 1024 / record_length`
-  * Ensure we meet both constraints:
-     * `min_samples = max(min_samples_steps_per_epoch, min_samples_host_memory_across_all_nodes)`
-  * Calculate minimum files to generate
-     * `min_total_files= min_samples / num_samples_per_file`
-     * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
-  * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
+**3.2.1**  The amount of data generated during the *datagen* phase must be equal **or larger** than the amount of data calculated during the *datasize* phase or the run must be failed.
 
 ## 3.3.  Run Options
+
+**3.3.0.** The amount of data the *run* phase is told to use must be exactly equal to the *datasize* value calculated earlier, but can be less than the value used in the *datagen* phase.
 
 **3.3.1.** To pass a benchmark run, the AU (Accelerator Utilization) should be equal to or greater than the minimum value:
   * `total_compute_time = (records_per_file * total_files) / simulated_accelerators / batch_size * computation_time * epochs`
