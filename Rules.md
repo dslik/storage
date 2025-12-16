@@ -68,21 +68,25 @@ configuration of storage system and to link together those results with the .pdf
 
 **2.17.**  Within the "run" *phase directory* within the "training" directory hierarchy, there must also be exactly 5 subdirectories named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
 
-**2.18.**  Within each *timestamp directory* within the "run" *phase*, there must exist the following files: "training_run.stdout.log", "training_run.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
+**2.18**  The timestamp (the day and time) represented by the name of each *timestamp directory* must be separated by less than the duration of a single *timestamp directory* from it's neighboring *timestamp directories*.  Ie: the gap between a consecutive pair of *timestamp directories* must be short enough that we can be sure that there was no benchmark activity between them.
 
-**2.19.**  The "dlio_config" subdirectory in each *timestamp directory* must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
+**2.19.**  Within each *timestamp directory* within the "run" *phase*, there must exist the following files: "training_run.stdout.log", "training_run.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
 
-**2.20.**  Within the "checkpointing" directory, there must be one or more of the following *workload directories*, and nothing else: "llama3-8b", "llama3-70b", "llama3-405b", and/or "llama3-1t".  These names are case-sensitive.
+**2.20.**  The "dlio_config" subdirectory in each *timestamp directory* must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
 
-**2.21.**  Within the *workload directories* within the "checkpointing" directory hierarchy, there must be one "results.json" file.  This name is case-sensitive.
+**2.21.**  Within the "checkpointing" directory, there must be one or more of the following *workload directories*, and nothing else: "llama3-8b", "llama3-70b", "llama3-405b", and/or "llama3-1t".  These names are case-sensitive.
 
-**2.22.**  Within the *workload directories* within the "checkpointing" directory hierarchy, there must also be exactly ten *timestamp directories* named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
+**2.22.**  Within the *workload directories* within the "checkpointing" directory hierarchy, there must be one "results.json" file.  This name is case-sensitive.
 
-**2.23.**  Within the *timestamp directories* within the "checkpointing" directory hierarchy, there must exist the following files: "checkpointing_run.stdout.log", "checkpointing_run.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
+**2.23.**  Within the *workload directories* within the "checkpointing" directory hierarchy, there must also be exactly ten *timestamp directories* named *YYYYMMDD_HHmmss" that represent a *timestamp* of when that part of the test run was completed.  Where Y's are replaced with the year the run was performed, M's are replaced with the month, D's with the day, H's with the hour (in 24-hour format), m's with the minute, and s's with the second.  The timestamps should be relative to the local timezone where the test was actually run.
 
-**2.24.**  The "dlio_config" subdirectory in each *timestamp directory* must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
+**2.24**  The timestamp (the day and time) represented by the name of each *timestamp directory* must be separated by less than the duration of a single *timestamp directory* from it's neighboring *timestamp directories*.  Ie: the gap between a consecutive pair of *timestamp directories* must be short enough that we can be sure that there was no benchmark activity between them.
 
-**2.25.**  Pictorially, here is what this looks like:
+**2.25.**  Within the *timestamp directories* within the "checkpointing" directory hierarchy, there must exist the following files: "checkpointing_run.stdout.log", "checkpointing_run.stderr.log" file, "*output.json, "*per_epoch_stats.json", "*summary.json", and "dlio.log", plus a subdirectory named "dlio_config".  These names are case-sensitive.
+
+**2.27.**  The "dlio_config" subdirectory in each *timestamp directory* must contain the following list of files, and nothing else: "config.yaml", "hydra.yaml", and "overrides.yaml".  These names are case-sensitive.
+
+**2.28.**  Pictorially, here is what this looks like:
 ```
 root_folder (or any name you prefer)
 ├── Closed
@@ -233,7 +237,7 @@ root_folder (or any name you prefer)
 			├──system-name-2.yaml
 			└──system-name-2.pdf
 ```
-**2.26.**  Since the "dlio_log" subdirectory has a similar structure in all cases, it is describe pictorially just below:
+**2.29.**  Since the "dlio_log" subdirectory has a similar structure in all cases, it is describe pictorially just below:
 ```
 └── YYYYMMDD_HHmmss
     ├── [training|checkpointing]_[datagen|run].stdout.log
@@ -246,7 +250,7 @@ root_folder (or any name you prefer)
         └── overrides.yaml
 ```
 
-# 3.  Validating the Training Options
+# 3.  Validating the Training Workloads
 
 ## 3.1.  Datasize Options
 
@@ -323,25 +327,25 @@ While it is recommended that all host nodes be as close as possible to identical
 | *Reader parameters*          |                                            |                                                                                       |
 | reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow                   |
 
-# 4.  Validating the Checkpointing Options
+**3.3.10**  The arguments to `mlpstorage` that set the directory pathname where the dataset is stored and the directory where the output logfiles are stored must both be set and must be set to different values.
+
+**3.3.11**  The `mlpstorage` command should do a "df" command on the directory pathname where the dataset is stored and another one on the directory pathname where the output logfiles are stored and record those values in the logfile.  The *submission validator* should find those entries in the run's logfile and verify that they are different filesystems.  We don't want the submitter to, by acccident, place the logfiles onto the storage system under test since that would skew the results.
+
+# 4.  Validating the Checkpointing Workloads
 
 ## 4.1.  Benchmark Run Options
 
-**4.1.1.** A checkpoint workload submission must include 10 checkpoints written and 10 checkpoints read as well as the logs for any optional processes.
+**4.1.1.** The checkpoint data written per client node must be more than 3x the client node's memory capacity, otherwise the filesystem cache needs to be cleared between the write and read phases.
 
-**4.1.2.** The checkpoint data written per client node musyt be more than 3x the client node's memory capacity, otherwise  the filesystem cache needs to be cleared between the write and read phases.
+**4.1.2.** We must verify that all the benchmark workload configuration files have been set to do an fsync call at the end of each of the 10 checkpoint writes.
 
-**4.1.3.** We must verify that all the benchmark workload configuration files have set to do an fsync call at the end of each of the 10 checkpoint writes.
+**4.1.3.** The benchmark must be run with one of the four model configuration detailed below.
 
-**4.1.4.** The benchmark must be run with one of the four model configuration detailed below.
+**4.1.4.** For CLOSED submissions, the number of MPI processes must be set to 8, 64, 512, and 1024 for the respective models.  (see table 2)
 
-**4.1.5.** For CLOSED submissions, the number of MPI processes must be set to 8, 64, 512, and 1024 for the respective models.
+**4.1.5.** For CLOSED submissions, submitters may adjust the number of simulated accelerators **per host**, as long as each host uses more than 4 simulated accelerators and the total number of simulated accelerators (the total number of processes) matches the requirement.  (see table 2)
 
-**4.1.6.** For CLOSED submissions, submitters are not permitted to change the total number of simulated accelerators.
-
-**4.1.7.** For CLOSED submissions, submitters may adjust the number of simulated accelerators **per host**, as long as each host uses more than 4 simulated accelerators.
-
-**4.1.8.** The aggregate simulated accelerator memory across all nodes must be sufficient to accommodate the model’s checkpoint size.
+**4.1.6.** The aggregate simulated accelerator memory across all nodes must be sufficient to accommodate the model’s checkpoint size.  That is, the GB of memory associated with the chosen accelerator (eg: H100) times the accelerator count must be equal to or greater than the total checkpoint size for that scale of checkpoint.  (see table 2)
 
 **Table 2 LLM models**
 
@@ -358,8 +362,7 @@ While it is recommended that all host nodes be as close as possible to identical
 | Checkpoint size        | 105 GB | 912 GB | 5.29 TB | 18 TB  |
 | Subset: 8-Process Size | 105 GB | 114 GB | 94 GB   | 161 GB |
 
-**4.1.9.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
-
+**4.1.7.** For CLOSED submissions of this benchmark, only a small number of parameters can be modified, and those parameters are listed in the table below.  Any other parameters being modified must generate a message and fail the validation.
 
 **Table: Checkpoint Workload Tunable Parameters for CLOSED**
 
@@ -367,7 +370,7 @@ While it is recommended that all host nodes be as close as possible to identical
 |----------------------------------|-------------------------------------------------------------|-----------------------|
 | checkpoint.checkpoint_folder     | The storage directory for writing and reading checkpoints   | ./checkpoints/<model> |
 
-**4.1.10.** For OPEN submissions of this benchmark, the total number of processes may be increased in multiples of (TP×PP) to showcase the scalability of the storage solution.
+**4.1.8.** For OPEN submissions of this benchmark, the total number of processes may be increased in multiples of (TP×PP) to showcase the scalability of the storage solution.
 
 **Table 3: Configuration parameters and their mutability in CLOSED and OPEN divisions**
 
@@ -381,9 +384,15 @@ While it is recommended that all host nodes be as close as possible to identical
 
 **NOTE: In the ``--ppn`` syntax above, the ``slotcount`` value means the number of processes per node to run.**
 
+**4.1.9**  The arguments to `mlpstorage` that set the directory pathname where the checkpoints are written and read and the directory where the output logfiles are stored must both be set and must be set to different values.
+
+**4.1.10**  The `mlpstorage` command should do a "df" command on the directory pathname where the checkpoints are written and read and another one on the directory pathname where the output logfiles are stored and record those values in the logfile.  The *submission validator* should find those entries in the run's logfile and verify that they are different filesystems.  We don't want the submitter to, by acccident, place the logfiles onto the storage system under test since that would skew the results.
+
+**4.1.11**  The `mlpstorage` command must accept a parameter telling it that this is a *subset* run and add that info to the output log file. The *submission validator* must flag an error if the `subset` argument is given but the total number of accelerators is not exactly 8, or the model is "8B".
+
 ## 4.2.  Storage System Must Be Simultaneously R/W or _Remappable_
 
-**4.2.1.** If a submitter needs to issue a cache flush operation between the write phase and the read phase of a checkpoint benchmark run, then the validator needs to check that ``--num-checkpoints-read=0`` was set during the write phase, that there was a short pause of up to 30 seconds maximum, then the write phase was started with ``--num-checkpoints-write=0`` set.
+**4.2.1.** If a submitter needs to issue a cache flush operation between the write phase and the read phase of a checkpoint benchmark run, then the validator must check that ``--num-checkpoints-read=0`` was set during the write phase, that there was a short pause of up to 30 seconds maximum, then the write phase was started with ``--num-checkpoints-write=0`` set.
 
 **4.2.2.** The validator must verify that the total test duration starts from the timestamp of the first checkpoint written and ends at the ending timestamp of the last checkpoint read, notably including the "remapping" time.
 
