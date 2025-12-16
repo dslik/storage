@@ -1,0 +1,82 @@
+system:                     include('system_description',required=True)
+power:                      include('power_requirements',required=True)
+nodes:
+    dlio_nodes:             include('node_description',required=True)
+    storage_data_nodes:     include('node_description',required=True)
+    storage_metadata_nodes: include('node_description',required=False)
+---
+system_description:
+    name:                   str(min=1)
+    description:            str(min=1)
+    storage_location:       enum('remote','local','hyper-converged')
+    client_software:        enum('in-box','proprietary')
+    storage_interface:      enum('block','file','object')
+    required_rack_units:    int(min=1)
+    shared_capabilities:
+        multi_host_support:         enum('True','False')  # False is used for local storage
+        simultaneous_write_support: enum('True','False')  # Are simultaneous writes by multiple hosts supported?
+        simultaneous_read__support: enum('True','False')  # Are simultaneous reads by multiple hosts supported?
+    max_sequential_read:    int(min=1,required=True)      # In GiB/s
+    max_sequential_write:   int(min=1,required=True)      # In GiB/s
+    max_random_read:        int(min=1,required=True)      # In GiB/s
+    max_random_write:       int(min=1,required=True)      # In GiB/s
+---
+power_requirements:
+    provisioned:            include('power_summary',required=True)
+    consumed:               include('power_summary',required=False)
+---
+power_summary:
+    dlio_client:            include('power_detail')
+    storage_data_node:      include('power_detail')
+    backend_switch:         include('power_detail')
+---
+power_detail:
+    quantity:               int(min=1   )
+    psu1_nameplate_power:   int(min=1,required=True)      # in watts
+    psu2_nameplate_power:   int(min=1,required=False)     # in watts
+    psu3_nameplate_power:   int(min=1,required=False)     # in watts
+    psu4_nameplate_power:   int(min=1,required=False)     # in watts
+    psu5_nameplate_power:   int(min=1,required=False)     # in watts
+    psu6_nameplate_power:   int(min=1,required=False)     # in watts
+    design_power:           int(min=1)                    # in Watts
+    num_active_psus:        int(min=1)
+    num_passive_psus:       int(min=0)
+---
+node_description:
+    quantity:               int(min=1)
+    hardware:               include('hardware_description')
+    networking:             list(include('network_instance'),min=1)
+    operating_system:       include('operating_system_description')
+    tuning:
+        # All non-default tunings for OS need to be listed
+        mpi_configuration:
+            environment_variables: <list>
+            version: Open MPI 4.1.4
+        sysctl_parameters:
+            <list all non-default parameters>
+
+---
+hardware_description:
+    model:                  str(min=1)
+    rack_units:             int(min=1)
+    power_supplies:         int(min=1)
+    psu_configuration:      enum('active/passive','active/active')
+    psu_rating:             int(min=1)
+    memory_capacity:        int(min=1)  # in GB, eg: 256
+    memory_configuration:   8x32GB
+    cpu_qty:                int(min=1)
+    cpu_model:              str(min=1)
+    cpu_cores:              int(min=1)
+---
+network_instance:
+    type:                   enum('management','data','backend')
+    model:                  str(min=1)
+    speed:                  int(min=1)  # in Gb/s
+    qty:                    int(min=1)
+---
+operating_system_description:
+    name:                   str(min=1)
+    version:                str(min=1)
+    release_date:           str(min=1)
+    kernel_version:         str(min=1)
+    cpu_architecture:       enum('x86','arm')
