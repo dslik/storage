@@ -31,7 +31,7 @@ The `mlpstorage` tool must be used to run the benchmarks, submitters are not all
 
 # 2.  Directory Structure for All Submissions
 
-**2.1.**  The submission structure must start from a single directory whose name is the name of the submitter.  This can be any string, possibly including blanks.
+**2.1.**  The submission structure must start from a single directory whose name is the name of the submitter.  This can be any string, but a blank or any other character in that string that cannot be part of a POSIX filename should be replaced 1-for-1 with a dash character.
 
 **2.2.**  Within the top-level directory of the submission structure there must be a directory named "closed" and/or one named "open", and nothing more.  These names are case-sensitive.
 
@@ -285,7 +285,7 @@ root_folder (or any name you prefer)
 
 **3.3.3.** For single-host submissions, increase the number of simulated accelerators by changing the `--num-accelerators` parameter to the benchmark.sh script. Note that the benchmarking tool requires approximately 0.5GB of host memory per simulated accelerator.
 
-**3.2.4.** For single-host submissions, CLOSED and OPEN division results must include benchmark runs for the maximum simulated accelerators that can be run on one host node, in one MLPerf Storage job, without going below the 90% accelerator utilization threshold.
+**3.2.4.** For single-host submissions, in both CLOSED and OPEN division results, the validator should fail the run if there is more than one client node used during that run.
 
 **3.3.5.** For distributed Training submissions, all the data must be accessible to all the host nodes.  **_(not clear how to check this, so maybe remove?)_**
 
