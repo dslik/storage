@@ -41,7 +41,7 @@ The `mlpstorage` tool must be used to run the benchmarks, submitters are not all
 
 2.5. **requiredSubdirectories** --  Within the submitter directory mentioned just above, there must be exactly three directories: "code", "results", and "systems".  These names are case-sensitive.
 
-2.6. c**odeDirectoryContents** --  The "code" directory must include a complete copy of the MLPerf Storage github repo that was used to run the test that resulted in the "results" directory's contents.
+2.6. **codeDirectoryContents** --  The "code" directory must include a complete copy of the MLPerf Storage github repo that was used to run the test that resulted in the "results" directory's contents.
 If this is in the "open" hierarchy, any modifications made to the benchmark code must be included here, and if this is in the "closed" hierarchy, there must be no changes to the benchmark code.
 Note that in both cases this must be the code that was actually run to generate those results.  In a CLOSED submission, the *submission validator* should do an md5sum of the code directory hierarchy, compare that to a value hard-coded into the validator code, and fail the validation if there is a difference.
 
