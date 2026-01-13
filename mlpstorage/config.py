@@ -48,11 +48,16 @@ HYDRA_OUTPUT_SUBDIR = "dlio_config"
 COSMOFLOW = "cosmoflow"
 RESNET = "resnet50"
 UNET = "unet3d"
-MODELS = [COSMOFLOW, RESNET, UNET]
+FLUX = "flux"
+RETINANET = "retinanet"
+DLRM = "dlrm"
+MODELS = [FLUX, RETINANET, DLRM]
 
 H100 = "h100"
 A100 = "a100"
-ACCELERATORS = [H100, A100]
+B200 = "b200"
+MI350 = "mi350"
+ACCELERATORS = [B200, MI350]
 
 OPEN = "open"
 CLOSED = "closed"

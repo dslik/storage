@@ -1,0 +1,1623 @@
+model:
+  name: parquet
+
+framework: pytorch
+
+workflow:
+  generate_data: True
+  train: False
+  checkpoint: False
+
+dataset:
+  data_folder: /mnt/nvme/data/parquet
+  format: parquet
+  compression: none
+  num_files_train: 5000
+  num_samples_per_file: 3000
+  parquet_row_group_size: 256
+  record_length: 362_788
+  record_length_stdev: 0
+  record_length_resize: 0
+
+  # Parquet-specific field specifications
+  parquet_field_specs:
+    dense_1:
+      length: 2
+      variable_length: false
+      read: false
+    dense_2:
+      length: 2
+      variable_length: false
+      read: false
+    dense_3:
+      length: 8
+      variable_length: false
+      read: true
+    dense_4:
+      length: 2
+      variable_length: false
+      read: false
+    dense_5:
+      length: 3
+      variable_length: false
+      read: false
+    dense_6:
+      length: 2
+      variable_length: false
+      read: false
+    dense_7:
+      length: 2
+      variable_length: false
+      read: false
+    dense_8:
+      length: 3
+      variable_length: false
+      read: false
+    dense_9:
+      length: 2
+      variable_length: false
+      read: false
+    dense_10:
+      length: 3
+      variable_length: false
+      read: false
+    dense_11:
+      length: 3
+      variable_length: false
+      read: false
+    dense_12:
+      length: 2
+      variable_length: false
+      read: false
+    dense_13:
+      length: 2
+      variable_length: false
+      read: false
+    dense_14:
+      length: 2
+      variable_length: false
+      read: false
+    dense_15:
+      length: 3
+      variable_length: false
+      read: false
+    dense_16:
+      length: 2
+      variable_length: false
+      read: true
+    dense_17:
+      length: 2
+      variable_length: false
+      read: false
+    dense_18:
+      length: 8
+      variable_length: false
+      read: false
+    dense_19:
+      length: 3
+      variable_length: false
+      read: false
+    dense_20:
+      length: 2
+      variable_length: false
+      read: true
+    dense_21:
+      length: 2
+      variable_length: false
+      read: false
+    dense_22:
+      length: 2
+      variable_length: false
+      read: false
+    dense_23:
+      length: 2
+      variable_length: false
+      read: true
+    dense_24:
+      length: 8
+      variable_length: false
+      read: false
+    dense_25:
+      length: 8
+      variable_length: false
+      read: false
+    dense_26:
+      length: 2
+      variable_length: false
+      read: false
+    dense_27:
+      length: 8
+      variable_length: false
+      read: true
+    dense_28:
+      length: 2
+      variable_length: false
+      read: false
+    dense_29:
+      length: 8
+      variable_length: false
+      read: false
+    dense_30:
+      length: 2
+      variable_length: false
+      read: false
+    dense_31:
+      length: 2
+      variable_length: false
+      read: false
+    dense_32:
+      length: 2
+      variable_length: false
+      read: false
+    dense_33:
+      length: 2
+      variable_length: false
+      read: false
+    dense_34:
+      length: 3
+      variable_length: false
+      read: false
+    dense_35:
+      length: 3
+      variable_length: false
+      read: true
+    dense_36:
+      length: 2
+      variable_length: false
+      read: false
+    dense_37:
+      length: 8
+      variable_length: false
+      read: false
+    dense_38:
+      length: 2
+      variable_length: false
+      read: false
+    dense_39:
+      length: 8
+      variable_length: false
+      read: false
+    dense_40:
+      length: 2
+      variable_length: false
+      read: false
+    dense_41:
+      length: 2
+      variable_length: false
+      read: false
+    dense_42:
+      length: 2
+      variable_length: false
+      read: false
+    dense_43:
+      length: 2
+      variable_length: false
+      read: false
+    dense_44:
+      length: 2
+      variable_length: false
+      read: false
+    dense_45:
+      length: 2
+      variable_length: false
+      read: false
+    dense_46:
+      length: 3
+      variable_length: false
+      read: false
+    dense_47:
+      length: 3
+      variable_length: false
+      read: false
+    dense_48:
+      length: 3
+      variable_length: false
+      read: false
+    dense_49:
+      length: 2
+      variable_length: false
+      read: false
+    dense_50:
+      length: 2
+      variable_length: false
+      read: false
+    dense_51:
+      length: 8
+      variable_length: false
+      read: false
+    dense_52:
+      length: 2
+      variable_length: false
+      read: false
+    dense_53:
+      length: 2
+      variable_length: false
+      read: false
+    dense_54:
+      length: 2
+      variable_length: false
+      read: false
+    dense_55:
+      length: 2
+      variable_length: false
+      read: false
+    dense_56:
+      length: 2
+      variable_length: false
+      read: false
+    dense_57:
+      length: 2
+      variable_length: false
+      read: true
+    dense_58:
+      length: 3
+      variable_length: false
+      read: false
+    dense_59:
+      length: 2
+      variable_length: false
+      read: false
+    dense_60:
+      length: 3
+      variable_length: false
+      read: true
+    dense_61:
+      length: 2
+      variable_length: false
+      read: false
+    dense_62:
+      length: 2
+      variable_length: false
+      read: false
+    dense_63:
+      length: 2
+      variable_length: false
+      read: false
+    dense_64:
+      length: 3
+      variable_length: false
+      read: false
+    dense_65:
+      length: 8
+      variable_length: false
+      read: false
+    dense_66:
+      length: 2
+      variable_length: false
+      read: false
+    dense_67:
+      length: 3
+      variable_length: false
+      read: false
+    dense_68:
+      length: 2
+      variable_length: false
+      read: true
+    dense_69:
+      length: 8
+      variable_length: false
+      read: false
+    dense_70:
+      length: 2
+      variable_length: false
+      read: false
+    dense_71:
+      length: 2
+      variable_length: false
+      read: false
+    dense_72:
+      length: 8
+      variable_length: false
+      read: false
+    dense_73:
+      length: 2
+      variable_length: false
+      read: true
+    dense_74:
+      length: 8
+      variable_length: false
+      read: false
+    dense_75:
+      length: 2
+      variable_length: false
+      read: false
+    dense_76:
+      length: 8
+      variable_length: false
+      read: false
+    dense_77:
+      length: 2
+      variable_length: false
+      read: false
+    dense_78:
+      length: 3
+      variable_length: false
+      read: false
+    dense_79:
+      length: 8
+      variable_length: false
+      read: false
+    dense_80:
+      length: 3
+      variable_length: false
+      read: false
+    dense_81:
+      length: 3
+      variable_length: false
+      read: false
+    dense_82:
+      length: 2
+      variable_length: false
+      read: false
+    dense_83:
+      length: 2
+      variable_length: false
+      read: false
+    dense_84:
+      length: 8
+      variable_length: false
+      read: false
+    dense_85:
+      length: 8
+      variable_length: false
+      read: false
+    dense_86:
+      length: 2
+      variable_length: false
+      read: false
+    dense_87:
+      length: 2
+      variable_length: false
+      read: false
+    dense_88:
+      length: 3
+      variable_length: false
+      read: false
+    dense_89:
+      length: 2
+      variable_length: false
+      read: false
+    dense_90:
+      length: 3
+      variable_length: false
+      read: false
+    dense_91:
+      length: 8
+      variable_length: false
+      read: false
+    dense_92:
+      length: 2
+      variable_length: false
+      read: false
+    dense_93:
+      length: 2
+      variable_length: false
+      read: false
+    dense_94:
+      length: 2
+      variable_length: false
+      read: false
+    dense_95:
+      length: 2
+      variable_length: false
+      read: false
+    dense_96:
+      length: 2
+      variable_length: false
+      read: false
+    dense_97:
+      length: 8
+      variable_length: false
+      read: false
+    dense_98:
+      length: 2
+      variable_length: false
+      read: false
+    dense_99:
+      length: 2
+      variable_length: false
+      read: false
+    dense_100:
+      length: 8
+      variable_length: false
+      read: false
+    sparse_1:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_2:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_3:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_4:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_5:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_6:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_7:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_8:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_9:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_10:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_11:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_12:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_13:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_14:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_15:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_16:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_17:
+      length: 5
+      variable_length: false
+      read: true
+    sparse_18:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_19:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_20:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_21:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_22:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: true
+    sparse_23:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_24:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_25:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_26:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_27:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_28:
+      length: 5
+      variable_length: false
+      read: false
+    sparse_29:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_30:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_31:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_32:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_33:
+      length: 5
+      variable_length: false
+      read: false
+    sparse_34:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: false
+    sparse_35:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_36:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: true
+    sparse_37:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_38:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_39:
+      length: 224
+      variable_length: false
+      read: true
+    sparse_40:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_41:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_42:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_43:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_44:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_45:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_46:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: true
+    sparse_47:
+      length: 620
+      variable_length: false
+      read: true
+    sparse_48:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_49:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_50:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_51:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_52:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_53:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_54:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_55:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_56:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_57:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_58:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_59:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_60:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_61:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_62:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_63:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_64:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_65:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_66:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_67:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_68:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_69:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_70:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_71:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_72:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_73:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_74:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_75:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_76:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_77:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_78:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_79:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_80:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_81:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_82:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_83:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_84:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_85:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_86:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_87:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_88:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_89:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_90:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_91:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_92:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_93:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_94:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_95:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_96:
+      length: 5
+      variable_length: false
+      read: false
+    sparse_97:
+      length: 620
+      variable_length: false
+      read: true
+    sparse_98:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_99:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_100:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: true
+    sparse_101:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_102:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_103:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_104:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_105:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_106:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_107:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_108:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_109:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_110:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_111:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_112:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_113:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: true
+    sparse_114:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_115:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_116:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_117:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_118:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: false
+    sparse_119:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_120:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_121:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_122:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_123:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_124:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_125:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_126:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_127:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_128:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_129:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_130:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_131:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_132:
+      length: 224
+      variable_length: false
+      read: true
+    sparse_133:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_134:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_135:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_136:
+      length: 224
+      variable_length: false
+      read: true
+    sparse_137:
+      length: 620
+      variable_length: false
+      read: true
+    sparse_138:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_139:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_140:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_141:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_142:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_143:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_144:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_145:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_146:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_147:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_148:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_149:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_150:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_151:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_152:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_153:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_154:
+      length: 620
+      variable_length: false
+      read: true
+    sparse_155:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_156:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_157:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: false
+    sparse_158:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_159:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_160:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_161:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_162:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_163:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_164:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_165:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_166:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_167:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_168:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_169:
+      length: 5
+      variable_length: false
+      read: false
+    sparse_170:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_171:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_172:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_173:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_174:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_175:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_176:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_177:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_178:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_179:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_180:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_181:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: true
+    sparse_182:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_183:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_184:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_185:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_186:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_187:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_188:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_189:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_190:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_191:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_192:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_193:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_194:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_195:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_196:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_197:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_198:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_199:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_200:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_201:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_202:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_203:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_204:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_205:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_206:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_207:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_208:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_209:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_210:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_211:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_212:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: true
+    sparse_213:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_214:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_215:
+      length: 620
+      variable_length: false
+      read: false
+    sparse_216:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: true
+    sparse_217:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_218:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: true
+    sparse_219:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_220:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_221:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_222:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_223:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_224:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_225:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_226:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_227:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_228:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: false
+    sparse_229:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_230:
+      length: 4000
+      variable_length: false
+      read: false
+    sparse_231:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: true
+    sparse_232:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_233:
+      length: 1960
+      variable_length: false
+      read: false
+    sparse_234:
+      length: 224
+      variable_length: false
+      read: true
+    sparse_235:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: false
+    sparse_236:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_237:
+      length: 4000
+      variable_length: false
+      read: true
+    sparse_238:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_239:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_240:
+      avg_length: 1960
+      variable_length: true
+      std_length: 392
+      read: false
+    sparse_241:
+      avg_length: 5
+      variable_length: true
+      std_length: 1
+      read: false
+    sparse_242:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_243:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_244:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_245:
+      avg_length: 224
+      variable_length: true
+      std_length: 44
+      read: false
+    sparse_246:
+      length: 224
+      variable_length: false
+      read: false
+    sparse_247:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_248:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false
+    sparse_249:
+      avg_length: 4000
+      variable_length: true
+      std_length: 800
+      read: false
+    sparse_250:
+      avg_length: 620
+      variable_length: true
+      std_length: 124
+      read: false

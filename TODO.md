@@ -1,0 +1,1 @@
+1. Data gen for training seems to not append the model to the path, but 'run' does append the path meaning the same string can not be used for datagen and training. This should be fixed.

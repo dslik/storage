@@ -1,0 +1,40 @@
+# Data from Nvidia GB200 NVL72 w/ 8x GPUs
+# https://github.com/mlcommons/training_results_v5.1/blob/main/NVIDIA/systems/tyche_ngpu16_ngc25.09_nemo.json
+# https://github.com/mlcommons/training_results_v5.1/blob/main/NVIDIA/results/tyche_ngpu8_ngc25.04_pytorch/retinanet/result_0.txt
+#num_samples: 1170301
+#time_ms: 293209
+#global_batch_size: 256
+#batches: 4572
+#ms_per_batch: 64
+
+model:
+  name: retinanet
+  type: cnn
+
+framework: pytorch
+
+workflow:
+ generate_data: False
+ train: True
+
+dataset:
+ data_folder: data/retinanet
+ num_subfolders_train: 2000
+ format: jpeg
+ num_files_train: 1170300
+ num_samples_per_file: 1
+ record_length_bytes: 321122
+
+reader:
+ data_loader: pytorch
+ batch_size: 48
+ read_threads: 8
+ file_shuffle: seed
+ prefetch_size: 2
+
+train:
+ epochs: 5
+ computation_time: 0.096
+
+metric:
+ au: 0.90

@@ -113,6 +113,10 @@ class Benchmark(abc.ABC):
             json.dump(self.metadata, fd, indent=2, cls=MLPSJsonEncoder)
 
         if self.args.verbose or self.args.debug or self.debug:
+            if self.metadata.get('combined_params', {}).get('dataset', {}).get('parquet_field_specs'):
+                del self.metadata['combined_params']['dataset']['parquet_field_specs']
+            if self.metadata.get('yaml_params', {}).get('dataset', {}).get('parquet_field_specs'):
+                del self.metadata['yaml_params']['dataset']['parquet_field_specs']
             json.dump(self.metadata, sys.stdout, indent=2, cls=MLPSJsonEncoder)
 
     def generate_output_location(self) -> str:

@@ -1,0 +1,32 @@
+input_context:
+  distribution: gamma
+  minimum: 2000
+  mean: 20000
+  max: 100000
+
+  # What percent of the input context is possibly reused?
+  input_reuse_hit_rate: 80%
+  # What is the distribution of reused tokens? Are reused tokens uniformly distibuted or does a small number of tokens satisfy reuse?
+  input_reuse_distribution: power
+  # How many tokens could possibly exist in the input context?
+  total_input_tokens: 10_000_000_000
+  output_reuse_hit_rate: 30%
+  output_reuse_distribution: power
+  total_output_tokens: 10_000_000_000
+
+output_definition:
+  distribution: poison
+  mean: 2000
+  stddev: 200
+  min: 100
+  max: 50000
+
+model_parameters:
+  token_kv_kb: 420
+  token_compute_latency_ms: 30
+
+workload_parameters:
+  users: 100
+  intra_query_wait_s: 100
+  multiturn: true
+  percent_of_queries_multiturn: 50

@@ -1,0 +1,54 @@
+# Data from Nvidia GB200 NVL72 w/ 16x GPUs
+# https://github.com/mlcommons/training_results_v5.1/blob/main/NVIDIA/systems/tyche_ngpu16_ngc25.09_nemo.json
+# https://github.com/mlcommons/training_results_v5.1/blob/main/NVIDIA/results/tyche_ngpu16_ngc25.09_nemo/flux1/result_0.txt
+#num_samples: 261120
+#time_ms: 288574
+#global_batch_size: 512
+#batches: 510
+#ms_per_batch: 565.8
+
+model:
+  name: parquet
+
+framework: pytorch
+
+workflow:
+  generate_data: True
+  train: False
+  checkpoint: False
+
+dataset:
+  data_folder: /mnt/nvme/data/parquet
+  format: parquet
+  compression: none
+  num_files_train: 2400
+  num_samples_per_file: 256
+  parquet_row_group_size: 64
+  record_length: 2164833  # Not used for parquet
+
+  # Parquet-specific field specifications
+  parquet_field_specs:
+    t5_encodings:
+      dtype: bytes
+      length: 2097313
+      variable_length: False
+      read: True
+    clip_encodings:
+      dtype: bytes
+      length: 1634
+      variable_length: False
+      read: True
+    mean:
+      dtype: bytes
+      length: 32929
+      read: False
+    logvar:
+      dtype: bytes
+      length: 32929
+      read: False
+    timestep:
+      dtype: bytes
+      length: 28
+      read: True
+
+
