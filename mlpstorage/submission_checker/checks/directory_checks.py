@@ -31,7 +31,7 @@ class DirectoryCheck(BaseCheck):
         self.name = "directory checks"
         self.datagen_path = os.path.join(self.path, "datagen")
         self.run_path = os.path.join(self.path, "run")
-        self.checkpointing_path = os.path.join(self.path, "checkpointing")
+        self.checkpointing_path = self.path
         self.init_checks()
 
     def init_checks(self):
