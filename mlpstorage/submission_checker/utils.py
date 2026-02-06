@@ -1,4 +1,23 @@
 import os
+import re
+
+
+def regex_matches_any(pattern: str, strings: list) -> bool:
+    """
+    Check if a regex pattern matches any value in a list of strings.
+
+    Args:
+        pattern: A regex pattern string.
+        strings: A list of strings to match against.
+
+    Returns:
+        True if the pattern matches at least one string, False otherwise.
+    """
+    try:
+        compiled_pattern = re.compile(pattern)
+        return any(compiled_pattern.search(s) for s in strings)
+    except re.error as e:
+        raise ValueError(f"Invalid regex pattern: {e}")
 
 
 def list_dir(*path):
