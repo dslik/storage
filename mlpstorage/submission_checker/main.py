@@ -13,7 +13,10 @@ from .configuration.configuration import Config
 from .loader import Loader
 
 # Import checkers
-from checks.base import BaseCheck
+from .checks.checkpointing_checks import CheckpointingCheck
+from .checks.directory_checks import DirectoryCheck
+from .checks.training_checks import TrainingCheck
+
 
 # Import result exporter
 from .results import ResultExporter
@@ -32,12 +35,17 @@ def get_args():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, help="submission directory")
+    parser.add_argument("--submitters", help="Comma separated submitters to run the checker")
     parser.add_argument(
         "--version",
         default="v5.1",
         choices=list(VERSIONS),
         help="mlperf version",
     )
+    parser.add_argument(
+        "--csv",
+        default="summary.csv",
+        help="csv file with results")
     args = parser.parse_args()
     return args
 
@@ -53,28 +61,42 @@ def main():
         int: 0 if all submissions pass checks, 1 if any errors found.
     """
     args = get_args()
-
-    config = Config()
     
-    loader = Loader(args.input, args.version)
+    submitters = str(args.submitters).split(",")
+    config = Config(version=args.version, submitters=submitters)
+    
+    loader = Loader(args.input, args.version, config)
     exporter = ResultExporter(args.csv, config)
+
 
     results = {}
     systems = {}
+    errors = []
+    checkers = [DirectoryCheck, TrainingCheck, CheckpointingCheck]
     # Main loop over all the submissions
     for logs in loader.load():
         # TODO: Initialize checkers
-
-        # TODO: Run checks
+        checkers_pipe = []
         valid = True
+        #TODO: Run checks
+        for checker in checkers:
+            valid &= checker(log, config, logs)()
 
         # TODO: Add results to summary
         if valid:
             exporter.add_result(logs)
+        else:
+            errors.append(logs.loader_metadata.folder)
     
     # Export results
     exporter.export()
 
-    # TODO: Output result summary to console
+    if len(errors) > 0:
+        log.error("SUMMARY: submission has errors")
+        return 1
+    else:
+        log.info("SUMMARY: submission looks OK")
+        return 0
 
-
+if __name__ == "__main__":
+    sys.exit(main())
