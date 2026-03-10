@@ -5,12 +5,20 @@
   - [1. Introduction](#1-introduction)
   - [2. Directory Structure for All Submissions](#2-directory-structure-for-all-submissions)
   - [3. Validating the Training Options](#3-validating-the-training-options)
-    - [3.1. Benchmark Dataset Generation Options](#31-benchmark-dataset-generation-options)
-    - [3.2. Benchmark Run Options](#32-benchmark-run-options)
-  - [4. Validating the Checkpointing Options](#3-validating-the-checkpointing-options)
-    - [4.1. Benchmark Run Options](#41-benchmark-run-options)
+    - [3.1. Training Sizing Options](#31-training-sizing-options)
+    - [3.2. Training Generation Options](#32-training-ganeration-options)
+    - [3.3. Training Run Options](#33-training-run-options)
+  - [4. Validating the Checkpointing Options](#4-validating-the-checkpointing-options)
+    - [4.1. Checkpointing Run Options](#41-checkpointing-run-options)
     - [4.2. Storage System Must Be Simultaneously R/W or Remappable](#42-storage-system-must-be-simultaneously-rw-or-remappable)
-
+  - [5. Validating the Vector Database Options](#5-validating-the-vector-database-options)
+    - [5.1. Vector Database Sizing Options](#51-vector-database-sizing-options)
+    - [5.2. Vector Database Dataset Generation Options](#52-vector-database-generation-options)
+    - [5.3. Vector Database Run Options](#53-vector-database-run-options)
+  - [6. Validating the KVCache Options](#6-validating-the-kvcache-options)
+    - [6.1. KVCache Sizing Options](#61-kvcache-sizing-options)
+    - [6.2. KVCache Generation Options](#62-kvcache-generation-options)
+    - [6.3. KVCache Run Options](#63-kvcache-run-options)
 
 # 1.  Introduction
 
@@ -254,7 +262,7 @@ root_folder (or any name you prefer)
 
 # 3.  Validating the Training Workloads
 
-## 3.1.  Datasize Options
+## 3.1.  Training Sizing Options
 
 3.1.1. **verifyDatasizeUsage** -- The *submission validator* must verify that the *datasize* option was used by finding the entry(s) in the log file showing its use.
 
@@ -270,11 +278,11 @@ root_folder (or any name you prefer)
      * `min_files_size = min_samples * record_length / 1024 / 1024 / 1024`
   * A minimum of `min_total_files` files are required which will consume `min_files_size` GB of storage.
 
-## 3.2.  Datagen Options
+## 3.2.  Training Generation Options
 
 3.2.1. **datagenMinimumSize** --  The amount of data generated during the *datagen* phase must be equal **or larger** -- than the amount of data calculated during the *datasize* phase or the run must be failed.
 
-## 3.3.  Run Options
+## 3.3.  Training Run Options
 
 3.3.1. **runDataMatchesDatasize** -- The amount of data the *run* phase is told to use must be exactly equal to the *datasize* value calculated earlier, but can be less than the value used in the *datagen* phase.  To express that, you can run the benchmark on a subset of that dataset by setting `num_files_train` or `num_files_eval` smaller than the number of files available in the dataset folder, but `num_subfolders_train` and `num_subfolders_eval` must be to be equal to the actual number of subfolders inside the dataset folder in order to generate valid results.
 
@@ -338,7 +346,7 @@ root_folder (or any name you prefer)
 
 # 4.  Validating the Checkpointing Workloads
 
-## 4.1.  Benchmark Run Options
+## 4.1.  Checkpoint Run Options
 
 4.1.1. **checkpointDataSizeRatio** -- The checkpoint data written per client node must be more than 3x the client node's memory capacity, otherwise the filesystem cache needs to be cleared between the write and read phases.
 
@@ -412,20 +420,27 @@ System:
     simultaneous_read__support: True    # Are simultaneous reads by multiple hosts supported in the submitted configuration
 ```
 
+  - [5. Validating the Vector Database Options](#5-validating-the-vector-database-options)
+    - [5.1. Vector Database Sizing Options](#51-vector-database-sizing-options)
+    - [5.2. Vector Database Dataset Generation Options](#52-vector-database-generation-options)
+    - [5.3. Vector Database Run Options](#53-vector-database-run-options)
+  - [6. Validating the KVCache Options](#6-kvcache-the-checkpointing-options)
+    - [6.1. KVCache Dataset Generation Options](#51-kvcache-dataset-generation-options)
+    - [6.2. KVCache Run Options](#61-kvcache-run-options)
 
 
+# 5. Validating the Vector Database Options
 
+## 5.1. Vector Database Sizing Options
 
+## 5.2. Vector Database Generation Options
 
+## 5.3. Vector Database Run Options
 
+# 6. Validating the KVCache Options
 
+## 6.1. KVCache Sizing Options
 
+## 6.2. KVCache Generation Options
 
-
-
-
-
-
-
-
-
+## 6.3. KVCache Run Options
