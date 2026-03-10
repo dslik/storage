@@ -35,7 +35,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        pytest tests/unit -v --tb=short
+        pytest tests/unit -vv --tb=short --setup-show
 
     - name: Run unit tests with coverage
       run: |
