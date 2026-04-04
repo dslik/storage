@@ -130,7 +130,7 @@ def handle_lockfile_command(args) -> int:
                     return EXIT_CODE.FAILURE
             except FileNotFoundError:
                 logger.error(f"Lockfile not found: {args.lockfile}")
-                logger.info("Generate a lockfile with: mlpstorage_py lockfile generate")
+                logger.info("Generate a lockfile with: mlpstorage lockfile generate")
                 return EXIT_CODE.FAILURE
 
     return EXIT_CODE.FAILURE
@@ -177,7 +177,7 @@ def run_benchmark(args, run_datetime):
                 logger.status(f"Package validation passed ({result.matched} packages verified)")
             except FileNotFoundError:
                 logger.error(f"Lockfile not found: {args.verify_lockfile}")
-                logger.error("Generate a lockfile with: mlpstorage_py lockfile generate")
+                logger.error("Generate a lockfile with: mlpstorage lockfile generate")
                 return EXIT_CODE.FAILURE
 
     # Fail-fast environment validation (unless skipped)
