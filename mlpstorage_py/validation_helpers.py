@@ -127,7 +127,7 @@ def _validate_required_params(args) -> List[Exception]:
             errors.append(ConfigurationError(
                 "Missing required parameter: data-dir for training run",
                 parameter="data_dir",
-                suggestion="Generate data first with 'mlpstorage_py training datagen'",
+                suggestion="Generate data first with 'mlpstorage training datagen'",
                 code=ErrorCode.CONFIG_MISSING_REQUIRED
             ))
 
