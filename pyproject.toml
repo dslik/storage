@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlpstorage"
-version = "3.0.0"
+version = "2.0.0b1"
 description = "MLPerf Storage Benchmark Suite"
 readme = "README.md"
 authors = [
@@ -39,10 +39,10 @@ full = [
 packages = {find = {}}
 
 [tool.setuptools.package-data]
-"mlpstorage" = ["../configs/dlio/workload/*.yaml"]
+"mlpstorage_py" = ["../configs/dlio/workload/*.yaml"]
 
 [project.scripts]
-mlpstorage = 'mlpstorage.main:main'
+mlpstorage = 'mlpstorage_py.main:main'
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -54,7 +54,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["mlpstorage"]
+source = ["mlpstorage_py"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]
