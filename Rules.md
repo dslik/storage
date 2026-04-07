@@ -156,35 +156,41 @@ root_folder (or any name you prefer)
 │	  	│		│	 		... (5x Runs per Emulated Accelerator Type)
 │	  	│		│	 		└── YYYYMMDD_HHmmss
 │	  	│		│	 			└── dlio_config
-│	  	│	 	└── checkpointing
-│	  	│	 		├── llama3-8b
-│	  	│			│	├──results.json
-│	  	│			│	├── YYYYMMDD_HHmmss
-│	  	│			│	│	└── dlio_config 
-│	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
-│	  	│			│	└── YYYYMMDD_HHmmss
-│	  	│			│		└── dlio_config
-│	  	│	 		├── llama3-70b
-│	  	│			│	├──results.json
-│	  	│			│	├── YYYYMMDD_HHmmss
-│	  	│			│	│	└── dlio_config 
-│	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
-│	  	│			│	└── YYYYMMDD_HHmmss
-│	  	│			│		└── dlio_config
-│	  	│	 		├── llama3-405b
-│	  	│			│	├──results.json
-│	  	│			│	├── YYYYMMDD_HHmmss
-│	  	│			│	│	└── dlio_config 
-│	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
-│	  	│			│	└── YYYYMMDD_HHmmss
-│	  	│			│		└── dlio_config
-│	  	│	 		└── llama3-1t
-│	  	│				├──results.json
-│	  	│			 	├── YYYYMMDD_HHmmss
-│	  	│			 	│	└── dlio_config 
-│	  	│			 	... (10x Runs for Read and Write. May be combined in a single run)
-│	  	│				└── YYYYMMDD_HHmmss
-│	  	│			 		└── dlio_config
+│	  	│	 	├── checkpointing
+│	  	│	 	│	├── llama3-8b
+│	  	│		│	│	├──results.json
+│	  	│		│	│	├── YYYYMMDD_HHmmss
+│	  	│		│	│	│	└── dlio_config 
+│	  	│		│	│ 	... (10x Runs for Read and Write. May be combined in a single run)
+│	  	│		│	│	└── YYYYMMDD_HHmmss
+│	  	│		│	│		└── dlio_config
+│	  	│	 	│	├── llama3-70b
+│	  	│		│	│	├──results.json
+│	  	│		│	│	├── YYYYMMDD_HHmmss
+│	  	│		│	│	│	└── dlio_config 
+│	  	│		│	│ 	... (10x Runs for Read and Write. May be combined in a single run)
+│	  	│		│	│	└── YYYYMMDD_HHmmss
+│	  	│		│	│		└── dlio_config
+│	  	│	 	│	├── llama3-405b
+│	  	│		│	│	├──results.json
+│	  	│		│	│	├── YYYYMMDD_HHmmss
+│	  	│		│	│	│	└── dlio_config 
+│	  	│		│	│ 	... (10x Runs for Read and Write. May be combined in a single run)
+│	  	│		│	│	└── YYYYMMDD_HHmmss
+│	  	│		│	│		└── dlio_config
+│	  	│	 	│	└── llama3-1t
+│	  	│		│		├──results.json
+│	  	│		│	 	├── YYYYMMDD_HHmmss
+│	  	│		│	 	│	└── dlio_config 
+│	  	│		│	 	... (10x Runs for Read and Write. May be combined in a single run)
+│	  	│		│		└── YYYYMMDD_HHmmss
+│	  	│		│	 		└── dlio_config
+│	  	│	 	└── vdb_bench
+│	  	│	 		└── YYYYMMDD_HHmmss
+│	  	│			│	└── summary.json
+│	  	│			... (5x Runs total)
+│	  	│			└── YYYYMMDD_HHmmss
+│	  	│				└── summary.json
 │	  	└── systems
 │	  		├──system-name-1.yaml
 │	  		├──system-name-1.pdf
@@ -230,35 +236,41 @@ root_folder (or any name you prefer)
 		│		│	 		... (5x Runs per Emulated Accelerator Type)
 		│		│	 		└── YYYYMMDD_HHmmss
 		│		│	 			└── dlio_config
-		│	 	└── checkpointing
-		│	 		├── llama3-8b
-		│			|	├──results.json
-		│			│	├── YYYYMMDD_HHmmss
-		│			│	│	└── dlio_config 
-		│			│	... (10x Runs for Read and Write. May be combined in a single run)
-		│			│	└── YYYYMMDD_HHmmss
-		│			│		└── dlio_config
-		│	 		├── llama3-70b
-		│			|	├──results.json
-		│			│	├── YYYYMMDD_HHmmss
-		│			│	│	└── dlio_config 
-		│			│	... (10x Runs for Read and Write. May be combined in a single run)
-		│			│	└── YYYYMMDD_HHmmss
-		│			│		└── dlio_config
-		│	 		├── llama3-405b
-		│			|	├──results.json
-		│			│	├── YYYYMMDD_HHmmss
-		│			│	│	└── dlio_config 
-		│			│	... (10x Runs for Read and Write. May be combined in a single run)
-		│			│	└── YYYYMMDD_HHmmss
-		│			│		└── dlio_config
-		│	 		└── llama3-1t
-		│				├──results.json
-		│			 	├── YYYYMMDD_HHmmss
-		│			 	│	└── dlio_config 
-		│				... (10x Runs for Read and Write. May be combined in a single run)
-		│				└── YYYYMMDD_HHmmss
-		│			 		└── dlio_config
+	  	│	 	├── checkpointing
+	  	│	 	│	├── llama3-8b
+	  	│		│	│	├──results.json
+	  	│		│	│	├── YYYYMMDD_HHmmss
+	  	│		│	│	│	└── dlio_config 
+	  	│		│	│ 	... (10x Runs for Read and Write. May be combined in a single run)
+	  	│		│	│	└── YYYYMMDD_HHmmss
+	  	│		│	│		└── dlio_config
+	  	│	 	│	├── llama3-70b
+	  	│		│	│	├──results.json
+	  	│		│	│	├── YYYYMMDD_HHmmss
+	  	│		│	│	│	└── dlio_config 
+	  	│		│	│ 	... (10x Runs for Read and Write. May be combined in a single run)
+	  	│		│	│	└── YYYYMMDD_HHmmss
+	  	│		│	│		└── dlio_config
+	  	│	 	│	├── llama3-405b
+	  	│		│	│	├──results.json
+	  	│		│	│	├── YYYYMMDD_HHmmss
+	  	│		│	│	│	└── dlio_config 
+	  	│		│	│ 	... (10x Runs for Read and Write. May be combined in a single run)
+	  	│		│	│	└── YYYYMMDD_HHmmss
+	  	│		│	│		└── dlio_config
+	  	│	 	│	└── llama3-1t
+	  	│		│		├──results.json
+	  	│		│	 	├── YYYYMMDD_HHmmss
+	  	│		│	 	│	└── dlio_config 
+	  	│		│	 	... (10x Runs for Read and Write. May be combined in a single run)
+	  	│		│		└── YYYYMMDD_HHmmss
+	  	│		│	 		└── dlio_config
+	  	│	 	└── vdb_bench
+	  	│	 		└── YYYYMMDD_HHmmss
+	  	│			│	└── summary.json
+	  	│			... (5x Runs total)
+	  	│			└── YYYYMMDD_HHmmss
+	  	│				└── summary.json
 		└── systems
 			├──system-name-1.yaml
 			├──system-name-1.pdf
