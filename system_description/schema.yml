@@ -1,6 +1,6 @@
 #
 # The yaml structure is composed of a system description, power info,
-# and a list of nodes of various types.   All are required subsections.
+# and a list of nodes of various types.  All are required subsections.
 #
 system:                     include('system_description',required=True)
 power:                      include('power_requirements',required=True)
@@ -83,34 +83,35 @@ system_description:
 #       PowerCapacityWatts: 12000
 #     - Name: PSU 2
 #       PowerCapacityWatts: 12000
-power_requirements:
-    provisioned:            include('power_summary',required=True)
-    consumed:               include('power_summary',required=False)
+Power:
+    Provisioned:            include('power_provisioned',required=True)
+    Consumed:               include('power_consumed',required=False)
 ---
-power_summary:
-    storage_data_node:      include('power_detail')
-    storage_metdata_node:   include('power_detail')
-    backend_switch:         include('power_detail')
+power_rack:
 ---
-power_detail:
-    quantity:               int(min=1)
-    psu1_nameplate_power:   int(min=1,required=True)      # in watts
-    psu2_nameplate_power:   int(min=1,required=False)     # in watts
-    psu3_nameplate_power:   int(min=1,required=False)     # in watts
-    psu4_nameplate_power:   int(min=1,required=False)     # in watts
-    psu5_nameplate_power:   int(min=1,required=False)     # in watts
-    psu6_nameplate_power:   int(min=1,required=False)     # in watts
-    design_power:           int(min=1)                    # in Watts
-    num_active_psus:        int(min=1)
-    num_passive_psus:       int(min=0)
+power_provisioned:
+    storage_data_node:      list(include('power_device'),min=1)
+---
+power_device:
+    Description:            str(min=1)
+    Min PSUs Needed:        int(min=1)
+    PSUs:                   list(include('power_supply'),min=1)
+---
+power_supply:
+    Name:                   str(min=1)
+    PowerCapacityWatts:     int(min=1)
+---
+power_consumed:
+    Watts:                  int(min=1)
 
 ---
 # 
 # 
 # 
 node_description:
-    quantity:               int(min=1)
-    hardware:               include('hardware_description')
+    Description:            str(min=1)
+    Quantity:               int(min=1)
+    Hardware:               include('hardware_description')
     networking:             list(include('network_instance'),min=1)
     operating_system:       include('operating_system_description')
     tuning:
