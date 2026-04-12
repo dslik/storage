@@ -41,10 +41,10 @@ system_capabilities:
 #
 #
 hardware_description:
-    storage:                    include('node_description')
-    switches:                   include('switch_description',required=False,none=False)
+    storage:                    list(include('node_description'),required=False,none=True)
+    switches:                   list(include('switch_description'),required=False,none=True)
     total_rack_units:           int(min=0)
-    clients:                    include('node_description')
+    clients:                    list(include('node_description'),required=True,none=False)
 
 ---
 # 
@@ -56,13 +56,16 @@ node_description:
     chassis:                    include('chassis_description')
     networking:                 list(include('network_instance'),min=1)
     operating_system:           include('operating_system_description')
-    tuning:
-        # All non-default tunings for OS need to be listed
-        mpi_configuration:
-            environment_variables: <list>
-            version: Open MPI 4.1.4
-        sysctl_parameters:
-            <list all non-default parameters>
+    environment:                list(include('key_value'),required=False,none=True) # All non-default values
+    sysctl:                     list(include('key_value'),required=False,none=True) # All non-default values
+
+---
+#
+# All non-default tunings for OS need to be listed
+#
+key_value:
+    name:                       str(min=1)
+    value:                      str(min=1)
 
 ---
 #
@@ -168,8 +171,8 @@ switch_description:
 #     - Name: PSU 2
 #       PowerCapacityWatts: 12000
 Power:
-    Provisioned:            include('power_provisioned')
-    Consumed:               include('power_consumed',required=False,none=False)
+    provisioned:            include('power_provisioned')
+    consumed:               include('power_consumed',required=False,none=False)
 ---
 power_rack:
 ---
@@ -177,9 +180,9 @@ power_provisioned:
     storage_data_node:      list(include('power_device'),min=1)
 ---
 power_device:
-    Description:            str(min=1)
-    Min PSUs Needed:        int(min=1)
-    PSUs:                   list(include('power_supply'),min=1)
+    description:            str(min=1)
+    min psus needed:        int(min=1)
+    psus:                   list(include('power_supply'),min=1)
 ---
 power_supply:
     Name:                   str(min=1)

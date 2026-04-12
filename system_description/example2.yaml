@@ -1,0 +1,117 @@
+system_under_test:
+    system:
+        submission_name: Fast and Amazing Storage
+        friendly_description: The best thing since sliced bread
+        software:
+            location: local
+            interface: file
+            client_footprint: open_source
+            client_installation: in_box
+        capabilities:
+            multi_host: true
+            simultaneous_write: true
+            simultaneous_read: true
+            remap_time_in_seconds: 0
+    hardware:
+        storage:
+            - friendly_description: Anvil Metadata
+              quantity: 2
+              chassis: 
+                  model_name: Dell7680
+                  rack_units: 1
+                  power_supplies: 2
+                  psu_configuration: active/active
+                  psu_rating: 1800
+                  memory_capacity: 256
+                  cpu_model: XEON 90000
+                  cpu_qty: 2
+                  cpu_cores: 96
+               networking:
+                  - type: ethernet
+                    speed: 100
+                    port_count: 1
+                    traffic: management, metadata
+               operating_system:
+                   name: Rocky Linux
+                   version: 9.5
+               environment:
+                   - name: foobar
+                     value: 12
+                   - name: foobarbaz
+                     value: 13
+               sysctl: none
+                   - name: barfoo
+                     value: 21
+                   - name: bazbarfoo
+                     value: 31
+            - friendly_description: DSX Data
+              quantity: 4
+              chassis: 
+                  model_name: Dell7680
+                  rack_units: 1
+                  power_supplies: 2
+                  psu_configuration: active/active
+                  psu_rating: 1800
+                  memory_capacity: 256
+                  cpu_model: XEON 90000
+                  cpu_qty: 2
+                  cpu_cores: 96
+               networking:
+                  - type: ethernet
+                    speed: 100
+                    port_count: 1
+                    traffic: management, data
+               operating_system:
+                   name: Rocky Linux
+                   version: 9.5
+               environment: none
+               sysctl:  none
+        switches: none
+            vendor_name: Cisco
+            model_name: Mongo 5000
+            ports:
+                - type: ethernet
+                  speed: 100
+                  port_count: 128
+                  traffic: data
+            rack_units: 2
+            power_supplies: 2
+            psu_configuration: active/passive
+            psu_rating: 1800
+            port_count: 128
+        total_rack_units: 4
+        clients:
+            - friendly_description: Benchmark load system
+              quantity: 16
+              chassis: 
+                  model_name: Dell7680
+                  rack_units: 1
+                  power_supplies: 2
+                  psu_configuration: active/active
+                  psu_rating: 1800
+                  memory_capacity: 256
+                  cpu_model: XEON 90000
+                  cpu_qty: 2
+                  cpu_cores: 96
+               networking:
+                  - type: ethernet
+                    speed: 100
+                    port_count: 1
+                    traffic: data
+               operating_system:
+                   name: RHEL
+                   version: 10.1
+               environment: none
+               sysctl: none
+    power:
+        provisioned:
+            storage_data_node:
+                description: nerf
+                min psus needed: 2
+                psus:
+                    - Name: Silex
+                      PowerCapacityWatts: 1800
+                    - Name: Silex
+                      PowerCapacityWatts: 1800
+        consumed:
+            Watts: 1800
