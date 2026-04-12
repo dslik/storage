@@ -2,128 +2,105 @@
 # The root of the yaml tree.
 #
 system_under_test:
-    system:                     include('system_description')
-    hardware:                   include('hardware_description')
-
----
-#
-#
-#
-system_description:
-    submission_name:            str(min=1)
-    friendly_description:       str(min=1)
-    software:                   include('software_description')
-    capabilities:               include('system_capabilities')
-
----
-#
-#
-#
-software_description:
-    location:                   enum('remote','local','remote_and_local')
-    interface:                  enum('file','object','block')
-    client_footprint:           enum('open_source','closed_source','none')
-    client_installation:        enum('in_box','installable','n/a')
-
----
-#
-#
-#
-system_capabilities:
-    multi_host:                 bool()      # False is used for local storage
-    simultaneous_write:         bool()      # Are simultaneous writes by multiple hosts supported?
-    simultaneous_read:          bool()      # Are simultaneous reads by multiple hosts supported?
-    remap_time_in_seconds:      int(min=0)  # Time required to go from writing to reading
-
----
-#
-#
-#
-hardware_description:
-    storage:                    list(include('node_description'),required=False,none=True)
-    switches:                   list(include('switch_description'),required=False,none=True)
-    total_rack_units:           int(min=0)
-    clients:                    list(include('node_description'),required=True,none=False)
+    system:
+        submission_name:            str( min=1 )
+        friendly_description:       str( min=1 )
+        architecture:
+            storage_location:       enum( 'remote', 'local', 'remote_and_local' )
+            benchmark_API:          enum( 'file', 'object', 'block' )   # what the benchmark uses
+            product_API:            enum( 'file', 'object', 'block' )   # What the product supports
+            client_footprint:       enum( 'open_source', 'closed_source', 'none' )
+            client_installation:    enum( 'in_box', 'installable', 'n/a' )
+        capabilities:
+            multi_host:             bool( )      # False is used for local storage
+            simultaneous_write:     bool( )      # Are simultaneous writes by multiple hosts supported?
+            simultaneous_read:      bool( )      # Are simultaneous reads by multiple hosts supported?
+            remap_time_in_seconds:  int( min=0 )  # Time required to go from writing to reading
+    storage:                        list( include( 'node_description' ), required=False )
+    switches:                       list( include( 'switch_description' ), required=False )
+    total_rack_units:               int( min=0 )  # Not including clients
+    clients:                        list( include( 'node_description' ), required=True )
 
 ---
 # 
 # 
 # 
 node_description:
-    friendly_description:       str(min=1)
-    quantity:                   int(min=1)
-    chassis:                    include('chassis_description')
-    networking:                 list(include('network_instance'),min=1)
-    operating_system:           include('operating_system_description')
-    environment:                list(include('key_value'),required=False,none=True) # All non-default values
-    sysctl:                     list(include('key_value'),required=False,none=True) # All non-default values
+    friendly_description:       str( min=1 )
+    quantity:                   int( min=1 )
+    chassis:
+        model_name:             str( min=1 )
+        rack_units:             int( min=1 )
+        cpu_model:              str( min=1 )
+        cpu_qty:                int( min=1 )
+        cpu_cores:              int( min=1 )
+        memory_capacity:        int( min=1 )  # in GiB, eg: 256
+        power:                  include( 'power_device' )
+    networking:                 list( include( 'network_instance' ), required=False )
+    drives:                     list( include( 'drive_instance' ), required=False )
+    operating_system:
+        name:                   str( min=1 )
+        version:                str( min=1 )
+    environment:                list( include( 'key_value' ), required=False ) # Just non-default values
+    sysctl:                     list( include( 'key_value' ), required=False ) # Just non-default values
 
 ---
 #
 # All non-default tunings for OS need to be listed
 #
 key_value:
-    name:                       str(min=1)
-    value:                      str(min=1)
-
----
-#
-#
-#
-chassis_description:
-    model_name:                 str(min=1)
-    rack_units:                 int(min=1)
-    cpu_model:                  str(min=1)
-    cpu_qty:                    int(min=1)
-    cpu_cores:                  int(min=1)
-    memory_capacity:            int(min=1)  # in GiB, eg: 256
-    power:                      include('power_device')
+    name:                       str( min=1 )
+    value:                      str( min=1 )
 
 ---
 #
 #
 #
 network_instance:
-    type:                       enum('ethernet','infiniband','other')
-    speed:                      int(min=1)  # in Gigabits/s
-    port_count:                 int(min=1)
-    traffic:                    list(enum('management','data','metadata','backend'),min=1)
+    type:                       enum( 'ethernet', 'infiniband', 'other' )
+    speed:                      int( min=1 )  # in Gigabits/s
+    traffic:                    list( enum( 'management', 'data', 'metadata', 'backend' ), min=1 )
+    unit_count:                 int( min=1 )  # Number of ports that look like this
 
 ---
 #
+# Not including boot drives.
 #
-#
-operating_system_description:
-    name:                       str(min=1)
-    version:                    str(min=1)
+drive_instance:
+    vendor_name:                str( min=1 )
+    model_name:                 str( min=1 )
+    interface:                  enum( 'nvme', 'SAS', 'SATA', 'other' )
+    capacity_in_GB:             int( min=1 )  # in base 10 GB, not in GiB
+    unit_count:                 int( min=1 )  # Number of drives that look like this
 
 ---
 #
 #
 #
 switch_description:
-    vendor_name:                str(min=1)
-    model_name:                 str(min=1)
-    ports:                      list(include('network_instance'),min=1)
-    rack_units:                 int(min=1)
-    power:                      include('power_device')
+    vendor_name:                str( min=1 )
+    model_name:                 str( min=1 )
+    ports:                      list( include( 'network_instance' ), min=1 )
+    rack_units:                 int( min=1 )
+    power:                      include( 'power_device' )
+    unit_count:                 int( min=1 )  # Number of switches that look like this
 
 ---
 #
 #
 #
 power_device:
-    min_psus_active:            int(min=1)
-    psus_configured:            list(include('power_supply'),min=1)
+    min_psus_active:            int( min=1 )
+    psus_configured:            list( include( 'power_supply' ), min=1 )
 
 ---
 #
 #
 #
 power_supply:
-    Name:                       str(min=1)
-    PowerCapacityWatts:         int(min=1)
-    Efficiency:                 enum('Gold','Platinum','Titanium','Ruby')
+    Name:                       str( min=1 )
+    PowerCapacityWatts:         int( min=1 )
+    Efficiency:                 enum( 'Gold', 'Platinum', 'Titanium', 'Ruby' )
 
 
 
