@@ -192,18 +192,38 @@ def add_universal_arguments(parser):
         help="Path to YAML file with argument overrides"
     )
 
-    # Create a mutually exclusive group for closed/open options
+    # Create a mutually exclusive group for file/object options
+    access_proto = standard_args.add_mutually_exclusive_group(required=True)
+    access_proto.add_argument(
+        "--file",
+        action="store_true",
+        help="Use POSIX files as the data access method"
+    )
+    access_proto.add_argument(
+        "--object",
+        nargs="?",
+        type=str,
+        const="s3",
+        choices=["s3"],
+        help="Use the given Object API as the data access method, defaults to S3"
+    )
+
+    # Create a mutually exclusive group for closed/open options.
+    # Both flags set their own independent boolean so downstream code can
+    # distinguish "--open passed", "--closed passed", and "neither passed".
     submission_group = standard_args.add_mutually_exclusive_group()
     submission_group.add_argument(
         "--open",
-        action="store_false",
-        dest="closed",
+        action="store_true",
+        dest="open",
         default=False,
         help="Run as an open submission"
     )
     submission_group.add_argument(
         "--closed",
         action="store_true",
+        dest="closed",
+        default=False,
         help="Run as a closed submission"
     )
 
