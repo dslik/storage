@@ -1210,3 +1210,147 @@ class TestMultiHostTimeSeriesCollector:
         if bad_host_samples:
             # If we got samples, they should have errors
             assert any('errors' in s for s in bad_host_samples)
+
+
+class TestMPICollectorScriptMain:
+    """Tests for the main() function embedded in MPI_COLLECTOR_SCRIPT.
+
+    Verifies that every rank always calls comm.gather() even when
+    collect_local_info() raises, preventing a deadlock on surviving ranks.
+    """
+
+    @staticmethod
+    def _load_script_ns():
+        """Exec MPI_COLLECTOR_SCRIPT into a fresh namespace and return it."""
+        from mlpstorage_py.cluster_collector import MPI_COLLECTOR_SCRIPT
+        ns = {'__name__': 'mlps_collector'}
+        exec(MPI_COLLECTOR_SCRIPT, ns)
+        return ns
+
+    @staticmethod
+    def _mock_mpi(mock_comm):
+        """Return a sys.modules patch dict wiring mock_comm as MPI.COMM_WORLD."""
+        mock_mpi = MagicMock()
+        mock_mpi.COMM_WORLD = mock_comm
+        mock_mpi4py = MagicMock()
+        mock_mpi4py.MPI = mock_mpi
+        return {'mpi4py': mock_mpi4py}
+
+    def test_gather_called_on_successful_collection(self, tmp_path):
+        """Normal path: gather is called with local info dict including mpi_rank."""
+        output_file = str(tmp_path / 'out.json')
+        mock_comm = MagicMock()
+        mock_comm.Get_rank.return_value = 1
+        mock_comm.Get_size.return_value = 2
+        mock_comm.gather.return_value = None
+
+        ns = self._load_script_ns()
+        ns['collect_local_info'] = MagicMock(return_value={'hostname': 'node1'})
+
+        with patch.dict('sys.modules', self._mock_mpi(mock_comm)), \
+             patch('sys.argv', ['script', output_file]):
+            ns['main']()
+
+        mock_comm.gather.assert_called_once()
+        gathered_info = mock_comm.gather.call_args[0][0]
+        assert gathered_info['hostname'] == 'node1'
+        assert gathered_info['mpi_rank'] == 1
+        assert '_collection_error' not in gathered_info
+
+    def test_gather_still_called_when_collection_raises(self, tmp_path):
+        """Error path: gather is called even when collect_local_info() raises."""
+        output_file = str(tmp_path / 'out.json')
+        mock_comm = MagicMock()
+        mock_comm.Get_rank.return_value = 1
+        mock_comm.Get_size.return_value = 2
+        mock_comm.gather.return_value = None
+
+        ns = self._load_script_ns()
+        ns['collect_local_info'] = MagicMock(side_effect=RuntimeError('disk read failed'))
+
+        with patch.dict('sys.modules', self._mock_mpi(mock_comm)), \
+             patch('sys.argv', ['script', output_file]):
+            ns['main']()
+
+        mock_comm.gather.assert_called_once()
+
+    def test_sentinel_has_collection_error_key(self, tmp_path):
+        """Error sentinel must contain _collection_error so callers can detect failures."""
+        output_file = str(tmp_path / 'out.json')
+        mock_comm = MagicMock()
+        mock_comm.Get_rank.return_value = 1
+        mock_comm.Get_size.return_value = 2
+        mock_comm.gather.return_value = None
+
+        ns = self._load_script_ns()
+        ns['collect_local_info'] = MagicMock(side_effect=RuntimeError('disk read failed'))
+
+        with patch.dict('sys.modules', self._mock_mpi(mock_comm)), \
+             patch('sys.argv', ['script', output_file]):
+            ns['main']()
+
+        gathered_info = mock_comm.gather.call_args[0][0]
+        assert '_collection_error' in gathered_info
+        assert 'disk read failed' in gathered_info['_collection_error']
+
+    def test_sentinel_has_hostname_and_rank(self, tmp_path):
+        """Error sentinel must carry hostname and mpi_rank so rank 0 can identify the source."""
+        output_file = str(tmp_path / 'out.json')
+        mock_comm = MagicMock()
+        mock_comm.Get_rank.return_value = 2
+        mock_comm.Get_size.return_value = 4
+        mock_comm.gather.return_value = None
+
+        ns = self._load_script_ns()
+        ns['collect_local_info'] = MagicMock(side_effect=OSError('permission denied'))
+
+        with patch.dict('sys.modules', self._mock_mpi(mock_comm)), \
+             patch('sys.argv', ['script', output_file]):
+            ns['main']()
+
+        gathered_info = mock_comm.gather.call_args[0][0]
+        assert gathered_info['mpi_rank'] == 2
+        assert 'hostname' in gathered_info
+
+    def test_rank_zero_writes_output_file(self, tmp_path):
+        """Rank 0 writes the JSON output file when collection succeeds."""
+        output_file = str(tmp_path / 'out.json')
+        mock_comm = MagicMock()
+        mock_comm.Get_rank.return_value = 0
+        mock_comm.Get_size.return_value = 1
+        mock_comm.gather.return_value = [{'hostname': 'node0', 'mpi_rank': 0}]
+
+        ns = self._load_script_ns()
+        ns['collect_local_info'] = MagicMock(return_value={'hostname': 'node0'})
+
+        with patch.dict('sys.modules', self._mock_mpi(mock_comm)), \
+             patch('sys.argv', ['script', output_file]):
+            ns['main']()
+
+        with open(output_file) as f:
+            data = json.load(f)
+        assert 'node0' in data
+
+    def test_rank_zero_writes_output_when_another_rank_sent_sentinel(self, tmp_path):
+        """Rank 0 writes JSON even when another rank's payload is an error sentinel."""
+        output_file = str(tmp_path / 'out.json')
+        mock_comm = MagicMock()
+        mock_comm.Get_rank.return_value = 0
+        mock_comm.Get_size.return_value = 2
+        mock_comm.gather.return_value = [
+            {'hostname': 'node0', 'mpi_rank': 0},
+            {'hostname': 'node1', 'mpi_rank': 1, '_collection_error': 'disk read failed'},
+        ]
+
+        ns = self._load_script_ns()
+        ns['collect_local_info'] = MagicMock(return_value={'hostname': 'node0'})
+
+        with patch.dict('sys.modules', self._mock_mpi(mock_comm)), \
+             patch('sys.argv', ['script', output_file]):
+            ns['main']()
+
+        with open(output_file) as f:
+            data = json.load(f)
+        assert 'node0' in data
+        assert 'node1' in data
+        assert '_collection_error' in data['node1']

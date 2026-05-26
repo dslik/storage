@@ -387,9 +387,12 @@ class CommandExecutor:
                 )
                 
                 for stream in readable:
-                    line = stream.readline()
-                    if not line:  # EOF
+                    # read1() returns whatever bytes are in the pipe buffer without
+                    # blocking for '\n', preventing a hang on \r-terminated output.
+                    raw = stream.buffer.read1(65536)
+                    if not raw:  # EOF
                         continue
+                    line = raw.decode('utf-8', errors='replace')
                         
                     if stream.fileno() == stdout_fd:
                         stdout_buffer.write(line)

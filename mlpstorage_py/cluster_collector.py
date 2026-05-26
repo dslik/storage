@@ -1128,11 +1128,19 @@ def main():
             json.dump(error_output, f, indent=2)
         sys.exit(1)
 
-    # Collect local info
-    local_info = collect_local_info()
-    local_info['mpi_rank'] = rank
+    # Collect local info — wrap in try/except so every rank always reaches
+    # comm.gather(); an early exit from any rank would deadlock all others.
+    try:
+        local_info = collect_local_info()
+        local_info['mpi_rank'] = rank
+    except Exception as e:
+        local_info = {
+            'hostname': socket.gethostname(),
+            'mpi_rank': rank,
+            '_collection_error': str(e),
+        }
 
-    # Gather all info to rank 0
+    # Gather all info to rank 0 — every rank must reach this call
     all_info = comm.gather(local_info, root=0)
 
     if rank == 0:
