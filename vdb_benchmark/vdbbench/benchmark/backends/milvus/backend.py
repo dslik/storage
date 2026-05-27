@@ -218,8 +218,11 @@ class MilvusBackend(VectorDBBackend):
     # ------------------------------------------------------------------
     def row_count(self, name: str) -> int:
         col = self._get_collection(name)
-        col.flush()
         return col.num_entities
+
+    def flush_collection(self, name: str) -> None:
+        col = self._get_collection(name)
+        col.flush()
 
     def get_index_progress(self, name: str) -> IndexProgress:
         """Query Milvus ``index_building_progress`` and return a snapshot."""
