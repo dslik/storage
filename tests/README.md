@@ -308,7 +308,12 @@ python tests/integration/test_compat_runtime.py
 python tests/integration/test_mpi_basic.py
 
 # DLIO + MPI together
-python tests/integration/test_dlio_mpi.py
+# This is an MPI program: launch it with an MPI runner, not plain `python`.
+# If the host has fewer cores than -np, add --oversubscribe (or --use-hwthread-cpus);
+# otherwise mpirun fails with "There are not enough slots available in the system".
+mpirun -np 8 python tests/integration/test_dlio_mpi.py
+# Single-host machine with <8 cores:
+# mpirun --oversubscribe -np 8 python tests/integration/test_dlio_mpi.py
 
 # A/B comparison: MLP vs dpsi implementations
 python tests/integration/test_ab_comparison.py

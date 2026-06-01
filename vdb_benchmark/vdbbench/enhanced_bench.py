@@ -903,7 +903,13 @@ def create_flat_collection(
                     pct = min(100.0, 100.0 * copied / total_vectors)
                     print(f"  Copied {copied}/{total_vectors} vectors ({pct:.1f}%)")
 
-        print(f"  Copied {copied}/{total_vectors} vectors (100.0%)")
+        # Compute actual completion percentage rather than hardcoding 100%.
+        # When the source collection has duplicate primary keys, the
+        # query_iterator deduplicates and `copied` ends up well below
+        # `total_vectors` — printing "100.0%" here used to hide that
+        # (see issue #375).
+        final_pct = 100.0 * copied / total_vectors if total_vectors else 0.0
+        print(f"  Copied {copied}/{total_vectors} vectors ({final_pct:.1f}%)")
         flat_coll.flush()
 
         # Wait for entity count to stabilize after flush
@@ -928,6 +934,24 @@ def create_flat_collection(
         flat_coll.load()
         print(f"FLAT collection '{flat_collection_name}' ready with "
               f"{flat_coll.num_entities} vectors.")
+
+        # Guard: the ground-truth FLAT collection must cover the source
+        # collection's vectors. If it doesn't, recall@k will be artificially
+        # low because most ANN-returned PKs simply won't exist in the GT
+        # set. This was the failure mode reported in issue #375 (caused by
+        # duplicate PKs in the source). Fail loudly rather than silently
+        # producing meaningless recall numbers.
+        coverage = (flat_coll.num_entities / total_vectors) if total_vectors else 0.0
+        if coverage < 0.99:
+            print(f"ERROR: FLAT ground-truth collection covers only "
+                  f"{flat_coll.num_entities}/{total_vectors} "
+                  f"({coverage * 100:.2f}%) of the source collection. "
+                  f"This will produce artificially low recall@k. "
+                  f"Common cause: duplicate primary keys in the source "
+                  f"collection (see issue #375). "
+                  f"Re-run the load step and verify unique PKs.")
+            return False
+
         return True
 
     except Exception as e:
