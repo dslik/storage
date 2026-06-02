@@ -245,8 +245,11 @@ class MilvusBackend(VectorDBBackend):
         return utility.list_collections()
 
     def get_collection_info(self, name: str) -> Dict[str, Any]:
+        # NOTE (VDB-3): introspection must not mutate storage state. row_count
+        # here reads col.num_entities directly; call flush_collection(name)
+        # explicitly beforehand if you need the count to reflect unflushed
+        # in-memory segments.
         col = self._get_collection(name)
-        col.flush()
 
         # Extract schema fields
         schema = []
@@ -301,8 +304,9 @@ class MilvusBackend(VectorDBBackend):
         logger.info("Dropped index on field '%s' from '%s'", field, name)
 
     def get_collection_stats(self, name: str) -> Dict[str, Any]:
+        # NOTE (VDB-3): monitoring/stats must not mutate storage state. See
+        # flush_collection(name) for intentional pre-benchmark flushing.
         col = self._get_collection(name)
-        col.flush()
         prog = self.get_index_progress(name)
         stats: Dict[str, Any] = {
             "name": name,

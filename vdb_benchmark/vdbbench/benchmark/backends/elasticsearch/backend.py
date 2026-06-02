@@ -205,6 +205,18 @@ class ElasticsearchBackend(VectorDBBackend):
         top_k: int,
         search_params: Optional[Dict[str, Any]] = None,
     ) -> List[List[int]]:
+        """k-NN search over one or more query vectors.
+
+        A single vector uses the regular ``_search`` fast path; multiple
+        vectors are sent as one ``_msearch`` (multi-search) request rather
+        than a serial loop of HTTP round-trips.
+
+        Note (VDB-4): batching here makes per-query HTTP overhead *more
+        comparable* to Milvus's single-RPC batch search, but it does not make
+        cross-backend QPS strictly equivalent -- ``_msearch`` and Milvus's RPC
+        still differ in execution model, so cross-backend QPS should be read as
+        indicative, not as an apples-to-apples measurement.
+        """
         params = search_params or {}
         num_candidates = params.get("num_candidates", 100)
 
