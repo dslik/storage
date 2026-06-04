@@ -657,6 +657,11 @@ class TestPsuCount:
         doc["system_under_test"]["product_nodes"][0]["chassis"]["power"]["min_psus_active"] = 2
         ok(doc)
 
+    def test_min_zero_invalid(self):
+        doc = _onprem_doc()
+        doc["system_under_test"]["product_nodes"][0]["chassis"]["power"]["min_psus_active"] = 0
+        fail(doc, "min_psus_active")
+
     def test_min_exceeds_total(self):
         doc = _onprem_doc()
         doc["system_under_test"]["product_nodes"][0]["chassis"]["power"]["min_psus_active"] = 3
