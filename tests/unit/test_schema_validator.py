@@ -30,9 +30,8 @@ from mlpstorage_py.system_description.schema_validator import validate_dict
 def _psu(unit_count=2) -> dict:
     return {
         "unit_count": unit_count,
-        "vendor_name": "Delta",
-        "model_name": "DPS-750",
-        "power_capacity_watts": 750,
+        "inlet_voltage": 240,
+        "nameplate_power_watts": 750,
         "efficiency": "Platinum",
     }
 
@@ -396,7 +395,7 @@ class TestBaseSchemaValidation:
     def test_invalid_power_efficiency(self):
         doc = _onprem_doc()
         doc["system_under_test"]["product_nodes"][0]["chassis"]["power"] \
-            ["psus_configured"][0]["efficiency"] = "Bronze"
+            ["psus_configured"][0]["efficiency"] = "Diamond"
         fail(doc)
 
     def test_chassis_rack_units_zero(self):

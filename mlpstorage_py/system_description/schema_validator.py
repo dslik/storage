@@ -79,10 +79,14 @@ class DriveInterface(str, Enum):
 
 
 class PowerEfficiency(str, Enum):
+    Standard = 'Standard'
+    Bronze   = 'Bronze'
+    Silver   = 'Silver'
     Gold     = 'Gold'
     Platinum = 'Platinum'
     Titanium = 'Titanium'
     Ruby     = 'Ruby'
+    Unrated  = 'Unrated'
 
 
 # ---------------------------------------------------------------------------
@@ -96,11 +100,10 @@ class KeyValue(BaseModel):
 
 
 class PowerSupply(BaseModel):
-    unit_count:            int            = Field(ge=1)
-    vendor_name:           str            = Field(min_length=1)
-    model_name:            str            = Field(min_length=1)
-    power_capacity_watts:  int            = Field(ge=1)
-    efficiency:            PowerEfficiency
+    unit_count:           int            = Field(ge=1)
+    inlet_voltage:        int            = Field(gt=0)
+    nameplate_power_watts: int           = Field(ge=1)
+    efficiency:           PowerEfficiency
 
 
 class PowerDevice(BaseModel):
@@ -111,10 +114,6 @@ class PowerDevice(BaseModel):
     @model_validator(mode='after')
     def check_psu_count(self) -> 'PowerDevice':
         # Rule 12: min_psus_active must not exceed total installed PSU count
-        if self.min_psus_active <= 0:
-            raise ValueError(
-                f"min_psus_active ({self.min_psus_active}) must be greater than zero"
-            )
         total = sum(psu.unit_count for psu in self.psus_configured)
         if self.min_psus_active > total:
             raise ValueError(
