@@ -224,7 +224,7 @@ wheels = [
 [[package]]
 name = "dlio-benchmark"
 version = "3.0.2"
-source = { git = "https://github.com/russfellows/dlio_benchmark.git?rev=21c0723de897add728158943d369abd4b333f7dc#21c0723de897add728158943d369abd4b333f7dc" }
+source = { git = "https://github.com/mlcommons/DLIO_local_changes.git?branch=main#e4c9b7aa3ffa96fae0054b92ea6629996dbd5f23" }
 dependencies = [
     { name = "dgen-py", marker = "sys_platform == 'linux'" },
     { name = "h5py", marker = "sys_platform == 'linux'" },
@@ -514,8 +514,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dlio-benchmark", git = "https://github.com/russfellows/dlio_benchmark.git?rev=21c0723de897add728158943d369abd4b333f7dc" },
-    { name = "dlio-benchmark", marker = "extra == 'full'", git = "https://github.com/russfellows/dlio_benchmark.git?rev=21c0723de897add728158943d369abd4b333f7dc" },
+    { name = "dlio-benchmark", git = "https://github.com/mlcommons/DLIO_local_changes.git?branch=main" },
+    { name = "dlio-benchmark", marker = "extra == 'full'", git = "https://github.com/mlcommons/DLIO_local_changes.git?branch=main" },
     { name = "minio", specifier = ">=7.2.20" },
     { name = "numpy", marker = "extra == 'vectordb'", specifier = ">=1.24" },
     { name = "packaging", specifier = ">=21.0" },
