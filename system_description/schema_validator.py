@@ -111,6 +111,10 @@ class PowerDevice(BaseModel):
     @model_validator(mode='after')
     def check_psu_count(self) -> 'PowerDevice':
         # Rule 12: min_psus_active must not exceed total installed PSU count
+        if self.min_psus_active <= 0:
+            raise ValueError(
+                f"min_psus_active ({self.min_psus_active}) must be greater than zero"
+            )
         total = sum(psu.unit_count for psu in self.psus_configured)
         if self.min_psus_active > total:
             raise ValueError(
