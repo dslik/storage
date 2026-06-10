@@ -170,14 +170,15 @@ class DirectoryCheck(BaseCheck):
     def run_files_timestamp_check(self):
         """
         Check that all run_files have timestamps matching format "YYYYMMDD_HHmmss"
-        and that there are exactly 6 of them.
+        and that there are exactly RUN_TIMESTAMP_COUNT of them.
+
+        Per Rules.md 2.1.17 (runTimestamps): exactly 6 timestamp directories are
+        required — 1 warm-up run plus 5 measured runs.
         """
-        # Question: Not enough runs in reference
-        # v2.0 only 5 required
         valid = True
         timestamp_pattern = r"^\d{8}_\d{6}$"
         timestamps = []
-        
+
         for _, _, timestamp in self.submissions_logs.run_files:
             timestamps.append(timestamp)
             if not re.match(timestamp_pattern, timestamp):
@@ -186,15 +187,16 @@ class DirectoryCheck(BaseCheck):
                     timestamp
                 )
                 valid = False
-        
-        if len(timestamps) != 6:
+
+        if len(timestamps) != RUN_TIMESTAMP_COUNT:
             self.log.error(
-                "Expected 6 run files, but found %d. Timestamps: %s",
+                "Expected %d run files, but found %d. Timestamps: %s",
+                RUN_TIMESTAMP_COUNT,
                 len(timestamps),
                 timestamps
             )
             valid = False
-        
+
         return valid
     
     def run_dlio_config_check(self):
