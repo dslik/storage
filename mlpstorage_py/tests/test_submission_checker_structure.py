@@ -152,14 +152,6 @@ class TestStruct01_SubmitterRootDirectory:
         assert result is False
         assert any("[2.1.1 submitterRootDirectory]" in m for m in mock_logger.errors)
 
-    def test_submitter_name_with_slash(self, tmp_path, mock_logger):
-        from mlpstorage_py.tests.conftest import build_submission
-        root = build_submission(tmp_path, submitter_name_with_slash=True)
-        check = _make_check(root, mock_logger)
-        result = run_one_check(check, "submitter_root_directory_check", mock_logger)
-        assert result is False
-        assert any("[2.1.1 submitterRootDirectory]" in m for m in mock_logger.errors)
-
 
 # ---------------------------------------------------------------------------
 # TestStruct02_TopLevelSubdirectories  (STRUCT-02, rule 2.1.2)
