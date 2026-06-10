@@ -686,3 +686,28 @@ class TestQual02RuleIdPrefix:
         assert set(rules.keys()) == expected_ids, (
             f"Unexpected rule IDs: {set(rules.keys()) ^ expected_ids}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestMainWiring — main.py orchestration smoke tests (PLAN.md 01-03 D-02)
+# ---------------------------------------------------------------------------
+
+class TestMainWiring:
+    """Smoke-tests asserting SubmissionStructureCheck is wired into main.py
+    and the --reference-checksum CLI flag exists, per PLAN.md 01-03 must_haves.
+    """
+
+    def test_main_imports_submission_structure_check(self):
+        import mlpstorage_py.submission_checker.main as m
+        assert m.SubmissionStructureCheck.__name__ == "SubmissionStructureCheck"
+
+    def test_main_has_reference_checksum_flag(self):
+        import sys
+        import mlpstorage_py.submission_checker.main as m
+        original = sys.argv
+        try:
+            sys.argv = ["main", "--input", "/tmp", "--reference-checksum", "abc123"]
+            args = m.get_args()
+            assert args.reference_checksum == "abc123"
+        finally:
+            sys.argv = original

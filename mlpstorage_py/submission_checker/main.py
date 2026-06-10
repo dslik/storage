@@ -15,6 +15,7 @@ from .loader import Loader
 # Import checkers
 from .checks.checkpointing_checks import CheckpointingCheck
 from .checks.directory_checks import DirectoryCheck
+from .checks.submission_structure_checks import SubmissionStructureCheck
 from .checks.training_checks import TrainingCheck
 
 
@@ -54,6 +55,11 @@ def get_args():
         action="store_true",
         help="Skip check output file"
     )
+    parser.add_argument(
+        "--reference-checksum",
+        default=None,
+        help="MD5 checksum for the code/ tree (overrides REFERENCE_CHECKSUMS)",
+    )
     args = parser.parse_args()
     return args
 
@@ -74,9 +80,10 @@ def main():
     config = Config(
         version=args.version,
         submitters=submitters,
-        skip_output_file=args.skip_output_file
+        skip_output_file=args.skip_output_file,
+        reference_checksum_override=args.reference_checksum,
     )
-    
+
     loader = Loader(args.input, args.version, config)
     exporter = ResultExporter(args.csv, config)
 
@@ -85,6 +92,14 @@ def main():
     systems = {}
     errors = []
     checkers = [DirectoryCheck, TrainingCheck, CheckpointingCheck]
+
+    # Per PLAN.md 01-03 D-02: run structural hierarchy checks ONCE before the
+    # per-benchmark loader loop. Failures are accumulated into `errors` but do
+    # NOT short-circuit the loop — every benchmark still gets its own checks.
+    structure_check = SubmissionStructureCheck(log, config, args.input)
+    if not structure_check():
+        errors.append(args.input)
+
     # Main loop over all the submissions
     for logs in loader.load():
         # TODO: Initialize checkers
