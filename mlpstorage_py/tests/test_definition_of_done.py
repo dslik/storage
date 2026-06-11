@@ -102,6 +102,11 @@ def _run_validator(root):
         ],
         capture_output=True,
         text=True,
+        # Per WR-03 (review 2026-06-10): a regression that hangs the
+        # validator (infinite loop in a future check, yaml-load deadlock,
+        # etc.) would hang the DoD test indefinitely and stall CI. 60s is
+        # generous for fixture-tree validation.
+        timeout=60,
     )
 
 
