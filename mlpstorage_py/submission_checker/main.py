@@ -147,12 +147,25 @@ def main():
     # Main loop over all the submissions
     for logs in loader.load():
         mode = getattr(logs.loader_metadata, "mode", None)
-        checkers = MODE_TO_CHECKERS.get(mode, [])
-        if not checkers:
-            log.warning(
-                "No checkers registered for mode=%r at %s; skipping",
-                mode, logs.loader_metadata.folder,
+        checkers = MODE_TO_CHECKERS.get(mode, None)
+        # Per CR-01 iter-2 (review 2026-06-10): an unmapped mode is a §2.1.10
+        # workloadCategories violation, NOT a silent pass. Pre-CR-02 every
+        # submission ran DirectoryCheck + per-mode classes; an unknown mode
+        # under results/<sys>/ would have tripped DirectoryCheck's structural
+        # checks. With the mode-routed dict, an empty checker list would skip
+        # all validation and call exporter.add_result(logs) — recording an
+        # unvalidated submission as a clean pass. Surface as an ERROR with the
+        # locked [<id> <name>] prefix so the DoD test's error harness catches
+        # it, accumulate into `errors` (don't abort), and continue.
+        if checkers is None:
+            log.error(
+                "[2.1.10 workloadCategories] %s: unrecognized mode directory "
+                "%r (expected one of %s)",
+                logs.loader_metadata.folder, mode,
+                sorted(MODE_TO_CHECKERS.keys()),
             )
+            errors.append(logs.loader_metadata.folder)
+            continue
         valid = True
         for checker in checkers:
             valid &= checker(log, config, logs)()
