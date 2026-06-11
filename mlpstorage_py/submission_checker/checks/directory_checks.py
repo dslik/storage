@@ -159,6 +159,16 @@ class DirectoryCheck(BaseCheck):
         (Rules.md 2.1.16 runResultsJson)
         """
         valid = True
+        # Missing run/ is a structural violation reported under STRUCT-12 /
+        # 2.1.12 by SubmissionStructureCheck. list_files() raises
+        # FileNotFoundError on missing paths; report the surface complaint
+        # under this rule and continue rather than escape the check method.
+        if not os.path.isdir(self.run_path):
+            self.log_violation(
+                "2.1.16", "runResultsJson", self.run_path,
+                "run/ directory not found (cannot check for results.json)",
+            )
+            return False
         results_files = list_files(self.run_path)
         results_json_count = sum(1 for f in results_files if f == "results.json")
 
