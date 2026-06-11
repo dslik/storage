@@ -197,9 +197,20 @@ class TestStruct02_TopLevelSubdirectories:
 # ---------------------------------------------------------------------------
 
 class TestStruct03_OpenMatchesClosed:
+    """Rules.md 2.1.3 openMatchesClosed is a structural meta-rule: 'the open
+    hierarchy should be constructed identically to the closed hierarchy.' That
+    is, the construction rules in 2.1.4+ apply equally to open/. It is NOT a
+    contents-mirroring requirement — both hierarchies are individually
+    optional, and a submitter may appear in one division without appearing in
+    the other.
 
-    def test_default_fixture_passes(self, tmp_path, mock_logger):
-        """Closed-only submission — STRUCT-03 skips cleanly."""
+    The structural mirroring is enforced automatically because every
+    downstream STRUCT method iterates closed/ and open/ uniformly. The 2.1.3
+    @rule binding therefore returns True unconditionally; its purpose is
+    coverage signaling, not runtime enforcement.
+    """
+
+    def test_closed_only_passes(self, tmp_path, mock_logger):
         from mlpstorage_py.tests.conftest import build_submission
         root = build_submission(tmp_path)
         check = _make_check(root, mock_logger)
@@ -207,13 +218,19 @@ class TestStruct03_OpenMatchesClosed:
         assert result is True
         assert mock_logger.errors == []
 
-    def test_open_mismatches_closed(self, tmp_path, mock_logger):
+    def test_submitter_present_in_only_one_division_passes(self, tmp_path, mock_logger):
+        """Regression for over-strict pre-fix behavior: when each division
+        contains a different submitter set (the merged reviewer-tree pattern
+        seen in the v2.0 results bundle: Alluxio / DDN / etc. each in only
+        one division), STRUCT-03 must NOT error. Per-division shape rules
+        (STRUCT-04..14) own the structural validation; 2.1.3 is a meta-rule.
+        """
         from mlpstorage_py.tests.conftest import build_submission
         root = build_submission(tmp_path, open_mismatches_closed=True)
         check = _make_check(root, mock_logger)
         result = run_one_check(check, "open_matches_closed_check", mock_logger)
-        assert result is False
-        assert any("[2.1.3 openMatchesClosed]" in m for m in mock_logger.errors)
+        assert result is True
+        assert not any("[2.1.3 openMatchesClosed]" in m for m in mock_logger.errors)
 
 
 # ---------------------------------------------------------------------------

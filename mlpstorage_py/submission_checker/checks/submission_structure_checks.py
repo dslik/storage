@@ -186,48 +186,28 @@ class SubmissionStructureCheck(BaseCheck):
 
     @rule("2.1.3", "openMatchesClosed")
     def open_matches_closed_check(self):
-        """STRUCT-03: if both open/ and closed/ exist, open/ must mirror closed/.
+        """STRUCT-03: Rules.md 2.1.3 is a structural meta-rule asserting that
+        the open/ hierarchy follows the same construction rules as the closed/
+        hierarchy (2.1.4 through 2.1.X). It is NOT a contents-mirroring
+        requirement: closed/ and open/ are individually optional, and a
+        submitter may appear in one division without appearing in the other.
 
-        Skip cleanly if only one division is present.
+        The structural mirroring is enforced automatically because every
+        downstream STRUCT method iterates _VALID_DIVISIONS uniformly — STRUCT-05
+        (requiredSubdirectories) verifies the {code, results, systems} shape
+        for every present submitter in either division. This @rule binding
+        therefore has no extra runtime work; it exists so discover_rules
+        reports 2.1.3 as covered (same no-op pattern as STRUCT-12 / 2.1.27
+        directoryDiagram).
+
+        Pre-fix behavior: emitted a violation for every submitter present in
+        closed/ but not in open/ (and vice versa via the inner loop). This
+        misread "constructed identically" as a 1:1 submitter-set requirement.
+        It produced spurious errors against the merged reviewer tree where
+        each submitter typically chose only one division (see the v2.0 results
+        bundle: Alluxio / DDN / ExponTech / etc. each appear in only one).
         """
-        valid = True
-        top_dirs = set(list_dir(self.root_path))
-        if not ("open" in top_dirs and "closed" in top_dirs):
-            return valid  # single-division submission — nothing to compare
-
-        closed_path = os.path.join(self.root_path, "closed")
-        open_path = os.path.join(self.root_path, "open")
-
-        # Gather submitter dirs in each division
-        closed_submitters = list_dir(closed_path)
-        open_submitters = list_dir(open_path)
-
-        # open/ must have the same submitter(s) as closed/
-        for submitter in closed_submitters:
-            if submitter not in open_submitters:
-                self.log_violation(
-                    "2.1.3", "openMatchesClosed",
-                    os.path.join(open_path, submitter),
-                    "closed/%s exists but open/%s is missing",
-                    submitter, submitter,
-                )
-                valid = False
-                continue
-            # Both have this submitter — check that each has {code,results,systems}
-            for div, div_path in [("closed", closed_path), ("open", open_path)]:
-                sub_path = os.path.join(div_path, submitter)
-                subdirs = set(list_dir(sub_path))
-                missing = _REQUIRED_SUBMITTER_SUBDIRS - subdirs
-                for m in sorted(missing):
-                    self.log_violation(
-                        "2.1.3", "openMatchesClosed",
-                        os.path.join(sub_path, m),
-                        "%s/%s/%s is missing",
-                        div, submitter, m,
-                    )
-                    valid = False
-
-        return valid
+        return True
 
     # -----------------------------------------------------------------------
     # STRUCT-04 — 2.1.4 closedSubmitterDirectory
