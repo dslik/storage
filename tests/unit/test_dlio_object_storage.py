@@ -14,10 +14,16 @@ Changes under test:
 """
 
 import os
+import sys
 from argparse import Namespace
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+
+# Stub optional heavy deps so this file can be collected in isolation
+for _dep in ('pyarrow', 'pyarrow.ipc', 'dotenv'):
+    if _dep not in sys.modules:
+        sys.modules[_dep] = MagicMock()
 
 from mlpstorage_py.benchmarks.dlio import DLIOBenchmark
 
@@ -252,3 +258,206 @@ class TestApplyObjectStorageParamsInjection:
         obj.logger.info.assert_called()
         log_text = ' '.join(str(c) for c in obj.logger.info.call_args_list)
         assert 'log-test-bucket' in log_text
+
+
+# ---------------------------------------------------------------------------
+# Regression: both benchmark subclasses must call _apply_object_storage_params
+# ---------------------------------------------------------------------------
+
+class TestApplyObjectStorageParamsCalledDuringInit:
+    """Regression tests: _apply_object_storage_params() is invoked by __init__
+    for both TrainingBenchmark and CheckpointingBenchmark.
+
+    These tests patch all other __init__ side-effects so they focus solely on
+    the call-site contract — not the method's internal behaviour (which is
+    covered by the classes above).
+    """
+
+    def _training_args(self):
+        return Namespace(
+            model='unet3d',
+            command='run',
+            accelerator_type='h100',
+            params=None,
+            data_dir='/tmp/data',
+            data_access_protocol='object',
+        )
+
+    def _checkpointing_args(self):
+        return Namespace(
+            model='llama3-8b',
+            command='run',
+            params=None,
+            data_access_protocol='object',
+        )
+
+    @patch('mlpstorage_py.benchmarks.dlio.TrainingBenchmark._apply_object_storage_params')
+    @patch('mlpstorage_py.benchmarks.dlio.TrainingBenchmark.verify_benchmark')
+    @patch('mlpstorage_py.benchmarks.dlio.TrainingBenchmark.add_datadir_param')
+    @patch('mlpstorage_py.benchmarks.dlio.TrainingBenchmark.process_dlio_params', return_value=({}, {}, {}))
+    @patch('mlpstorage_py.benchmarks.dlio.DLIOBenchmark.__init__', return_value=None)
+    def test_training_benchmark_calls_apply(
+        self, mock_super, mock_process, mock_add_datadir, mock_verify, mock_apply
+    ):
+        from mlpstorage_py.benchmarks.dlio import TrainingBenchmark
+        bench = TrainingBenchmark.__new__(TrainingBenchmark)
+        bench.args = self._training_args()
+        bench.logger = MagicMock()
+        bench.params_dict = {}
+        TrainingBenchmark.__init__(bench, bench.args)
+        mock_apply.assert_called_once()
+
+    @patch('mlpstorage_py.benchmarks.dlio.CheckpointingBenchmark._apply_object_storage_params')
+    @patch('mlpstorage_py.benchmarks.dlio.CheckpointingBenchmark.add_checkpoint_params')
+    @patch('mlpstorage_py.benchmarks.dlio.CheckpointingBenchmark.verify_benchmark')
+    @patch('mlpstorage_py.benchmarks.dlio.CheckpointingBenchmark.process_dlio_params', return_value=({}, {}, {}))
+    @patch('mlpstorage_py.benchmarks.dlio.DLIOBenchmark.__init__', return_value=None)
+    def test_checkpointing_benchmark_calls_apply(
+        self, mock_super, mock_process, mock_verify, mock_add_ckpt, mock_apply
+    ):
+        from mlpstorage_py.benchmarks.dlio import CheckpointingBenchmark
+        bench = CheckpointingBenchmark.__new__(CheckpointingBenchmark)
+        bench.args = self._checkpointing_args()
+        bench.logger = MagicMock()
+        bench.params_dict = {}
+        CheckpointingBenchmark.__init__(bench, bench.args)
+        mock_apply.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Three-layer parameter override chain
+# ---------------------------------------------------------------------------
+
+def _make_chain_obj(protocol='file', params=None):
+    """Stand-in for 'self' when testing process_dlio_params and the full chain."""
+    obj = MagicMock()
+    obj.args = Namespace(data_access_protocol=protocol, params=params)
+    obj.DLIO_CONFIG_PATH = '/fake/config'
+    obj.logger = MagicMock()
+    obj.params_dict = {}
+    return obj
+
+
+_YAML_FIXTURE = {
+    'dataset': {
+        'num_files_train': 1000,
+        'data_folder': '/default/data',
+    },
+    'reader': {
+        'read_threads': 4,
+    },
+}
+
+
+class TestProcessDlioParams:
+    """
+    Unit tests for DLIOBenchmark.process_dlio_params().
+
+    Layer 1: YAML config  →  yaml_params  (read_config_from_file)
+    Layer 3: CLI --params →  params_dict  (highest priority; already flattened by cli_parser)
+
+    combined_params = update_nested_dict(yaml_params, create_nested_dict(params_dict))
+    CLI wins over YAML wherever keys overlap.
+    """
+
+    @patch('mlpstorage_py.benchmarks.dlio.read_config_from_file')
+    def test_yaml_default_wins_when_no_cli_params(self, mock_rcf):
+        """With no --params, combined_params is the YAML config unchanged."""
+        mock_rcf.return_value = _YAML_FIXTURE
+        obj = _make_chain_obj()
+        params_dict, yaml_params, combined = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+        assert combined['dataset']['num_files_train'] == 1000
+        assert combined['reader']['read_threads'] == 4
+        assert params_dict == {}
+
+    @patch('mlpstorage_py.benchmarks.dlio.read_config_from_file')
+    def test_cli_params_override_yaml(self, mock_rcf):
+        """Layer 3 beats Layer 1: a --params value replaces the YAML default."""
+        mock_rcf.return_value = _YAML_FIXTURE
+        obj = _make_chain_obj(params=['dataset.num_files_train=2000'])
+        params_dict, _, combined = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+        assert params_dict == {'dataset.num_files_train': '2000'}
+        assert combined['dataset']['num_files_train'] == '2000'
+
+    @patch('mlpstorage_py.benchmarks.dlio.read_config_from_file')
+    def test_cli_params_are_surgical(self, mock_rcf):
+        """--params override is per-key — unrelated YAML keys are untouched."""
+        mock_rcf.return_value = _YAML_FIXTURE
+        obj = _make_chain_obj(params=['dataset.num_files_train=500'])
+        _, _, combined = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+        assert combined['dataset']['num_files_train'] == '500'
+        assert combined['dataset']['data_folder'] == '/default/data'
+        assert combined['reader']['read_threads'] == 4
+
+    @patch('mlpstorage_py.benchmarks.dlio.read_config_from_file')
+    def test_multiple_cli_params_all_land_in_params_dict(self, mock_rcf):
+        """Multiple flattened --params entries all end up in params_dict."""
+        mock_rcf.return_value = _YAML_FIXTURE
+        obj = _make_chain_obj(params=['dataset.num_files_train=500', 'reader.read_threads=8'])
+        params_dict, _, combined = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+        assert params_dict['dataset.num_files_train'] == '500'
+        assert params_dict['reader.read_threads'] == '8'
+        assert combined['dataset']['num_files_train'] == '500'
+        assert combined['reader']['read_threads'] == '8'
+
+    @patch('mlpstorage_py.benchmarks.dlio.read_config_from_file')
+    @pytest.mark.parametrize('falsy', [None, '', []])
+    def test_no_cli_params_produces_empty_params_dict(self, mock_rcf, falsy):
+        """None, empty string, and empty list all produce an empty params_dict."""
+        mock_rcf.return_value = {}
+        obj = _make_chain_obj(params=falsy)
+        params_dict, _, _ = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+        assert params_dict == {}
+
+
+class TestProcessDlioParamsFullChain:
+    """
+    End-to-end tests for the three-layer chain:
+
+      Layer 1: YAML config         (process_dlio_params)
+      Layer 2: env vars / .env     (_apply_object_storage_params injection)
+      Layer 3: CLI --params        (highest priority; blocks layer-2 injection)
+
+    Tests call process_dlio_params then _apply_object_storage_params in sequence,
+    mirroring what TrainingBenchmark.__init__ and CheckpointingBenchmark.__init__ do.
+    """
+
+    def _run_chain(self, obj, yaml_fixture, monkeypatch, bucket='env-bucket'):
+        """Helper: run both methods back-to-back with standard env mocking."""
+        monkeypatch.setenv('BUCKET', bucket)
+        with patch('mlpstorage_py.benchmarks.dlio.read_config_from_file', return_value=yaml_fixture), \
+             patch('os.path.exists', return_value=False), \
+             patch('dotenv.load_dotenv', return_value=True):
+            params_dict, yaml_params, combined = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+            obj.params_dict = params_dict
+            DLIOBenchmark._apply_object_storage_params(obj)
+        return params_dict, yaml_params, combined
+
+    def test_env_injection_adds_storage_root_when_no_cli_override(self, monkeypatch):
+        """Layer 2: when --params doesn't set storage.storage_root, env BUCKET is injected."""
+        obj = _make_chain_obj(protocol='object', params=None)
+        params_dict, _, _ = self._run_chain(obj, _YAML_FIXTURE, monkeypatch, bucket='env-bucket')
+        assert obj.params_dict.get('storage.storage_root') == 'env-bucket'
+
+    def test_cli_params_beat_env_injection(self, monkeypatch):
+        """Layer 3 beats Layer 2: CLI storage.storage_root is preserved over env BUCKET."""
+        obj = _make_chain_obj(protocol='object', params=['storage.storage_root=cli-bucket'])
+        self._run_chain(obj, _YAML_FIXTURE, monkeypatch, bucket='env-bucket')
+        assert obj.params_dict.get('storage.storage_root') == 'cli-bucket'
+
+    def test_yaml_values_survive_env_injection(self, monkeypatch):
+        """Layer 1 YAML values are unaffected by layer-2 env injection."""
+        obj = _make_chain_obj(protocol='object', params=None)
+        _, yaml_params, combined = self._run_chain(obj, _YAML_FIXTURE, monkeypatch)
+        assert yaml_params['dataset']['num_files_train'] == 1000
+        assert combined['reader']['read_threads'] == 4
+
+    def test_file_protocol_skips_env_injection(self, monkeypatch):
+        """File protocol: _apply_object_storage_params is a no-op; params_dict stays empty."""
+        obj = _make_chain_obj(protocol='file', params=None)
+        monkeypatch.setenv('BUCKET', 'should-not-appear')
+        with patch('mlpstorage_py.benchmarks.dlio.read_config_from_file', return_value=_YAML_FIXTURE):
+            params_dict, _, _ = DLIOBenchmark.process_dlio_params(obj, 'fake.yaml')
+            obj.params_dict = params_dict
+            DLIOBenchmark._apply_object_storage_params(obj)
+        assert 'storage.storage_root' not in obj.params_dict

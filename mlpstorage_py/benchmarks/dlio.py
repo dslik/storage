@@ -11,6 +11,7 @@ from mlpstorage_py.config import (CONFIGS_ROOT_DIR, BENCHMARK_TYPES, EXEC_TYPE, 
 from mlpstorage_py.dependency_check import validate_benchmark_dependencies
 from mlpstorage_py.rules import calculate_training_data_size, HostInfo, HostMemoryInfo, HostCPUInfo, ClusterInformation
 from mlpstorage_py.utils import (read_config_from_file, create_nested_dict, update_nested_dict, generate_mpi_prefix_cmd)
+from mlpstorage_py.storage_config import resolve_object_storage_config
 
 
 class DLIOBenchmark(Benchmark, abc.ABC):
@@ -34,8 +35,8 @@ class DLIOBenchmark(Benchmark, abc.ABC):
         self.per_host_mem_kB = None
         self.total_mem_kB = None
 
-        # Fail-fast dependency validation (skip for what-if mode)
-        if not getattr(args, 'what_if', False):
+        # Fail-fast dependency validation (skip for dry-run mode)
+        if not getattr(args, 'dry_run', False):
             self._validate_dependencies(args)
 
         if args.command != "datagen":
@@ -177,14 +178,16 @@ class DLIOBenchmark(Benchmark, abc.ABC):
                 'BUCKET, and STORAGE_LIBRARY are set in the environment.'
             )
 
-        bucket = os.environ.get('BUCKET', '')
-        storage_library = os.environ.get('STORAGE_LIBRARY', 's3dlio')
-        endpoint_url = os.environ.get('AWS_ENDPOINT_URL', '')
+        _s3cfg = resolve_object_storage_config()
+        bucket = _s3cfg['bucket']
+        storage_library = _s3cfg['storage_library']
         # STORAGE_URI_SCHEME controls the URI prefix used by s3dlio:
         #   s3     — standard S3 (requires endpoint + credentials)
         #   direct — O_DIRECT filesystem via s3dlio (BUCKET is the base path, no HTTP)
         #   file   — buffered filesystem via s3dlio (BUCKET is the base path, no HTTP)
-        uri_scheme = os.environ.get('STORAGE_URI_SCHEME', 's3').rstrip(':/')
+        uri_scheme = _s3cfg['uri_scheme']
+        endpoint_url, _src = _s3cfg['endpoint']
+        endpoint_url = endpoint_url or ''  # preserve empty-string semantics downstream
 
         if not bucket:
             raise ValueError(
@@ -423,6 +426,7 @@ class CheckpointingBenchmark(DLIOBenchmark):
         self.config_name = f'{args.model.replace("-", "_")}'
         self.config_file = f'{self.config_name}.yaml'
         self.params_dict, self.yaml_params, self.combined_params = self.process_dlio_params(self.config_file)
+        self._apply_object_storage_params()
         self.verify_benchmark()
         self.add_checkpoint_params()
         self.logger.status(f'Instantiated the Checkpointing Benchmark...')
@@ -438,7 +442,8 @@ class CheckpointingBenchmark(DLIOBenchmark):
 
         self.params_dict['checkpoint.num_checkpoints_read'] = self.args.num_checkpoints_read
         self.params_dict['checkpoint.num_checkpoints_write'] = self.args.num_checkpoints_write
-        self.params_dict['checkpoint.checkpoint_folder'] = os.path.join(self.args.checkpoint_folder, self.args.model)
+        if self.args.checkpoint_folder:
+            self.params_dict['checkpoint.checkpoint_folder'] = os.path.join(self.args.checkpoint_folder, self.args.model)
 
 
     def add_workflow_to_cmd(self, cmd) -> str:
@@ -447,12 +452,21 @@ class CheckpointingBenchmark(DLIOBenchmark):
         # We're now using the workflow defined in the yaml file only
         return cmd
 
+    def _run_configview(self):
+        """Display the final DLIO config without executing."""
+        cmd = self.generate_dlio_command()
+        self.logger.status(f"Configuration view:\n{cmd}")
+        print(cmd)
+        return EXIT_CODE.SUCCESS
+
     def _run(self):
         try:
             if self.args.command == "run":
                 self.execute_command()
             elif self.args.command == "datasize":
                 self.datasize()
+            elif self.args.command == "configview":
+                return self._run_configview()
             else:
                 self.logger.error(f'Invalid command: {self.args.command}')
                 return EXIT_CODE.INVALID_ARGUMENTS

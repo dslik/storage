@@ -180,7 +180,7 @@ class KVCacheBenchmark(Benchmark):
         Returns:
             Exit code (0 for success, non-zero for failure).
         """
-        is_closed = getattr(self.args, 'closed', False)
+        is_closed = (getattr(self.args, 'mode', None) == 'closed')
 
         # Enforce CLOSED submission restrictions — hard fail on illegal overrides
         seed_arg = getattr(self.args, 'seed', None)

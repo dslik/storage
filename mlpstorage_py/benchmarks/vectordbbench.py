@@ -72,8 +72,6 @@ class VectorDBBenchmark(Benchmark):
 
         self.yaml_params = read_config_from_file(self.config_file)
 
-        # Validate VDB-specific dependencies.
-        # Keep existing behavior: skip for datasize and what-if.
         if not getattr(args, "what_if", False) and self.command != "datasize":
             self._validate_vdb_dependencies()
 
@@ -750,7 +748,7 @@ class VectorDBBenchmark(Benchmark):
 
     def _execute_run_single_node(self) -> int:
         """Execute existing single-node VectorDB run path."""
-        mode = getattr(self.args, "mode", "timed")
+        mode = getattr(self.args, "benchmark_mode", "timed")
 
         if mode == "sweep":
             script = "enhanced-bench"
@@ -804,7 +802,7 @@ class VectorDBBenchmark(Benchmark):
 
     def _execute_run_distributed(self) -> int:
         """Execute distributed VectorDB run through MPI wrapper."""
-        mode = getattr(self.args, "mode", "timed")
+        mode = getattr(self.args, "benchmark_mode", "timed")
         phase = "enhanced" if mode == "sweep" else "simple"
         world_size = self._mpi_world_size()
         base_output_dir = self._base_output_dir(phase)
@@ -1028,12 +1026,13 @@ class VectorDBBenchmark(Benchmark):
                     "batch_size": getattr(self.args, "batch_size", None),
                     "runtime": getattr(self.args, "runtime", None),
                     "queries": getattr(self.args, "queries", None),
-                    "mode": getattr(self.args, "mode", "timed"),
+                    "benchmark_mode": getattr(self.args, "benchmark_mode", "timed"),
                     "vector_dim": getattr(self.args, "vector_dim", None),
                     "search_limit": getattr(self.args, "search_limit", None),
                     "search_ef": getattr(self.args, "search_ef", None),
                     "recall_k": getattr(self.args, "recall_k", None),
                 }
             )
+
 
         return base_metadata
