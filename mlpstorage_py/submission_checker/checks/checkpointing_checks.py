@@ -345,6 +345,21 @@ class CheckpointingCheck(BaseCheck):
         valid = True
         if self.mode != "checkpointing":
             return valid
+        # 2.1.21 checkpointingWorkloads flags non-conforming workload dir
+        # names structurally (e.g. "llama3-8b_a100" instead of "llama3-8b").
+        # When that happens, get_checkpoint_file returns None and the
+        # reference-config join + read below crash with TypeError. Skip the
+        # cross-check rather than crash; the structural rule owns the
+        # complaint.
+        if config_ref_file is None:
+            self.log.info(
+                "[4.6.3 checkpointClosedCheckpointParameters] %s: "
+                "skipping reference-config cross-check — workload %r is "
+                "not in known LLM models; see 2.1.21 violation for the "
+                "structural complaint",
+                self.path, self.benchmark,
+            )
+            return valid
         # Load reference YAML file.
         #
         # Per WR-09 (review 2026-06-10): both branches below break the per-loop

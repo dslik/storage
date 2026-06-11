@@ -233,6 +233,24 @@ class TrainingCheck(BaseCheck):
         if self.mode != "training":
             return valid
 
+        # Resolve expected dataset cardinalities up front. Returns None if
+        # the workload directory name does not match a known model
+        # ({unet3d, resnet50, cosmoflow}); 2.1.11 trainingWorkloads already
+        # flags the structural complaint for the non-conforming name, so
+        # skip the cardinality cross-check rather than crash on the dict
+        # lookup or on a None comparison below.
+        expected_train = self.config.get_num_train_files(self.model)
+        expected_eval = self.config.get_num_eval_files(self.model)
+        if expected_train is None or expected_eval is None:
+            self.log.info(
+                "[3.3.1 trainingRunDataMatchesDatasize] %s: skipping "
+                "cardinality cross-check — workload %r is not in known "
+                "models {unet3d, resnet50, cosmoflow}; see 2.1.11 violation "
+                "for the structural complaint",
+                self.path, self.model,
+            )
+            return valid
+
         for summary, metadata, _ in self.submissions_logs.run_files:
             num_files_train = summary.get("num_files_train", None)
             num_files_eval = summary.get("num_files_eval", None)
@@ -243,8 +261,7 @@ class TrainingCheck(BaseCheck):
                     "num_files_train not set",
                 )
                 valid = False
-
-            if num_files_train > self.config.get_num_train_files(self.model):
+            elif num_files_train > expected_train:
                 self.log_violation(
                     "3.3.1", "trainingRunDataMatchesDatasize", self.path,
                     "num_files_train should be lower than in dataset",
@@ -257,8 +274,7 @@ class TrainingCheck(BaseCheck):
                     "num_files_eval not set",
                 )
                 valid = False
-
-            if num_files_eval > self.config.get_num_eval_files(self.model):
+            elif num_files_eval > expected_eval:
                 self.log_violation(
                     "3.3.1", "trainingRunDataMatchesDatasize", self.path,
                     "num_files_eval should be lower than in dataset",

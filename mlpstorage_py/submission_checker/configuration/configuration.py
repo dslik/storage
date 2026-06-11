@@ -36,13 +36,20 @@ class Config:
         return CHECKPOINT_REQUIRED_FOLDERS[self.version]
     
     def get_num_train_files(self, model):
-        return NUM_DATASET_TRAIN_FILES[model]
-    
+        # .get returns None for unknown model names — the caller decides
+        # whether the per-model lookup is critical (skip with a diagnostic)
+        # or expected to always resolve. Non-conforming workload directory
+        # names (e.g. "unet3d_a100", "cosmoflow-20N-6PPN-A100") flagged by
+        # 2.1.11 trainingWorkloads would otherwise crash this dict lookup.
+        return NUM_DATASET_TRAIN_FILES.get(model)
+
     def get_num_eval_files(self, model):
-        return NUM_DATASET_EVAL_FILES[model]
-    
+        # See get_num_train_files: .get over [] for None-on-miss semantics.
+        return NUM_DATASET_EVAL_FILES.get(model)
+
     def get_checkpoint_file(self, model):
-        return CHECKPOINT_FILE_MAP[model]
+        # See get_num_train_files: .get over [] for None-on-miss semantics.
+        return CHECKPOINT_FILE_MAP.get(model)
 
     def get_reference_checksum(self, cli_override=None):
         """Resolve the reference MD5 for the current version.
