@@ -136,13 +136,18 @@ def _extract_error_rule_id_path_pairs(combined: str) -> list[tuple[str, str]]:
     """Extract ``(rule_id, path)`` pairs from ERROR-level rule-prefixed lines.
 
     Matches the locked ``BaseCheck.log_violation`` format
-    ``[<rule_id> <rule_name>] <path>: <msg>`` per checks/base.py:36. The
-    ``path`` field captures everything between ``<rule_name>] `` and the first
-    ``:`` — fixture-tree paths (under ``tmp_path``) contain no ``:`` so the
-    simple non-greedy form is unambiguous.
+    ``[<rule_id> <rule_name>] <path>: <msg>`` per checks/base.py:36.
+
+    Per WR-04 (review 2026-06-10): pin the path capture to the **first**
+    ``: `` (colon-space) combination rather than ``[^:]+``. The locked
+    BaseCheck format always emits ``<path>: <msg>`` with a single space
+    after the colon, so a non-greedy match up to the first ``: `` is
+    unambiguous AND tolerates bare ``:`` characters inside the path
+    (e.g., Windows drive letter, or a future fixture-generated dirname
+    containing a colon).
     """
     pairs: list[tuple[str, str]] = []
-    pattern = re.compile(r"\[([234]\.\d+\.\d+) [a-zA-Z][a-zA-Z0-9]*\] ([^:]+):")
+    pattern = re.compile(r"\[([234]\.\d+\.\d+) [a-zA-Z][a-zA-Z0-9]*\] (.+?): ")
     for line in combined.splitlines():
         if "ERROR]" not in line:
             continue
