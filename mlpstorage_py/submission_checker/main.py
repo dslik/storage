@@ -90,19 +90,22 @@ def get_args():
     args = parser.parse_args()
     return args
 
-def main():
-    """Run the MLPerf submission checker on the provided directory.
+def run(args):
+    """Run the MLPerf submission checker against a parsed argument namespace.
 
-    Parses arguments, initializes configuration and loader, iterates
-    through all submissions, runs validation checks (performance,
-    accuracy, system, measurements, power), collects results, and
-    exports summaries. Logs pass/fail status and statistics.
+    Public entry for in-process invocation (e.g. the top-level
+    ``mlpstorage validate`` CLI shim, or tests). The standalone
+    ``__main__`` entry below builds the namespace via ``get_args()``
+    and delegates here.
+
+    Args:
+        args: ``argparse.Namespace`` with attributes ``input``,
+            ``version``, ``submitters``, ``csv``, ``skip_output_file``,
+            and ``reference_checksum``.
 
     Returns:
         int: 0 if all submissions pass checks, 1 if any errors found.
     """
-    args = get_args()
-
     # When --submitters is not supplied, pass None (not ["None"]) to Config so
     # Config.check_submitter returns True for every submitter (the documented
     # "match all" default). The previous str(None).split(",") produced ["None"]
@@ -192,6 +195,12 @@ def main():
     else:
         log.info("SUMMARY: submission looks OK")
         return 0
+
+
+def main():
+    """Standalone entry point: parse argv, then delegate to ``run``."""
+    return run(get_args())
+
 
 if __name__ == "__main__":
     sys.exit(main())

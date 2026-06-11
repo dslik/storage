@@ -413,8 +413,18 @@ def get_args():
     return parser.parse_args()
 
 
-def main() -> int:
-    """Run the rules_coverage CLI tool.
+def run(args) -> int:
+    """Reconcile Rules.md coverage against a parsed argument namespace.
+
+    Public entry for in-process invocation (e.g. the top-level
+    ``mlpstorage rules-coverage`` CLI shim, or tests). The standalone
+    ``__main__`` entry below builds the namespace via ``get_args()``
+    and delegates here.
+
+    Args:
+        args: ``argparse.Namespace`` with attribute ``rules_md``
+            (optional path override; ``None`` selects the project-root
+            ``Rules.md``).
 
     Returns:
         0 if every live Rules.md ID has a disposition (drift warnings
@@ -424,7 +434,6 @@ def main() -> int:
         — a missing Rules.md means coverage cannot be verified, which
         must be a hard failure rather than a silent exit 0).
     """
-    args = get_args()
     # WR-11: hard-fail when Rules.md is absent. The previous behavior
     # delegated to ``_enumerate_rules_md`` which logged an error and
     # returned an empty list — that produced an unmapped set of size 0
@@ -457,6 +466,11 @@ def main() -> int:
             )
         return 1
     return 0
+
+
+def main() -> int:
+    """Standalone entry point: parse argv, then delegate to ``run``."""
+    return run(get_args())
 
 
 if __name__ == "__main__":
