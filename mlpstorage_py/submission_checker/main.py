@@ -78,8 +78,13 @@ def main():
         int: 0 if all submissions pass checks, 1 if any errors found.
     """
     args = get_args()
-    
-    submitters = str(args.submitters).split(",")
+
+    # When --submitters is not supplied, pass None (not ["None"]) to Config so
+    # Config.check_submitter returns True for every submitter (the documented
+    # "match all" default). The previous str(None).split(",") produced ["None"]
+    # which silently filtered out every real submitter, leaving the loader loop
+    # empty — a pre-existing bug surfaced by the Phase-3 Definition-of-Done test.
+    submitters = args.submitters.split(",") if args.submitters else None
     config = Config(
         version=args.version,
         submitters=submitters,
