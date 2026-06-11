@@ -61,9 +61,9 @@ The `mlpstorage` tool must be used to run the benchmarks, submitters are not all
 
 2.1.2. **topLevelSubdirectories** --  Within the top-level directory of the submission structure there must be a directory named "closed" and/or one named "open", and nothing more.  These names are case-sensitive.
 
-2.1.3. **openMatchesClosed** --  The "open" directory hierarchy should be constructed identically to the "closed" directory hierarchy describe just below.
+2.1.3. **openMatchesClosed** --  Whichever of the "open" and "closed" hierarchies are present must be constructed using the same rules described in the sections below.  The two hierarchies are individually optional: a submitter may submit to only "closed", only "open", or both, and there is no requirement that a submitter present in one hierarchy also be present in the other.
 
-2.1.4. **closedSubmitterDirectory** --  Within the "closed" directory there must be a single directory whose name is the name of the submitter (the same as the top-level directory).
+2.1.4. **closedSubmitterDirectory** --  Within the "closed" directory, each submitter's contribution lives in a directory whose name is the submitter's name (subject to 2.1.1).  Reviewers may run the submission checker against either a single submitter's pre-merge package (in which case the "closed" directory contains exactly one submitter directory, whose name matches the top-level submitter directory) or a merged tree containing multiple submitters' packages (in which case the "closed" directory contains one directory per participating submitter and the top-level directory is named for the merged set rather than any one submitter).  The same convention applies to the "open" directory per 2.1.3.
 
 2.1.5. **requiredSubdirectories** --  Within the submitter directory mentioned just above, there must be exactly three directories: "code", "results", and "systems".  These names are case-sensitive.
 

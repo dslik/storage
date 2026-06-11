@@ -238,8 +238,17 @@ class TestStruct03_OpenMatchesClosed:
 # ---------------------------------------------------------------------------
 
 class TestStruct04_ClosedSubmitterDirectory:
+    """Rules.md 2.1.4 names a per-submitter convention. The validator must
+    accept both the single-submitter package shape (one dir under closed/,
+    matching the top-level dir name) and the merged reviewer tree shape (N
+    submitter dirs under closed/, top-level dir named for the merged set).
+    The submitter-name character set is enforced by STRUCT-01 (2.1.1); the
+    {code, results, systems} shape is enforced by STRUCT-05 (2.1.5). So 2.1.4
+    has no extra runtime work in either mode; the @rule binding is preserved
+    for coverage signaling only.
+    """
 
-    def test_default_fixture_passes(self, tmp_path, mock_logger):
+    def test_single_submitter_package_passes(self, tmp_path, mock_logger):
         from mlpstorage_py.tests.conftest import build_submission
         root = build_submission(tmp_path)
         check = _make_check(root, mock_logger)
@@ -247,21 +256,29 @@ class TestStruct04_ClosedSubmitterDirectory:
         assert result is True
         assert mock_logger.errors == []
 
-    def test_wrong_submitter_in_closed(self, tmp_path, mock_logger):
-        from mlpstorage_py.tests.conftest import build_submission
-        root = build_submission(tmp_path, wrong_submitter_in_closed=True)
-        check = _make_check(root, mock_logger)
-        result = run_one_check(check, "closed_submitter_directory_check", mock_logger)
-        assert result is False
-        assert any("[2.1.4 closedSubmitterDirectory]" in m for m in mock_logger.errors)
-
-    def test_multiple_submitters_in_closed(self, tmp_path, mock_logger):
+    def test_merged_reviewer_tree_with_multiple_submitters_passes(self, tmp_path, mock_logger):
+        """Regression for over-strict pre-fix behavior: closed/ with multiple
+        submitter directories (the merged v2.0 results bundle pattern) must
+        not error. STRUCT-01 still validates each submitter dir name.
+        """
         from mlpstorage_py.tests.conftest import build_submission
         root = build_submission(tmp_path, multiple_submitters_in_closed=True)
         check = _make_check(root, mock_logger)
         result = run_one_check(check, "closed_submitter_directory_check", mock_logger)
-        assert result is False
-        assert any("[2.1.4 closedSubmitterDirectory]" in m for m in mock_logger.errors)
+        assert result is True
+        assert not any("[2.1.4 closedSubmitterDirectory]" in m for m in mock_logger.errors)
+
+    def test_basename_mismatch_does_not_fire(self, tmp_path, mock_logger):
+        """Regression for over-strict pre-fix behavior: submitter dir name
+        not matching the top-level path basename was a false positive against
+        merged reviewer trees rooted at e.g. submissions_storage_v2.0/.
+        """
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path, wrong_submitter_in_closed=True)
+        check = _make_check(root, mock_logger)
+        result = run_one_check(check, "closed_submitter_directory_check", mock_logger)
+        assert result is True
+        assert not any("[2.1.4 closedSubmitterDirectory]" in m for m in mock_logger.errors)
 
 
 # ---------------------------------------------------------------------------

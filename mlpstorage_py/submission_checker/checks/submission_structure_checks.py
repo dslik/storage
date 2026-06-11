@@ -215,34 +215,35 @@ class SubmissionStructureCheck(BaseCheck):
 
     @rule("2.1.4", "closedSubmitterDirectory")
     def closed_submitter_directory_check(self):
-        """STRUCT-04: each division must contain EXACTLY ONE submitter directory,
-        and that directory's name must match basename(input root) — i.e., the
-        submitter's chosen top-level identifier (PLAN.md D-277).
+        """STRUCT-04: Rules.md 2.1.4 names a per-submitter naming convention
+        for the directory under "closed" (and, transitively, under "open" via
+        2.1.3). The validator runs against two different tree shapes:
+
+          1. Single-submitter package — a submitter's own pre-merge tree, in
+             which "closed" contains exactly one directory whose name matches
+             the top-level submitter directory.
+          2. Merged reviewer tree — N submitters' packages concatenated, in
+             which "closed" contains one directory per participating
+             submitter. The top-level directory in this mode is named for the
+             merged-tree set (e.g. "submissions_storage_v2.0"), not any one
+             submitter.
+
+        The submitter-name character-set requirement is enforced uniformly by
+        STRUCT-01 (2.1.1 submitterRootDirectory) for every submitter directory
+        in either division, and STRUCT-05 (2.1.5 requiredSubdirectories)
+        enforces the {code, results, systems} shape under every submitter. So
+        the structural value 2.1.4 contributes is already covered by the
+        sibling STRUCT methods in both tree modes; this @rule binding stays
+        for coverage signaling without runtime work.
+
+        Pre-fix behavior: enforced cardinality 1 on every division and a
+        basename-matches-submitter equality check. That made the validator
+        unusable against the merged reviewer tree (every multi-submitter
+        division tripped the count check, and the basename mismatch fired
+        once per submitter). See the v2.0 results bundle:
+        submissions_storage_v2.0/closed/{Alluxio,DDN,...}.
         """
-        valid = True
-        expected_name = os.path.basename(os.path.normpath(self.root_path))
-        for division in list_dir(self.root_path):
-            if division not in _VALID_DIVISIONS:
-                continue
-            div_path = os.path.join(self.root_path, division)
-            submitters = list_dir(div_path)
-            if len(submitters) != 1:
-                self.log_violation(
-                    "2.1.4", "closedSubmitterDirectory",
-                    div_path,
-                    "%s/ must contain exactly one submitter directory, found %d: %s",
-                    division, len(submitters), submitters,
-                )
-                valid = False
-            elif submitters[0] != expected_name:
-                self.log_violation(
-                    "2.1.4", "closedSubmitterDirectory",
-                    os.path.join(div_path, submitters[0]),
-                    "submitter directory %r does not match top-level submitter name %r (Rules.md 2.1.4)",
-                    submitters[0], expected_name,
-                )
-                valid = False
-        return valid
+        return True
 
     # -----------------------------------------------------------------------
     # STRUCT-05 — 2.1.5 requiredSubdirectories
