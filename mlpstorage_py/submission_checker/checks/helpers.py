@@ -26,10 +26,11 @@ import re
 # df header regex (D-B1, locked)
 # ---------------------------------------------------------------------------
 
-# Anchored header: tolerates both `df` (1K-blocks column) and `df -h` (Size column)
-# because the second column is matched by \S+ (any non-whitespace token).
+# Anchored header: tolerates both `df` (1K-blocks column / "Available") and
+# `df -h` (Size column / "Avail") because the second column is matched by \S+
+# (any non-whitespace token) and the fourth column accepts "Avail" or "Available".
 DF_HEADER_RE = re.compile(
-    r"^Filesystem\s+\S+\s+Used\s+Available\s+Use%\s+Mounted on",
+    r"^Filesystem\s+\S+\s+Used\s+Avail\w*\s+Use%\s+Mounted on",
     re.MULTILINE,
 )
 
@@ -103,7 +104,9 @@ def _check_filesystem_separation(
     # so content[match.end():] starts with '\n'. We skip that initial newline by
     # starting after the end of the matched line.
     mounts = []
-    header_end = content.index("\n", match.end())  # find the end of the header line
+    header_end = content.find("\n", match.end())  # find the end of the header line
+    if header_end == -1:
+        return (False, False)  # header is the last line; no rows follow
     rest = content[header_end + 1:]
     for line in rest.splitlines():
         line = line.rstrip()

@@ -118,24 +118,21 @@ class TestCheckFilesystemSeparation:
         )
         assert (ok, df_found) == (True, True)
 
-    # df -h tolerance (D-B1): the locked regex uses 'Available' so df -h output
-    # must also include that column. Some df implementations print 'Available'
-    # even with -h, or the submission log may run 'df' without -h. The key
-    # tolerance is the second column (1K-blocks vs Size) which is matched by \S+.
+    # df -h tolerance (D-B1, CR-01): DF_HEADER_RE matches both `df` (1K-blocks +
+    # "Available") and `df -h` (Size + "Avail") output. Real `df -h` on Linux
+    # emits "Avail" — the regex's fourth column uses `Avail\w*` to accept both
+    # spellings, and the second column uses `\S+` for "1K-blocks" vs "Size".
     def test_df_h_format_tolerated(self, tmp_path):
-        """Second column can be 'Size' (df -h) rather than '1K-blocks' (df) (D-B1).
+        """Real `df -h` output with 'Size' + 'Avail' matches (D-B1 / CR-01).
 
-        The locked DF_HEADER_RE uses r'\\S+' for the second column so both
-        variants match. The 'Available' vs 'Avail' distinction is resolved by
-        using 'Available' in the header (as produced by 'df' and some 'df -h'
-        variants).
+        Real Linux `df -h` produces literally "Avail", not "Available". This
+        test pins that exact header form so the regex never silently regresses
+        back to a "Available"-only literal.
         """
-        # Use the same df-h style row format but with 'Available' in the header
-        # (the \S+ in DF_HEADER_RE makes the second column 'Size' match too)
         content = (
-            "Filesystem      Size  Used Available  Use%  Mounted on\n"
-            + "/dev/sda1      100G  50G  50G         50%   /data\n"
-            + "/dev/sda2      100G  50G  50G         50%   /\n"
+            "Filesystem      Size  Used Avail Use% Mounted on\n"
+            + "/dev/sda1      100G  50G  50G  50%  /data\n"
+            + "/dev/sda2      100G  50G  50G  50%  /\n"
             + "\n"
         )
         logfile = _make_logfile(tmp_path, content)
@@ -143,6 +140,35 @@ class TestCheckFilesystemSeparation:
             {"data_dir": "/data/foo", "results_dir": "/data/bar"}, logfile
         )
         assert (ok, df_found) == (False, True)
+
+    def test_df_long_format_tolerated(self, tmp_path):
+        """Original `df` (no -h) with '1K-blocks' + 'Available' still matches (D-B1)."""
+        content = (
+            "Filesystem     1K-blocks  Used  Available  Use%  Mounted on\n"
+            + "/dev/sda1       1000000   500000   500000   50%   /data\n"
+            + "/dev/sda2       1000000   500000   500000   50%   /\n"
+            + "\n"
+        )
+        logfile = _make_logfile(tmp_path, content)
+        ok, df_found = _check_filesystem_separation(
+            {"data_dir": "/data/foo", "results_dir": "/data/bar"}, logfile
+        )
+        assert (ok, df_found) == (False, True)
+
+    def test_df_header_at_eof_no_newline(self, tmp_path):
+        """Header without trailing newline returns (False, False), no crash (CR-02).
+
+        Prior to the fix, content.index('\\n', match.end()) raised ValueError
+        when the df header was the last line with no rows. The fix uses
+        str.find() and returns (False, False) so the caller emits the standard
+        'df output not found' violation.
+        """
+        content = "Filesystem      Size  Used Avail Use% Mounted on"  # no \n
+        logfile = _make_logfile(tmp_path, content)
+        ok, df_found = _check_filesystem_separation(
+            {"data_dir": "/data/foo", "results_dir": "/data/bar"}, logfile
+        )
+        assert (ok, df_found) == (False, False)
 
     # checkpoint_folder analog
     def test_checkpoint_folder_key(self, tmp_path):
