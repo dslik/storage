@@ -62,11 +62,13 @@ def mock_logger():
 def _make_check(timestamps, log):
     """Build a DirectoryCheck without invoking __init__ (which requires a
     real SubmissionLogs + filesystem path). Set only the attributes
-    run_files_timestamp_check actually touches: self.log and
-    self.submissions_logs.run_files.
+    run_files_timestamp_check actually touches: self.log,
+    self.submissions_logs.run_files, and self.run_path (used by
+    log_violation after the Phase 3 retrofit).
     """
     check = DirectoryCheck.__new__(DirectoryCheck)
     check.log = log
+    check.run_path = "/test/run"
     submissions_logs = MagicMock()
     submissions_logs.run_files = [
         (f"run_file_{i}", f"metadata_{i}", ts) for i, ts in enumerate(timestamps)
