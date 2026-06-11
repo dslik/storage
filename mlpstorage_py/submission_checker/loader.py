@@ -62,7 +62,7 @@ class Loader:
     def load_single_log(self, path, log_type):
         log = None
         if os.path.exists(path):
-            self.logger.info("Loading %s log from %s", log_type, path)
+            self.logger.debug("Loading %s log from %s", log_type, path)
             log = self.parser_map.get(log_type, self.parser_map["default"])(path, log_type).get_dict()
         else:
             self.logger.warning(

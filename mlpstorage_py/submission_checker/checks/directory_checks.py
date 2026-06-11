@@ -354,7 +354,7 @@ class DirectoryCheck(BaseCheck):
         """
         valid = True
 
-        if not hasattr(self.submissions_logs, 'checkpointing_files') or not self.submissions_logs.checkpointing_files:
+        if not hasattr(self.submissions_logs, 'checkpoint_files') or not self.submissions_logs.checkpoint_files:
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
@@ -387,7 +387,7 @@ class DirectoryCheck(BaseCheck):
         valid = True
         timestamp_pattern = r"^\d{8}_\d{6}$"
 
-        if not hasattr(self.submissions_logs, 'checkpointing_files') or not self.submissions_logs.checkpointing_files:
+        if not hasattr(self.submissions_logs, 'checkpoint_files') or not self.submissions_logs.checkpoint_files:
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
@@ -429,7 +429,7 @@ class DirectoryCheck(BaseCheck):
         """
         valid = True
 
-        if not hasattr(self.submissions_logs, 'checkpointing_files') or not self.submissions_logs.checkpointing_files:
+        if not hasattr(self.submissions_logs, 'checkpoint_files') or not self.submissions_logs.checkpoint_files:
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
@@ -437,7 +437,7 @@ class DirectoryCheck(BaseCheck):
         checkpoint_run_data = []
         max_gap = float("inf")
 
-        for checkpoint_dict, _, timestamp_dir in self.submissions_logs.checkpointing_files:
+        for checkpoint_dict, _, timestamp_dir in self.submissions_logs.checkpoint_files:
             try:
                 # Parse timestamps from checkpoint_dict
                 start_time = datetime.fromisoformat(checkpoint_dict["start"])
@@ -495,11 +495,11 @@ class DirectoryCheck(BaseCheck):
         """
         valid = True
 
-        if not hasattr(self.submissions_logs, 'checkpointing_files') or not self.submissions_logs.checkpointing_files:
+        if not hasattr(self.submissions_logs, 'checkpoint_files') or not self.submissions_logs.checkpoint_files:
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
-        for _, _, timestamp in self.submissions_logs.checkpointing_files:
+        for _, _, timestamp in self.submissions_logs.checkpoint_files:
             timestamp_path = os.path.join(self.checkpointing_path, timestamp)
             files = list_files(timestamp_path)
             dirs = list_dir(timestamp_path)
@@ -534,11 +534,11 @@ class DirectoryCheck(BaseCheck):
         valid = True
         required_files = {"config.yaml", "hydra.yaml", "overrides.yaml"}
 
-        if not hasattr(self.submissions_logs, 'checkpointing_files') or not self.submissions_logs.checkpointing_files:
+        if not hasattr(self.submissions_logs, 'checkpoint_files') or not self.submissions_logs.checkpoint_files:
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
-        for _, _, timestamp in self.submissions_logs.checkpointing_files:
+        for _, _, timestamp in self.submissions_logs.checkpoint_files:
             dlio_config_path = os.path.join(self.checkpointing_path, timestamp, "dlio_config")
 
             if not os.path.exists(dlio_config_path):
