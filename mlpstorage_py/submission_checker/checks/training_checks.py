@@ -3,6 +3,8 @@ from .base import BaseCheck
 from ..constants import *
 from ..configuration.configuration import Config
 from ..loader import SubmissionLogs
+from ..rule_registry import rule
+from .helpers import _check_filesystem_separation
 
 import os
 import hashlib
@@ -43,6 +45,7 @@ class TrainingCheck(BaseCheck):
             self.run_data_matches_datasize,
             self.accelerator_utilization_check,
             self.single_host_simulated_accelerators,
+            self.single_host_client_limit,   # TRAIN-01: wire-up (was missing from init_checks)
             self.identical_accelerators_per_node,
             self.closed_submission_checksum,
             self.closed_submission_parameters,
@@ -50,6 +53,23 @@ class TrainingCheck(BaseCheck):
             self.mlpstorage_path_args,
             self.mlpstorage_filesystem_check,
         ])
+
+    def _get_benchmark_api(self) -> str:
+        """Return 'file' or 'object' (default 'file') from the schema-validated system YAML.
+
+        Reads self.submissions_logs.system_file (loaded by Loader at line 98).
+        Returns 'file' if system_file is None or the architecture block is absent.
+        Per D-B7, the helper trusts the schema validation — no re-validation here.
+        """
+        system_file = getattr(self.submissions_logs, "system_file", None)
+        if not system_file:
+            return "file"
+        return (
+            system_file.get("system_under_test", {})
+                       .get("solution", {})
+                       .get("architecture", {})
+                       .get("benchmark_API", "file")
+        )
 
     def verify_datasize_usage(self):
         """
@@ -252,28 +272,29 @@ class TrainingCheck(BaseCheck):
         
         return valid
     
+    @rule("3.3.4", "trainingSingleHostClientLimit")
     def single_host_client_limit(self):
-        """
-        For single-host submissions, fail if more than one client node used.
+        """For single-host runs (summary.num_hosts == 1), fail if more than one
+        client node is specified in metadata.args.hosts. (Rules.md 3.3.4)
+
+        TRAIN-01 wire-up: registered in init_checks; upgraded from bare log.error
+        to log_violation (QUAL-02 retro-fit) with @rule decorator.
         """
         valid = True
         if self.mode != "training":
             return valid
         for summary, metadata, _ in self.submissions_logs.run_files:
             num_hosts = summary.get("num_hosts", 1)
-            
             if num_hosts == 1:
                 args = metadata.get("args", {})
                 hosts = args.get("hosts", [])
-                
                 if len(hosts) > 1:
-                    self.log.error(
-                        "Single-host submission but %d client nodes specified: %s",
-                        len(hosts),
-                        hosts
+                    self.log_violation(
+                        "3.3.4", "trainingSingleHostClientLimit", self.path,
+                        "single-host run specifies %d client nodes: %s",
+                        len(hosts), hosts,
                     )
                     valid = False
-        
         return valid
     
     def identical_accelerators_per_node(self):
@@ -423,14 +444,40 @@ class TrainingCheck(BaseCheck):
         
         return valid
     
+    @rule("3.4.2", "trainingMlpstorageFilesystemCheck")
     def mlpstorage_filesystem_check(self):
-        """
-        Verify dataset and output are on different filesystems.
-        This would require checking 'df' output in the logfiles.
+        """Verify dataset directory and results directory are on different filesystems.
+
+        Parses the 'df' block from the run logfile (D-B1 anchored header). When the
+        system YAML declares benchmark_API == 'object', silent-passes per D-B7.
+        When the df block is absent, emits a violation (D-B4) — surfaces TODO-001.
+
+        TRAIN-02 implementation: replaces stub body with _check_filesystem_separation
+        helper call (from checks/helpers.py, shipped in Plan 02-01).
         """
         valid = True
-        # Question: where to look for this?
         if self.mode != "training":
             return valid
-        # TODO      
+
+        # D-B7: object-API submissions don't use 'df'; silent-pass.
+        if self._get_benchmark_api() == "object":
+            return valid
+
+        for summary, metadata, timestamp in self.submissions_logs.run_files:
+            logfile_path = os.path.join(self.run_path, timestamp, "training_run.stdout.log")
+            args = metadata.get("args", {})
+            ok, df_found = _check_filesystem_separation(args, logfile_path)
+            if not df_found:
+                self.log_violation(
+                    "3.4.2", "trainingMlpstorageFilesystemCheck", logfile_path,
+                    "df output not found",
+                )
+                valid = False
+                continue
+            if not ok:
+                self.log_violation(
+                    "3.4.2", "trainingMlpstorageFilesystemCheck", logfile_path,
+                    "data_dir and results_dir are on the same filesystem",
+                )
+                valid = False
         return valid
