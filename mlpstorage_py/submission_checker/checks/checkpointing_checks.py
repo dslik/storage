@@ -345,7 +345,19 @@ class CheckpointingCheck(BaseCheck):
         valid = True
         if self.mode != "checkpointing":
             return valid
-        # Load reference YAML file
+        # Load reference YAML file.
+        #
+        # Per WR-09 (review 2026-06-10): both branches below break the per-loop
+        # ``valid &= False ; continue`` accumulation pattern used elsewhere in
+        # this file and return False directly. That is intentional: without a
+        # loaded reference_config there is nothing to compare any per-summary
+        # yaml_params against, so every iteration of the loop below would emit
+        # a duplicate "reference not loaded" violation. Short-circuiting at the
+        # infrastructure-error boundary keeps the diagnostic count to one per
+        # missing/broken reference file. CLAUDE.md's
+        # "log-and-continue across checks" rule still holds at the outer
+        # ``run_checks`` boundary — this method returns False once, and the
+        # next check method in DirectoryCheck/CheckpointingCheck still runs.
         config_ref_full_path = os.path.join(config_ref_path, config_ref_file)
         if not os.path.exists(config_ref_full_path):
             self.log_violation(
