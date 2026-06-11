@@ -79,8 +79,21 @@ def _enumerate_rules_md(path: str) -> list:
         log.error("Rules.md not found at %s", path)
         return []
     result = []
+    # Per WR-12 (review 2026-06-10): track fenced-code-block state so the
+    # locked regex does not match against a line inside a ``` ... ```
+    # block. The regex is strict enough that accidental matches are
+    # unlikely in normal documentation prose, but a contributor pasting
+    # an example block demonstrating *the format itself* would otherwise
+    # register a phantom ID. Toggle on any line whose stripped leading
+    # whitespace starts with ``` (the CommonMark fence marker).
+    in_fence = False
     with rules_path.open("r", encoding="utf-8") as fh:
         for line in fh:
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
             m = _RULE_ID_PATTERN.match(line)
             if m:
                 result.append((m.group(1), m.group(2)))
