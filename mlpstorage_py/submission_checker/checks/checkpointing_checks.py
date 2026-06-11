@@ -87,6 +87,25 @@ class CheckpointingCheck(BaseCheck):
                             .get("capabilities", {})
                             .get(field)
         )
+
+    def _iter_valid_files(self):
+        """Yield (summary, metadata, timestamp) tuples, skipping any where
+        summary or metadata is None.
+
+        Missing summary.json / metadata.json is reported by
+        SubmissionStructureCheck under 2.1.22 (checkpointingResultsJson) and
+        2.1.25 (checkpointingFiles). This generator silently skips None
+        entries so per-rule checks don't crash with AttributeError on
+        ``None.get(...)`` and don't double-report the same structural cause.
+        """
+        for summary, metadata, timestamp in self.submissions_logs:
+            if summary is None or metadata is None:
+                self.log.debug(
+                    "[checkpointing] skipping %s (summary or metadata not loaded)",
+                    timestamp,
+                )
+                continue
+            yield summary, metadata, timestamp
     
     @rule("4.3.1", "checkpointDataSizeRatio")
     def checkpoint_data_size_ratio(self):
@@ -103,7 +122,7 @@ class CheckpointingCheck(BaseCheck):
         if self.mode != "checkpointing":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             checkpoint_size_gb = summary.get("metric", {}).get("checkpoint_size_GB", 0)
             host_memory_gb = summary.get("host_memory_GB", [0])[0]
             num_hosts = summary.get("num_hosts", 1)
@@ -136,7 +155,7 @@ class CheckpointingCheck(BaseCheck):
         if self.mode != "checkpointing":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             combined_params = metadata.get("combined_params", {})
             checkpoint_params = combined_params.get("checkpoint", {})
             fsync_enabled = checkpoint_params.get("fsync", False)
@@ -162,7 +181,7 @@ class CheckpointingCheck(BaseCheck):
 
         allowed_models = {"8b", "70b", "405b", "1t"}
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             model_name = metadata.get("args", {}).get("model", "").lower()
 
             # Extract just the size part (8b, 70b, etc.)
@@ -196,7 +215,7 @@ class CheckpointingCheck(BaseCheck):
         if self.mode != "checkpointing":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             verification = metadata.get("verification", "closed")
 
             if verification == "closed":
@@ -239,7 +258,7 @@ class CheckpointingCheck(BaseCheck):
         if self.mode != "checkpointing":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             verification = metadata.get("verification", "open")
 
             if verification == "closed":
@@ -271,7 +290,7 @@ class CheckpointingCheck(BaseCheck):
 
         ACCELERATOR_MEMORY_GB = 80  # H100
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             checkpoint_size_gb = summary.get("metric", {}).get("checkpoint_size_GB", 0)
             num_accelerators = summary.get("num_accelerators", 0)
 
@@ -395,7 +414,7 @@ class CheckpointingCheck(BaseCheck):
         allowed_diff_params = {
             "checkpoint.checkpoint_folder"
         }
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             verification = metadata.get("verification", "open")
             if verification == "closed":
                 yaml_params = metadata.get("yaml_params", {})
@@ -441,7 +460,7 @@ class CheckpointingCheck(BaseCheck):
         if self.mode != "checkpointing":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             args = metadata.get("args", {})
             checkpoint_folder = args.get("checkpoint_folder")
             results_dir = args.get("results_dir")
@@ -480,7 +499,7 @@ class CheckpointingCheck(BaseCheck):
         if self.mode != "checkpointing":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             params_dict = metadata.get("params_dict", {})
             checkpoint_mode = params_dict.get("checkpoint.mode", "")
 
@@ -521,7 +540,7 @@ class CheckpointingCheck(BaseCheck):
         valid = True
         if self.mode != "checkpointing":
             return valid
-        for summary, metadata, _ in self.submissions_logs:
+        for summary, metadata, _ in self._iter_valid_files():
             verification = metadata.get("verification", "closed")
             if verification != "open":
                 continue
@@ -747,7 +766,7 @@ class CheckpointingCheck(BaseCheck):
             return valid
         if self._get_benchmark_api() == "object":
             return valid
-        for summary, metadata, timestamp in self.submissions_logs:
+        for summary, metadata, timestamp in self._iter_valid_files():
             logfile_path = os.path.join(self.checkpointing_path, timestamp, "checkpointing_run.stdout.log")
             args = metadata.get("args", {})
             # For checkpointing, checkpoint_folder is the "data path" analog (RESEARCH.md).
