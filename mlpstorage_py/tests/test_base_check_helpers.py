@@ -24,16 +24,19 @@ class CapturingMockLogger:
         self.error_calls = []
         self.warning_calls = []
 
-    def debug(self, msg, *args):
+    def debug(self, msg, *args, **kwargs):
         pass
 
-    def info(self, msg, *args):
+    def info(self, msg, *args, **kwargs):
         pass
 
-    def warning(self, msg, *args):
+    def warning(self, msg, *args, **kwargs):
         self.warning_calls.append((msg, args))
 
-    def error(self, msg, *args):
+    def error(self, msg, *args, **kwargs):
+        # **kwargs swallows exc_info=True passed by BaseCheck.run_checks for
+        # tracebacks. The mock records only the format string + args; the
+        # traceback isn't asserted on at this level.
         self.error_calls.append((msg, args))
 
     def formatted_errors(self):

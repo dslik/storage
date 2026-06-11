@@ -47,19 +47,21 @@ class MockLogger:
         self.warnings = []  # list[str] — formatted warning messages
         self.infos = []     # list[str] — formatted info messages (NEW Plan 02-04)
 
-    def error(self, msg, *args):
+    def error(self, msg, *args, **kwargs):
+        # **kwargs swallows exc_info=True etc. so the mock stays compatible
+        # with logging callers that ask for traceback rendering.
         self.errors.append(msg % args if args else msg)
 
-    def warning(self, msg, *args):
+    def warning(self, msg, *args, **kwargs):
         self.warnings.append(msg % args if args else msg)
 
-    def info(self, msg, *args):
+    def info(self, msg, *args, **kwargs):
         self.infos.append(msg % args if args else msg)
 
-    def debug(self, msg, *args):
+    def debug(self, msg, *args, **kwargs):
         pass
 
-    def verbose(self, msg, *args):
+    def verbose(self, msg, *args, **kwargs):
         pass
 
     def verboser(self, msg, *args):

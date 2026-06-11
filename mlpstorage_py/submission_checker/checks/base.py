@@ -68,11 +68,21 @@ class BaseCheck(ABC):
                 valid &= v
             except BaseException:
                 valid &= False
+                # exc_info=True attaches the current exception's type +
+                # message + traceback to the log record so the underlying
+                # bug is debuggable instead of being silently described as
+                # "Exception occurred". Required after the 2026-06-11
+                # checkpoint_files typo fix, which unmasked latent
+                # TypeError / AttributeError bugs in five DirectoryCheck
+                # rule methods (2.1.22 through 2.1.26) that the typo had
+                # been silently hiding.
                 self.log.error(
                     "Exception occurred in %s while running %s in %s",
                     self.path,
                     check.__name__,
-                    self.__class__.__name__)
+                    self.__class__.__name__,
+                    exc_info=True,
+                )
         return valid
 
     def execute(self, check):
