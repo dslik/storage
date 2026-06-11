@@ -1,8 +1,49 @@
+import re
+
+from mlpstorage_py import VERSION as _PACKAGE_VERSION
+
 from .parsers.json_parser import JSONParser
 from .parsers.yaml_parser import YamlParser
 
 VERSIONS = ["v2.0", "v3.0"]
 VALID_DIVISIONS = ["open", "closed"]
+
+
+def _derive_default_spec_version(package_version: str, supported: list) -> str:
+    """Return the spec-version string that pairs with this package release.
+
+    The MLPerf Storage spec ("Rules.md") evolves on round boundaries (v2.0,
+    v3.0, v4.0, ...). The Python package version evolves on release
+    boundaries (e.g. 3.0.0, 3.0.7, 3.0.8) — patch bumps for code fixes that
+    do not touch the spec. The package's major.minor therefore IS the
+    canonical spec round the code was built for; the patch level is the
+    code-only delta. Derive the default for ``--mlperf-version`` from the
+    package's major.minor so the two never drift.
+
+    If the derived string is not in ``supported`` (e.g. during a transition
+    when the new spec version hasn't been added to VERSIONS yet), fall back
+    to the most recently supported round and let the validator surface a
+    runtime mismatch via per-version dict lookups.
+
+    Args:
+        package_version: e.g. ``"3.0.8"``; falls back to ``"unknown"`` when
+            both PEP 621 metadata and pyproject.toml are unavailable.
+        supported: the ordered list of spec versions the per-version
+            constants dicts ship entries for.
+
+    Returns:
+        A spec-version string such as ``"v3.0"``.
+    """
+    m = re.match(r"^(\d+)\.(\d+)", package_version)
+    if m:
+        candidate = f"v{m.group(1)}.{m.group(2)}"
+        if candidate in supported:
+            return candidate
+    # Fallback: most recently supported round.
+    return supported[-1] if supported else "unknown"
+
+
+DEFAULT_SPEC_VERSION = _derive_default_spec_version(_PACKAGE_VERSION, VERSIONS)
 
 SYSTEM_PATH = {
     "v2.0": "{division}/{submitter}/systems/{system}.yaml",

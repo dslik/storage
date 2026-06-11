@@ -69,9 +69,13 @@ def get_args():
     parser.add_argument("--submitters", help="Comma separated submitters to run the checker")
     parser.add_argument(
         "--version",
-        default="v5.1",
+        default=DEFAULT_SPEC_VERSION,
         choices=list(VERSIONS),
-        help="mlperf version",
+        help=(
+            "MLPerf Storage spec version that the submission package claims "
+            "to conform to (default: %(default)s, derived from this "
+            "package's release version's major.minor)"
+        ),
     )
     parser.add_argument(
         "--csv",
