@@ -1,7 +1,7 @@
 system_under_test:
     solution:
-        submission_name: NVMe_Example
-        friendly_description: A generic example of a single-drive submission
+        submission_name: 'NVMe_Example'
+        friendly_description: 'Single Drive Direct Attach NVMe'
         architecture:
             storage_location: local
             benchmark_API: file
@@ -14,44 +14,42 @@ system_under_test:
             simultaneous_read: false
             remap_time_in_seconds: 30
     deployment: "onprem"
-    product_nodes:
+    clients:
         - friendly_description: Data
           quantity: 1
           chassis: 
-             model_name: Dell7680
-             rack_units: 1
-             cpu_model: XEON 90000
+             model_name: Supermicro 2U Hyper A+ Server (AS -2125HS-TNR)
+             rack_units: 2
+             cpu_model: AMD EPYC 9354 32-Core Processor
              cpu_qty: 2
-             cpu_cores: 96
+             cpu_cores: 32
              memory_capacity: 256
              power:
                 min_psus_active: 1
                 psus_configured:
-                    - inlet_voltage: 240
-                      nameplate_power_watts: 1800
+                    - nameplate_power_watts: 1600
+                      inlet_voltage: 120
                       efficiency: Platinum
                       unit_count: 2
+          networking:
+             - unit_count: 1
+               type: ethernet
+               speed: 1
+               traffic:
+                  - management
+          drives:
+             - unit_count: 1
+               vendor_name: Sandisk
+               model_name: SN861
+               interface: nvme
+               capacity_in_GB: 15360
           operating_system:
-             name: Rocky Linux
-             version: "9.5"
-    total_rack_units: 1
-    clients:
-        - friendly_description: Benchmark load system
-          quantity: 16
-          chassis: 
-             model_name: Dell7680
-             rack_units: 1
-             cpu_model: XEON 90000
-             cpu_qty: 2
-             cpu_cores: 96
-             memory_capacity: 256
-             power:
-                min_psus_active: 1
-                psus_configured:
-                    - inlet_voltage: 240
-                      nameplate_power_watts: 1800
-                      efficiency: Platinum
-                      unit_count: 2
-          operating_system:
-              name: RHEL
-              version: "10.1"
+             name: Ubuntu
+             version: "24.04.2 LTS"
+          environment:
+             - name: 'MPI'
+               value: 'Open MPI 4.1.7'
+          sysctl:
+             - name: 'vm.swappiness'
+               value: '1'
+    total_rack_units: 0

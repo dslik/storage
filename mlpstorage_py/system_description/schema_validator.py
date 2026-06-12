@@ -350,34 +350,96 @@ class SystemDescription(StrictModel):
 # Public API
 # ---------------------------------------------------------------------------
 
-def validate_dict(data: dict) -> list[str]:
-    """Validate a pre-loaded dict. Returns human-readable error strings; empty list means valid."""
+def _locate_line(node, loc: tuple) -> Optional[int]:
+    """Walk a YAML node tree following the Pydantic error ``loc`` path and
+    return the 1-indexed line number of the deepest reachable node.
+
+    Pydantic ``loc`` paths can reference fields that don't exist in the YAML
+    (``Field required`` errors) or extra fields that do. We descend as far as
+    the path matches and report the line of the last node we landed on, so
+    "Field required" surfaces the line of the parent mapping.
+    """
+    if node is None:
+        return None
+    current = node
+    for step in loc:
+        if isinstance(current, yaml.MappingNode):
+            matched = None
+            for key_node, value_node in current.value:
+                # Scalar key nodes carry the field name in ``.value``.
+                if getattr(key_node, "value", None) == str(step):
+                    matched = value_node
+                    break
+            if matched is None:
+                break
+            current = matched
+        elif isinstance(current, yaml.SequenceNode):
+            try:
+                idx = int(step)
+            except (TypeError, ValueError):
+                break
+            if 0 <= idx < len(current.value):
+                current = current.value[idx]
+            else:
+                break
+        else:
+            break
+    mark = getattr(current, "start_mark", None)
+    if mark is None:
+        return None
+    return mark.line + 1  # PyYAML marks are 0-indexed; humans count from 1
+
+
+def validate_dict(data: dict, *, node: object = None) -> list[str]:
+    """Validate a pre-loaded dict. Returns human-readable error strings; empty list means valid.
+
+    If ``node`` (a ``yaml.Node`` from ``yaml.compose``) is provided, each error
+    string is suffixed with ``(line N)`` pointing at the offending YAML line.
+    """
     try:
         SystemDescription.model_validate(data)
         return []
     except ValidationError as exc:
         errors = []
         for err in exc.errors():
-            loc = " -> ".join(str(p) for p in err["loc"])
-            errors.append(f"{loc}: {err['msg']}")
+            loc_tuple = err["loc"]
+            loc = " -> ".join(str(p) for p in loc_tuple)
+            line = _locate_line(node, loc_tuple) if node is not None else None
+            suffix = f" (line {line})" if line is not None else ""
+            errors.append(f"{loc}: {err['msg']}{suffix}")
         return errors
 
 
 def validate_file(path: str | Path) -> list[str]:
-    """Load a YAML file and validate it. Returns human-readable error strings; empty list means valid."""
+    """Load a YAML file and validate it. Returns human-readable error strings; empty list means valid.
+
+    Each returned string carries a ``(line N)`` suffix locating the offending
+    YAML line whenever the error's field path can be resolved in the source
+    document.
+    """
     path = Path(path)
     try:
         with path.open() as fh:
-            data = yaml.safe_load(fh)
-    except yaml.YAMLError as exc:
-        return [f"YAML parse error: {exc}"]
+            source = fh.read()
     except OSError as exc:
         return [f"Cannot read file: {exc}"]
+
+    try:
+        data = yaml.safe_load(source)
+    except yaml.YAMLError as exc:
+        return [f"YAML parse error: {exc}"]
 
     if not isinstance(data, dict):
         return ["Top-level YAML value must be a mapping"]
 
-    return validate_dict(data)
+    # Re-parse for node-level line tracking. Failures here are non-fatal —
+    # we fall back to validation without line annotations.
+    try:
+        node = yaml.compose(source)
+    except yaml.YAMLError:
+        node = None
+
+    return validate_dict(data, node=node)
 
 
 # ---------------------------------------------------------------------------

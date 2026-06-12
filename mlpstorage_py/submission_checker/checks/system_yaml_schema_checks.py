@@ -134,6 +134,11 @@ class SystemYamlSchemaCheck(BaseCheck):
                         rule_id, rule_name = self.SCHEMA_ERROR_RULE_MAP.get(
                             loc_str, ("2.1.7", "systemsDirectoryFiles")
                         )
-                        self.log_violation(rule_id, rule_name, yaml_path, "%s", msg)
+                        if loc_str:
+                            self.log_violation(
+                                rule_id, rule_name, yaml_path, "%s: %s", loc_str, msg
+                            )
+                        else:
+                            self.log_violation(rule_id, rule_name, yaml_path, "%s", msg)
                         valid = False
         return valid
