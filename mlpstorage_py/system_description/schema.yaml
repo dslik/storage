@@ -138,6 +138,7 @@ power_device:
 #
 power_supply:
     unit_count:                 int( min=1 )        # Number of power supplies that look like this
-    power_capacity_watts:       int( min=1 )        # The nameplate (regulatory rated) input power of the power supply
-    efficiency:                 enum( 'Gold', 'Platinum', 'Titanium', 'Ruby' )
+    inlet_voltage:              int( min=1 )        # AC input voltage the PSU is wired for (e.g. 120, 208, 240)
+    nameplate_power_watts:      int( min=1 )        # The nameplate (regulatory rated) input power of the power supply
+    efficiency:                 enum( 'Standard', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Titanium', 'Ruby', 'Unrated' )
 

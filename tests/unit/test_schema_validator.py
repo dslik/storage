@@ -307,6 +307,33 @@ class TestHappyPaths:
 
 
 # ---------------------------------------------------------------------------
+# Strict-extras: unknown fields must surface as errors, not be silently dropped
+# ---------------------------------------------------------------------------
+
+class TestExtraFieldsForbidden:
+    def test_extra_field_on_psu_rejected(self):
+        """Regression: power_capacity_watts was historically tolerated and silently dropped."""
+        doc = _onprem_doc()
+        doc["system_under_test"]["product_nodes"][0]["chassis"]["power"]["psus_configured"][0]["power_capacity_watts"] = 1800
+        fail(doc, "power_capacity_watts")
+
+    def test_extra_field_on_chassis_rejected(self):
+        doc = _onprem_doc()
+        doc["system_under_test"]["product_nodes"][0]["chassis"]["bogus_field"] = "oops"
+        fail(doc, "bogus_field")
+
+    def test_extra_field_on_solution_rejected(self):
+        doc = _onprem_doc()
+        doc["system_under_test"]["solution"]["typo_field"] = True
+        fail(doc, "typo_field")
+
+    def test_extra_field_at_root_rejected(self):
+        doc = _onprem_doc()
+        doc["unexpected_top_level_key"] = 42
+        fail(doc, "unexpected_top_level_key")
+
+
+# ---------------------------------------------------------------------------
 # Phase 1: base structural / type / enum / constraint validation
 # ---------------------------------------------------------------------------
 

@@ -17,7 +17,14 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+
+# All schema models inherit from this so that unknown fields surface as
+# validation errors instead of being silently dropped — catches typos like
+# "power_capacity_watts" vs. "nameplate_power_watts" at submission time.
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 # ---------------------------------------------------------------------------
@@ -93,20 +100,20 @@ class PowerEfficiency(str, Enum):
 # Leaf models
 # ---------------------------------------------------------------------------
 
-class KeyValue(BaseModel):
+class KeyValue(StrictModel):
     """A single name/value tuning pair (OS environment variable, sysctl knob, etc.)."""
     name:  str = Field(min_length=1)
     value: str = Field(min_length=1)
 
 
-class PowerSupply(BaseModel):
+class PowerSupply(StrictModel):
     unit_count:           int            = Field(ge=1)
     inlet_voltage:        int            = Field(gt=0)
     nameplate_power_watts: int           = Field(ge=1)
     efficiency:           PowerEfficiency
 
 
-class PowerDevice(BaseModel):
+class PowerDevice(StrictModel):
     """Power configuration for a chassis or switch (PSU count and redundancy model)."""
     min_psus_active:  int               = Field(ge=1)
     psus_configured:  List[PowerSupply] = Field(min_length=1)
@@ -123,7 +130,7 @@ class PowerDevice(BaseModel):
         return self
 
 
-class NetworkPort(BaseModel):
+class NetworkPort(StrictModel):
     """One homogeneous group of NIC ports sharing the same type, speed, and traffic role."""
     unit_count:  int               = Field(ge=1)
     type:        NetworkType
@@ -131,7 +138,7 @@ class NetworkPort(BaseModel):
     traffic:     List[TrafficType] = Field(min_length=1)
 
 
-class DriveInstance(BaseModel):
+class DriveInstance(StrictModel):
     """One homogeneous group of storage drives sharing the same model and configuration."""
     unit_count:      int            = Field(ge=1)
     vendor_name:     str            = Field(min_length=1)
@@ -144,12 +151,12 @@ class DriveInstance(BaseModel):
 # Mid-level models
 # ---------------------------------------------------------------------------
 
-class OperatingSystem(BaseModel):
+class OperatingSystem(StrictModel):
     name:    str = Field(min_length=1)
     version: str = Field(min_length=1)
 
 
-class Chassis(BaseModel):
+class Chassis(StrictModel):
     model_name:       str                  = Field(min_length=1)
     rack_units:       Optional[int]        = Field(default=None, ge=1)
     cpu_model:        str                  = Field(min_length=1)
@@ -159,7 +166,7 @@ class Chassis(BaseModel):
     power:            Optional[PowerDevice] = None
 
 
-class NodeDescription(BaseModel):
+class NodeDescription(StrictModel):
     """Describes a homogeneous group of nodes (product nodes or benchmark clients)."""
     friendly_description:  str                      = Field(min_length=1)
     quantity:              int                      = Field(ge=1)
@@ -171,7 +178,7 @@ class NodeDescription(BaseModel):
     sysctl:                Optional[List[KeyValue]]      = None
 
 
-class SwitchDescription(BaseModel):
+class SwitchDescription(StrictModel):
     """Describes a homogeneous group of network switches included in the storage solution."""
     unit_count:    int                      = Field(ge=1)
     vendor_name:   str                      = Field(min_length=1)
@@ -186,7 +193,7 @@ class SwitchDescription(BaseModel):
 # Top-level solution models
 # ---------------------------------------------------------------------------
 
-class Architecture(BaseModel):
+class Architecture(StrictModel):
     storage_location:    StorageLocation
     benchmark_API:       BenchmarkAPI
     product_API:         ProductAPI
@@ -206,7 +213,7 @@ class Architecture(BaseModel):
         return self
 
 
-class Capabilities(BaseModel):
+class Capabilities(StrictModel):
     multi_host:             bool
     simultaneous_write:     bool
     simultaneous_read:      bool
@@ -230,14 +237,14 @@ class Capabilities(BaseModel):
         return self
 
 
-class Solution(BaseModel):
+class Solution(StrictModel):
     submission_name:      str          = Field(min_length=1)
     friendly_description: str          = Field(min_length=1)
     architecture:         Architecture
     capabilities:         Capabilities
 
 
-class SystemUnderTest(BaseModel):
+class SystemUnderTest(StrictModel):
     solution:             Solution
     deployment:           DeploymentMode
     product_nodes:        Optional[List[NodeDescription]]   = None
@@ -334,7 +341,7 @@ class SystemUnderTest(BaseModel):
         return self
 
 
-class SystemDescription(BaseModel):
+class SystemDescription(StrictModel):
     """Root model — the entire system_under_test document."""
     system_under_test: SystemUnderTest
 
