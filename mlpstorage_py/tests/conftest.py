@@ -96,18 +96,13 @@ _RUN_TIMESTAMPS = [
 # One datagen timestamp
 _DATAGEN_TIMESTAMPS = ["20250111_130000"]
 
-# Ten checkpointing timestamps
+# Two checkpointing timestamps — Rules.md 2.1.23 in conjunction with 4.7.1
+# allows 1 or 2 invocations (one timestamp dir per invocation). The fixture
+# uses the two-invocation shape (write phase + read phase) so split-mode
+# kwargs like ``chkpt_split_mode`` can exercise the pairing helpers.
 _CHKPT_TIMESTAMPS = [
     "20250112_100001",
     "20250112_110001",
-    "20250112_120001",
-    "20250112_130001",
-    "20250112_140001",
-    "20250112_150001",
-    "20250112_160001",
-    "20250112_170001",
-    "20250112_180001",
-    "20250112_190001",
 ]
 
 # Stable 3-file code/ tree content (binary-stable, deterministic)
@@ -281,7 +276,7 @@ def build_submission(tmp_path, **overrides) -> Path:
                   checkpointing/
                     llama3-8b/
                       20250112_100001/   (+ summary.json + metadata.json)
-                      ... (10 total)
+                      20250112_110001/   (+ summary.json + metadata.json)
 
     Mutation kwargs (sealed — unknown kwargs raise ``TypeError``):
 

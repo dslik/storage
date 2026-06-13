@@ -90,11 +90,26 @@ class BaseCheck(ABC):
         return check()
 
     def __call__(self):
-        """Allows the check instance to be called like a function."""
-        self.log.info("Starting %s for: %s", self.name, self.path)
+        """Allows the check instance to be called like a function.
+
+        Per-check start/passing status lines are emitted at DEBUG. The
+        per-rule violations are already self-describing (each carries
+        ``[<rule_id> <rule_name>]`` plus the offending path), and
+        ``main.run`` emits a single ``SUMMARY: ...`` line at the end of
+        the validation. Wrapping every passing check with extra
+        "Starting ..." / "All ... passed" lines just clutters the
+        default output. Use ``--debug`` / ``-v`` to surface them again
+        when tracing.
+
+        The failure-path "Some X Checks failed for: ..." stays at ERROR
+        because (a) it is a useful transition marker when the user is
+        already scanning failure output and (b) test suites depend on it
+        as a count-of-failures sentinel.
+        """
+        self.log.debug("Starting %s for: %s", self.name, self.path)
         valid = self.run_checks()
         if valid:
-            self.log.info("All %s checks passed for: %s", self.name, self.path)
+            self.log.debug("All %s checks passed for: %s", self.name, self.path)
         else:
             self.log.error(
                 "Some %s Checks failed for: %s",

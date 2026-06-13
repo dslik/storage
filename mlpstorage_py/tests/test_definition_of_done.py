@@ -348,15 +348,16 @@ class TestDefinitionOfDoneBad:
 
         struct_212_idx = None
         first_benchmark_start_idx = None
+        # Sentinels for "the loader loop ran": any record from a rule
+        # in §3 (training) or §4 (checkpointing) — those checks only fire
+        # from inside the per-benchmark loop. We accept ERROR or INFO so
+        # the sentinel is robust to the bad fixture's specific failures.
+        IN_LOOP_RULE_PREFIXES = ("[3.", "[4.")
         for idx, line in enumerate(lines):
             if struct_212_idx is None and "ERROR]" in line and "[2.1.2 " in line:
                 struct_212_idx = idx
-            # BaseCheck.__call__ logs "Starting <name> for: <path>" at INFO
-            # level when a per-benchmark Check class is invoked from inside
-            # the loader loop.  TrainingCheck/CheckpointingCheck names contain
-            # "training checks" / "checkpointing checks" — anchor on those.
-            if first_benchmark_start_idx is None and "INFO]" in line and "Starting" in line and (
-                "training checks" in line or "checkpointing checks" in line
+            if first_benchmark_start_idx is None and any(
+                prefix in line for prefix in IN_LOOP_RULE_PREFIXES
             ):
                 first_benchmark_start_idx = idx
 
@@ -366,8 +367,8 @@ class TestDefinitionOfDoneBad:
             f"--- stderr ---\n{result.stderr}\n"
         )
         assert first_benchmark_start_idx is not None, (
-            "No per-benchmark 'Starting' INFO line found — loader loop did "
-            "not run.\n"
+            "No in-loop rule record found (looked for any [3.* / [4.* "
+            "prefix) — loader loop did not run.\n"
             f"--- stdout ---\n{result.stdout}\n"
             f"--- stderr ---\n{result.stderr}\n"
         )

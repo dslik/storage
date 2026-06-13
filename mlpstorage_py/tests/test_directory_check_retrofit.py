@@ -260,29 +260,26 @@ class TestBehaviorPreservation_2_1_17_RunTimestamps:
 # ---------------------------------------------------------------------------
 
 class TestBehaviorPreservation_2_1_23_CheckpointingTimestamps:
-    """2.1.23 checkpointingTimestamps: wrong count (!= 10) must emit a
+    """2.1.23 checkpointingTimestamps: wrong count (not 1 or 2) must emit a
     [2.1.23 checkpointingTimestamps] violation and return False.
+
+    Per Rules.md 4.7.1, a CLOSED checkpointing submission has 1 invocation
+    (combined write+read) or 2 invocations (write phase + read phase), so
+    the directory shape is 1 or 2 timestamp dirs — not 10. See the
+    docstring on DirectoryCheck.checkpointing_timestamps_check.
     """
 
     def test_checkpointing_timestamps_wrong_count_emits_prefixed_violation(
         self, tmp_path, mock_logger
     ):
-        """Remove some timestamp directories from the checkpointing workload
-        so the count is != 10 — verify the violation carries the
-        [2.1.23 checkpointingTimestamps] prefix.
+        """7 timestamp directories in the workload (count not in {1, 2}) —
+        the violation carries the [2.1.23 checkpointingTimestamps] prefix.
 
-        Construction strategy: __new__ + manual attribute assignment to
-        match the pattern used by the existing
-        test_directory_check_run_timestamps.py tests; this avoids needing
-        the full loader (which uses the `checkpoint_files` attribute name
-        whereas DirectoryCheck reads `checkpointing_files` —
-        intentionally out of scope for plan 03-01 to fix).
-
-        Build a real tmp directory with 7 timestamp subdirs (count != 10)
-        so list_dir picks them up; set a truthy `checkpointing_files`
-        sentinel so the early-return guard does not fire.
+        ``loader.py:103`` yields ``loader_metadata.folder =
+        .../checkpointing/<workload>``, so ``self.checkpointing_path`` IS
+        the workload directory. Build a workload tree with 7 timestamp
+        subdirs and point ``checkpointing_path`` at it directly.
         """
-        # Build a small workload tree: tmp_path/llama3-8b/<7 timestamp dirs>
         workload = tmp_path / "llama3-8b"
         workload.mkdir()
         for i in range(7):
@@ -290,15 +287,15 @@ class TestBehaviorPreservation_2_1_23_CheckpointingTimestamps:
 
         check = DirectoryCheck.__new__(DirectoryCheck)
         check.log = mock_logger
-        check.checkpointing_path = str(tmp_path)
+        check.checkpointing_path = str(workload)
         submissions_logs = MagicMock()
-        # Sentinel truthy value so hasattr-and-non-empty guard passes
-        submissions_logs.checkpointing_files = [("x", "y", "z")]
+        submissions_logs.checkpoint_files = [("x", "y", "z")]
         check.submissions_logs = submissions_logs
 
         result = check.checkpointing_timestamps_check()
         assert result is False, (
-            "7 timestamp dirs must fail checkpointing_timestamps_check (expected 10)"
+            "7 timestamp dirs must fail checkpointing_timestamps_check "
+            "(expected 1 or 2)"
         )
         assert any(
             m.startswith("[2.1.23 checkpointingTimestamps] ") for m in mock_logger.errors

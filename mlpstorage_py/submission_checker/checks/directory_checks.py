@@ -363,10 +363,16 @@ class DirectoryCheck(BaseCheck):
     @rule("2.1.22", "checkpointingResultsJson")
     def checkpointing_results_json_check(self):
         """
-        Check that there is exactly one results.json file in each workload directory
-        within the checkpointing directory hierarchy.
+        Check that there is exactly one results.json file in the workload
+        directory (e.g. ``checkpointing/llama3-8b/``).
 
-        (Rules.md 2.1.22 checkpointingResultsJson)
+        ``Loader.load`` (loader.py:103) yields ``loader_metadata.folder =
+        .../checkpointing/<workload>``, so ``self.checkpointing_path`` IS
+        the workload directory. Older revisions of this method iterated
+        ``list_dir(self.checkpointing_path)`` and treated each timestamp
+        subdirectory as a "workload" — one level too deep relative to
+        Rules.md 2.1.22, producing spurious diagnostics and a wrong path
+        in the violation record.
         """
         valid = True
 
@@ -374,31 +380,40 @@ class DirectoryCheck(BaseCheck):
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
-        # Get workload directories
-        workload_dirs = list_dir(self.checkpointing_path)
+        workload_path = self.checkpointing_path
+        results_files = list_files(workload_path)
+        results_json_count = sum(1 for f in results_files if f == "results.json")
 
-        for workload_dir in workload_dirs:
-            workload_path = os.path.join(self.checkpointing_path, workload_dir)
-            results_files = list_files(workload_path)
-            results_json_count = sum(1 for f in results_files if f == "results.json")
-
-            if results_json_count != 1:
-                self.log_violation(
-                    "2.1.22", "checkpointingResultsJson", workload_path,
-                    "Expected exactly 1 results.json, found %d",
-                    results_json_count,
-                )
-                valid = False
+        if results_json_count != 1:
+            self.log_violation(
+                "2.1.22", "checkpointingResultsJson", workload_path,
+                "Expected exactly 1 results.json, found %d",
+                results_json_count,
+            )
+            valid = False
 
         return valid
-    
+
     @rule("2.1.23", "checkpointingTimestamps")
     def checkpointing_timestamps_check(self):
         """
-        Check that there are exactly 10 timestamp directories in YYYYMMDD_HHmmss format
-        within the workload directories in the checkpointing hierarchy.
+        Check that there are 1 or 2 timestamp directories in YYYYMMDD_HHmmss
+        format within the workload directory (e.g. ``checkpointing/llama3-8b/``).
 
-        (Rules.md 2.1.23 checkpointingTimestamps)
+        The "10" wording in older drafts of Rules.md 2.1.23 conflicts with
+        Rules.md 4.7.1, which mandates that a CLOSED checkpointing
+        submission be either a single invocation (10 writes + 10 reads) or
+        two invocations (10/0 write phase + 0/10 read phase with a cache
+        flush in between). One invocation = one timestamp directory, so
+        the directory-count contract is 1 or 2, not 10. The "ten" in
+        Rules.md 2.1.23 refers to the 10 checkpoint operations performed
+        in aggregate, not to ten directories. 4.7.1's invocation-content
+        check (``checkpoint_invocation_structure``) owns the read/write
+        split validation; this rule only enforces the directory shape.
+
+        See ``checkpointing_results_json_check`` for the level-of-descent
+        note: ``self.checkpointing_path`` IS the workload directory, so we
+        list it directly rather than walking its children.
         """
         valid = True
         timestamp_pattern = r"^\d{8}_\d{6}$"
@@ -407,39 +422,51 @@ class DirectoryCheck(BaseCheck):
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
-        # Get workload directories
-        workload_dirs = list_dir(self.checkpointing_path)
+        workload_path = self.checkpointing_path
+        timestamp_dirs = list_dir(workload_path)
 
-        for workload_dir in workload_dirs:
-            workload_path = os.path.join(self.checkpointing_path, workload_dir)
-            timestamp_dirs = list_dir(workload_path)
-
-            # Validate format of each timestamp directory
-            for timestamp_dir in timestamp_dirs:
-                if not re.match(timestamp_pattern, timestamp_dir):
-                    self.log_violation(
-                        "2.1.23", "checkpointingTimestamps", workload_path,
-                        "Invalid timestamp format '%s'. Expected format: YYYYMMDD_HHmmss",
-                        timestamp_dir,
-                    )
-                    valid = False
-
-            # Check count
-            if len(timestamp_dirs) != 10:
+        for timestamp_dir in timestamp_dirs:
+            if not re.match(timestamp_pattern, timestamp_dir):
                 self.log_violation(
                     "2.1.23", "checkpointingTimestamps", workload_path,
-                    "Expected 10 timestamp directories, found %d",
-                    len(timestamp_dirs),
+                    "Invalid timestamp format '%s'. Expected format: YYYYMMDD_HHmmss",
+                    timestamp_dir,
                 )
                 valid = False
+
+        if len(timestamp_dirs) not in (1, 2):
+            self.log_violation(
+                "2.1.23", "checkpointingTimestamps", workload_path,
+                "Expected 1 or 2 timestamp directories (one per invocation, "
+                "per Rules.md 4.7.1), found %d",
+                len(timestamp_dirs),
+            )
+            valid = False
 
         return valid
     
     @rule("2.1.24", "checkpointingTimestampGap")
     def checkpointing_timestamp_gap_check(self):
         """
-        Check that the gap between consecutive timestamp directories is less than
-        the duration of a single checkpoint run.
+        Check that the gap between the end of one invocation and the start
+        of the next is short enough that no benchmark activity could have
+        occurred in between.
+
+        Per Rules.md 4.7.1 a CLOSED checkpointing submission has either one
+        invocation (no gap to check) or two invocations (a write phase
+        followed by a read phase). For the two-invocation case the relevant
+        gap is ``second.start - first.end``; the older implementation
+        compared ``dir_time_next - dir_time_curr`` against each
+        invocation's duration, which conflated the two phases' total wall
+        time with the inter-phase quiet window and produced spurious
+        violations on otherwise-valid paired submissions.
+
+        4.7.1 ``checkpoint_invocation_structure`` owns the upper bound on
+        the gap (30 seconds, plus the no-overlap rule); 2.1.24 just
+        enforces the qualitative "short enough" requirement Rules.md
+        states. A gap that exceeds the slower of the two invocations'
+        durations would imply a long pause large enough to swamp the
+        timing model, so that remains the threshold.
 
         (Rules.md 2.1.24 checkpointingTimestampGap)
         """
@@ -449,33 +476,15 @@ class DirectoryCheck(BaseCheck):
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
-        # Parse all checkpoint run data.
-        # max_gap holds the shortest run duration seen so far; it must stay a
-        # timedelta to compare with run_duration. Sentinel float("inf") would
-        # raise "'<' not supported between instances of 'datetime.timedelta'
-        # and 'float'" on the first iteration.
-        checkpoint_run_data = []
-        max_gap = timedelta.max
-
+        # Collect (start, end, timestamp_dir) per valid invocation.
+        invocations = []
         for checkpoint_dict, _, timestamp_dir in self.submissions_logs.checkpoint_files:
             if checkpoint_dict is None:
-                # Missing summary.json — reported under rule 2.1.22 by
-                # SubmissionStructureCheck; skip this entry rather than
-                # raise TypeError on the dict lookup below.
+                # Missing summary.json — reported under 2.1.22; skip silently.
                 continue
             try:
-                # Parse timestamps from checkpoint_dict
                 start_time = datetime.fromisoformat(checkpoint_dict["start"])
                 end_time = datetime.fromisoformat(checkpoint_dict["end"])
-
-                # Parse the directory timestamp (YYYYMMDD_HHmmss format)
-                dir_time = datetime.strptime(timestamp_dir, "%Y%m%d_%H%M%S")
-
-                run_duration = end_time - start_time
-                if run_duration < max_gap:
-                    max_gap = run_duration
-
-                checkpoint_run_data.append(dir_time)
             except (ValueError, KeyError, TypeError) as e:
                 self.log_violation(
                     "2.1.24", "checkpointingTimestampGap", timestamp_dir,
@@ -484,21 +493,28 @@ class DirectoryCheck(BaseCheck):
                 )
                 valid = False
                 continue
+            invocations.append((start_time, end_time, timestamp_dir))
 
-        # Sort timestamps to check gaps
-        checkpoint_run_data.sort()
+        # One invocation (or zero valid ones) — no consecutive pair to check.
+        if len(invocations) < 2:
+            return valid
 
-        # Check gaps between consecutive checkpoints
-        for i in range(len(checkpoint_run_data) - 1):
-            gap = checkpoint_run_data[i + 1] - checkpoint_run_data[i]
-
-            if gap >= max_gap:
+        # Order chronologically by start time, then check end→start gap for
+        # each consecutive pair against the slower invocation's duration.
+        invocations.sort(key=lambda x: x[0])
+        for first, second in zip(invocations, invocations[1:]):
+            first_start, first_end, _ = first
+            second_start, second_end, _ = second
+            gap = second_start - first_end
+            slower = max(first_end - first_start, second_end - second_start)
+            if gap >= slower:
                 self.log_violation(
                     "2.1.24", "checkpointingTimestampGap", self.checkpointing_path,
-                    "Gap between checkpoints is %s, which is >= the checkpoint duration %s. "
-                    "Benchmark activity between checkpoints can't be discarded.",
+                    "Gap between checkpoints is %s, which is >= the slower "
+                    "invocation's duration %s. Benchmark activity between "
+                    "checkpoints can't be discarded.",
                     gap,
-                    max_gap,
+                    slower,
                 )
                 valid = False
 

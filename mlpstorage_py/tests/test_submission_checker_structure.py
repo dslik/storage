@@ -97,12 +97,15 @@ class TestFixtureFactory:
         ts_dirs = list(run_dir.iterdir())
         assert len(ts_dirs) == 6
 
-    def test_default_builds_ten_checkpointing_timestamps(self, tmp_path):
+    def test_default_builds_two_checkpointing_timestamps(self, tmp_path):
+        # Rules.md 2.1.23 + 4.7.1: 1 or 2 timestamp dirs per workload
+        # (one per invocation). The fixture uses the two-invocation shape
+        # so split-mode kwargs can exercise the pairing helpers.
         from mlpstorage_py.tests.conftest import build_submission
         root = build_submission(tmp_path)
         chkpt = root / "closed" / "Acme" / "results" / "acme-storage-v1" / "checkpointing" / "llama3-8b"
         ts_dirs = list(chkpt.iterdir())
-        assert len(ts_dirs) == 10
+        assert len(ts_dirs) == 2
 
     def test_unknown_kwarg_raises_type_error(self, tmp_path):
         from mlpstorage_py.tests.conftest import build_submission

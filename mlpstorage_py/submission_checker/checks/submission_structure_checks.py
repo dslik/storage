@@ -629,6 +629,16 @@ class SubmissionStructureCheck(BaseCheck):
                 valid = False
 
         # Cross-check 2 — per-host memory (index-aligned when possible)
+        # ``memory_capacity`` in the system YAML is nameplate (GB) while
+        # ``host_memory_GB`` in summary.json is the usable amount the OS
+        # sees (GiB after DDR overhead, kernel reserve, BIOS-reserved
+        # regions, etc.). On identical hardware these never agree to the
+        # integer — usable RAM is ~95-98% of nameplate. A strict `==`
+        # check fires a 2.1.9 violation on every well-formed submission.
+        # Use a ±10% band: catches genuine config mismatches (e.g., a
+        # 256 GB rig reporting against a 768 GB YAML — ~3x off) while
+        # letting nameplate-vs-usable through.
+        MEMORY_TOLERANCE = 0.10
         host_memory_list = summary.get("host_memory_GB")
         if (
             host_memory_list is not None
@@ -640,13 +650,17 @@ class SubmissionStructureCheck(BaseCheck):
                     mem_int = int(mem)
                 except (TypeError, ValueError):
                     continue
-                if mem_int != expected_memory_per_host:
+                lower = expected_memory_per_host * (1 - MEMORY_TOLERANCE)
+                upper = expected_memory_per_host * (1 + MEMORY_TOLERANCE)
+                if not (lower <= mem_int <= upper):
                     self.log_violation(
                         "2.1.9", "identicalSystemConfig",
                         summary_path,
                         "host_memory_GB[%d] mismatch: summary.json has %s GiB, "
-                        "system YAML client chassis.memory_capacity is %s GiB",
+                        "system YAML client chassis.memory_capacity is %s GiB "
+                        "(outside ±%d%% tolerance)",
                         i, mem_int, expected_memory_per_host,
+                        int(MEMORY_TOLERANCE * 100),
                     )
                     valid = False
                     break  # one violation per summary.json per field is sufficient
