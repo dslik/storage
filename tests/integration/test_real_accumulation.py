@@ -216,3 +216,188 @@ def test_subsequent_runs_get_distinct_directories(real_accumulation_env):
         "Two runs collided into the same timestamp directory — collision "
         "handling in reserve_run_directory regressed."
     )
+
+
+# ---------------------------------------------------------------------------
+# VectorDB end-to-end: --vdb-engine appears in the path AND in metadata.
+# Runs `vectordb datasize` because it does not need a Milvus server nor any
+# vector-store Python deps — it is a pure storage calculation.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_vectordb_env(tmp_path_factory):
+    base = tmp_path_factory.mktemp("mlps_real_vdb")
+    results_dir = base / "results"
+    results_dir.mkdir()
+
+    _run_cli(
+        [
+            "whatif", "vectordb", "datasize",
+            "--num-vectors", "1000000",
+            "--dimension", "1536",
+            "--results-dir", str(results_dir),
+        ],
+        cwd=REPO_ROOT,
+    )
+    return results_dir
+
+
+def test_vectordb_path_includes_engine_real_run(real_vectordb_env):
+    """The real CLI produces vector_database/<engine>/<command>/<datetime>/."""
+    results_dir = real_vectordb_env
+
+    engine_dir = results_dir / "vector_database" / "milvus" / "datasize"
+    assert engine_dir.is_dir(), (
+        f"Expected vector_database/milvus/datasize/ under {results_dir}; "
+        f"got {sorted((results_dir / 'vector_database').iterdir())}"
+    )
+
+    datetime_dirs = list(engine_dir.iterdir())
+    assert len(datetime_dirs) == 1
+    metadata = next(datetime_dirs[0].glob("vector_database_*_metadata.json"))
+    assert metadata.exists()
+
+
+def test_vectordb_metadata_records_engine_in_model_slot(real_vectordb_env):
+    """Per PR 3: VectorDBBenchmark.__init__ mirrors args.vdb_engine into
+    args.model so the existing metadata extractor and workload grouping
+    (keyed on (model, accelerator)) treat distinct engines as distinct
+    workloads. Pre-PR-3 the metadata override would have clobbered this
+    with config_name."""
+    results_dir = real_vectordb_env
+    metadata_file = next(
+        (results_dir / "vector_database" / "milvus" / "datasize").rglob(
+            "vector_database_*_metadata.json"
+        )
+    )
+    metadata = json.loads(metadata_file.read_text())
+
+    assert metadata["benchmark_type"] == "vector_database"
+    assert metadata["model"] == "milvus", (
+        f"Expected model=milvus (the engine), got {metadata.get('model')!r}. "
+        "If this is 'default' the metadata override on VectorDBBenchmark.metadata "
+        "has regressed; engines sharing a config would merge into one workload."
+    )
+    # And the config name is still preserved under its own key.
+    assert metadata["vectordb_config"] == "default"
+
+
+def test_vectordb_discovery_attributes_engine(real_vectordb_env, mock_logger):
+    runs = get_runs_files(str(real_vectordb_env), logger=mock_logger)
+    assert len(runs) == 1
+    assert runs[0].benchmark_type == BENCHMARK_TYPES.vector_database
+    assert runs[0].model == "milvus"
+    assert runs[0].command == "datasize"
+
+
+# ---------------------------------------------------------------------------
+# KVCache end-to-end: --model appears in the path AND in metadata.
+# Uses `kvcache run --dry-run` because the real path needs llama weights;
+# --dry-run still exercises the path-generation code in Benchmark.__init__
+# (the run-directory reservation happens before any benchmark execution).
+# Avoids `kvcache datasize whatif` which crashes with a pre-existing bug
+# unrelated to this work: 'Namespace' object has no attribute 'loops'
+# (tracked separately).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_kvcache_env(tmp_path_factory):
+    base = tmp_path_factory.mktemp("mlps_real_kvcache")
+    results_dir = base / "results"
+    results_dir.mkdir()
+
+    _run_cli(
+        [
+            "whatif", "kvcache", "run",
+            "--results-dir", str(results_dir),
+            "--model", "tiny-1b",
+            "--num-users", "10",
+            "--duration", "5",
+            "--allow-run-as-root",
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+    )
+    return results_dir
+
+
+def test_kvcache_path_includes_model_real_run(real_kvcache_env):
+    """The real CLI produces kv_cache/<model>/<command>/<datetime>/."""
+    results_dir = real_kvcache_env
+
+    model_dir = results_dir / "kv_cache" / "tiny-1b" / "run"
+    assert model_dir.is_dir(), (
+        f"Expected kv_cache/tiny-1b/run/ under {results_dir}; "
+        f"got {sorted((results_dir / 'kv_cache').iterdir())}"
+    )
+
+    datetime_dirs = list(model_dir.iterdir())
+    assert len(datetime_dirs) == 1
+    metadata = next(datetime_dirs[0].glob("kv_cache_*_metadata.json"))
+    assert metadata.exists()
+
+
+def test_kvcache_metadata_records_model(real_kvcache_env):
+    """Per PR 4: KVCacheBenchmark.__init__ guarantees args.model is set
+    (defaulting to KVCACHE_MODEL_DEFAULT in closed mode), so the base
+    class's metadata always carries the model."""
+    results_dir = real_kvcache_env
+    metadata_file = next(
+        (results_dir / "kv_cache" / "tiny-1b" / "run").rglob(
+            "kv_cache_*_metadata.json"
+        )
+    )
+    metadata = json.loads(metadata_file.read_text())
+
+    assert metadata["benchmark_type"] == "kv_cache"
+    assert metadata["model"] == "tiny-1b"
+    # Backward-compat field still populated.
+    assert metadata.get("kvcache_model") == "tiny-1b"
+
+
+def test_kvcache_discovery_attributes_model(real_kvcache_env, mock_logger):
+    runs = get_runs_files(str(real_kvcache_env), logger=mock_logger)
+    assert len(runs) == 1
+    assert runs[0].benchmark_type == BENCHMARK_TYPES.kv_cache
+    assert runs[0].model == "tiny-1b"
+    assert runs[0].command == "run"
+
+
+# ---------------------------------------------------------------------------
+# Cross-benchmark accumulation: training + vectordb + kvcache in one tree.
+# Combines the three module fixtures' output into a single results-dir
+# (via symlinks — discovery follows them since PR 2) and verifies
+# heterogeneous discovery and per-type workload grouping.
+# ---------------------------------------------------------------------------
+
+
+def test_heterogeneous_tree_discovers_all_three(
+    real_accumulation_env, real_vectordb_env, real_kvcache_env, tmp_path, mock_logger
+):
+    """A single results-dir containing training + vectordb + kvcache runs
+    is discovered in full, with each run attributed to the right benchmark
+    type and model/engine. Real-world end-to-end check that the accumulation
+    surface keeps the benchmark types independent."""
+    combined = tmp_path / "combined"
+    combined.mkdir()
+    # Symlink each per-fixture results tree into the combined dir; discovery
+    # follows symlinks (PR 2's followlinks=True change in get_runs_files).
+    (combined / "training").symlink_to(real_accumulation_env[0] / "training")
+    (combined / "vector_database").symlink_to(real_vectordb_env / "vector_database")
+    (combined / "kv_cache").symlink_to(real_kvcache_env / "kv_cache")
+
+    runs = get_runs_files(str(combined), logger=mock_logger)
+
+    by_type = {bt: [] for bt in BENCHMARK_TYPES}
+    for r in runs:
+        by_type[r.benchmark_type].append(r)
+
+    # 1 datagen + 2 training runs + 1 vectordb datasize + 1 kvcache run
+    assert len(by_type[BENCHMARK_TYPES.training]) == 3
+    assert len(by_type[BENCHMARK_TYPES.vector_database]) == 1
+    assert len(by_type[BENCHMARK_TYPES.kv_cache]) == 1
+
+    assert by_type[BENCHMARK_TYPES.vector_database][0].model == "milvus"
+    assert by_type[BENCHMARK_TYPES.kv_cache][0].model == "tiny-1b"
