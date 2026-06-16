@@ -3979,6 +3979,53 @@ class TestValidateNewTraceArgs:
 
 
 # =============================================================================
+# Regression: storage_tokens_processed under tensor_parallel > 1 (PR #402)
+# =============================================================================
+
+class TestStorageTokensProcessedTensorParallel:
+    """storage_tokens_processed counts logical tokens, independent of
+    tensor_parallel. Per-token storage bytes are sharded across TP ranks, but
+    the token count itself is invariant. The NVMe-read path previously
+    referenced an undefined ``kv_cache_size_per_token`` (missing the
+    ``self.model_config.`` prefix); this regression covers both that bug and
+    the original tensor_parallel undercount.
+    """
+
+    @pytest.mark.parametrize("tensor_parallel", [1, 2, 4])
+    def test_nvme_write_adds_logical_token_count(self, tiny_model_config, tensor_parallel, tmp_path):
+        cache = MultiTierCache(
+            model_config=tiny_model_config,
+            gpu_memory_gb=0, cpu_memory_gb=0,
+            cache_dir=str(tmp_path),
+            tensor_parallel=tensor_parallel, seed=42,
+        )
+        num_tokens = 64
+        ok, loc, _ = cache.allocate_cache("k", num_tokens=num_tokens,
+                                          phase=InferencePhase.PREFILL)
+        assert ok and loc == 'nvme'
+        assert cache.stats['storage_tokens_processed'] == num_tokens
+
+    @pytest.mark.parametrize("tensor_parallel", [1, 2, 4])
+    def test_nvme_read_adds_logical_token_count(self, tiny_model_config, tensor_parallel, tmp_path):
+        cache = MultiTierCache(
+            model_config=tiny_model_config,
+            gpu_memory_gb=0, cpu_memory_gb=0,
+            cache_dir=str(tmp_path),
+            tensor_parallel=tensor_parallel, seed=42,
+        )
+        num_tokens = 64
+        ok, loc, _ = cache.allocate_cache("k", num_tokens=num_tokens,
+                                          phase=InferencePhase.PREFILL)
+        assert ok and loc == 'nvme'
+
+        before = cache.stats['storage_tokens_processed']
+        read_loc, _ = cache.access_cache("k", phase=InferencePhase.DECODE)
+        assert read_loc == 'nvme'
+        delta = cache.stats['storage_tokens_processed'] - before
+        assert delta == pytest.approx(num_tokens, rel=1e-9)
+
+
+# =============================================================================
 # Main entry point for running without pytest
 # =============================================================================
 

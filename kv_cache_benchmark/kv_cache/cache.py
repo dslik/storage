@@ -826,7 +826,7 @@ class MultiTierCache:
                         self.stats['storage_read_host_latencies'].append(timing.host)
 
                         if self.model_config.kv_cache_size_per_token > 0:
-                            sharded_bytes_per_token = kv_cache_size_per_token / max(1, self.tensor_parallel)
+                            sharded_bytes_per_token = self.model_config.kv_cache_size_per_token / max(1, self.tensor_parallel)
                             num_tokens = entry_size / sharded_bytes_per_token
                             self.stats['storage_tokens_processed'] += num_tokens
 
