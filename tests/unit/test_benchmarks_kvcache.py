@@ -37,6 +37,9 @@ class TestKVCacheClusterCollection:
             verbose=False,
             what_if=False,
             stream_log_level='INFO',
+            mode='closed',
+            orgname='Acme',
+            systemname='sys-v1',
             results_dir=str(tmp_path),
             model='llama3.1-8b',
             command='run',
@@ -103,6 +106,9 @@ class TestKVCacheNumProcessesStorage:
             verbose=False,
             what_if=False,
             stream_log_level='INFO',
+            mode='closed',
+            orgname='Acme',
+            systemname='sys-v1',
             results_dir=str(tmp_path),
             model='llama3.1-8b',
             command='run',
@@ -170,6 +176,9 @@ class TestKVCacheMetadata:
             verbose=False,
             what_if=False,
             stream_log_level='INFO',
+            mode='closed',
+            orgname='Acme',
+            systemname='sys-v1',
             results_dir=str(tmp_path),
             model='llama3.1-8b',
             command='run',
@@ -343,6 +352,13 @@ def _make_run_benchmark(tmp_path, what_if=False):
         verbose=False,
         what_if=what_if,
         stream_log_level='INFO',
+        # mode='open' here so the strict CLOSED-mode override checks in
+        # KVCacheBenchmark._execute_run (seed/trials/inter-option-delay)
+        # don't fire — these tests deliberately override those args.
+        # TestClosedEnforcement sets mode='closed' on bm.args explicitly.
+        mode='open',
+        orgname='Acme',
+        systemname='sys-v1',
         results_dir=str(tmp_path),
         command='run',
         npernode=2,
