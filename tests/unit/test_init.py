@@ -328,23 +328,44 @@ def test_init_case_sensitive(tmp_path):
 
 
 def test_init_does_not_collect_cluster_info():
-    """Anti-pattern guard: ``results_dir/init.py`` must not reference
+    """Anti-pattern guard: ``results_dir/init.py`` must not IMPORT or CALL
     cluster_collector / collect_cluster_info / collect_local_system_info.
+
+    Educational mentions in the module docstring are tolerated (they exist
+    precisely to remind future maintainers of the rule). The check uses
+    Python's AST so only real imports + name references in code are caught.
     """
+    import ast
     import mlpstorage_py.results_dir.init as init_mod
 
     with open(init_mod.__file__) as f:
-        body = f.read()
+        tree = ast.parse(f.read())
 
-    for bad in ("cluster_collector", "collect_cluster_info",
-                "collect_local_system_info"):
-        # Strip comment lines so docstring mentions are tolerated only if
-        # explicitly commented; here we ban any uncommented mention because
-        # the dispatcher has no business with cluster collection.
-        for lineno, line in enumerate(body.splitlines(), start=1):
-            stripped = line.lstrip()
-            if stripped.startswith("#"):
-                continue
-            assert bad not in line, (
-                f"Anti-pattern '{bad}' found in init.py:{lineno}: {line.rstrip()}"
-            )
+    banned = {"cluster_collector", "collect_cluster_info",
+              "collect_local_system_info"}
+    offenders = []
+
+    for node in ast.walk(tree):
+        # Catches `import cluster_collector` and `import a.cluster_collector`.
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if any(bad in alias.name.split(".") for bad in banned):
+                    offenders.append(f"line {node.lineno}: import {alias.name}")
+        # Catches `from mlpstorage_py.cluster_collector import ...` and
+        # `from x import collect_cluster_info`.
+        elif isinstance(node, ast.ImportFrom):
+            mod_parts = (node.module or "").split(".")
+            if any(bad in mod_parts for bad in banned):
+                offenders.append(f"line {node.lineno}: from {node.module} import ...")
+            for alias in node.names:
+                if alias.name in banned:
+                    offenders.append(f"line {node.lineno}: from ... import {alias.name}")
+        # Catches `collect_cluster_info(...)` and `cluster_collector.collect(...)`.
+        elif isinstance(node, ast.Name) and node.id in banned:
+            offenders.append(f"line {node.lineno}: name reference {node.id}")
+        elif isinstance(node, ast.Attribute) and node.attr in banned:
+            offenders.append(f"line {node.lineno}: attribute access .{node.attr}")
+
+    assert offenders == [], (
+        f"Anti-pattern references in init.py: {offenders}"
+    )
