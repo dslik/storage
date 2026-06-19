@@ -1,0 +1,299 @@
+"""Unit tests for ``mlpstorage_py.results_dir.code_image.capture_code_image``.
+
+Covers LAY-06 (per-mode code-image capture, Rules.md §2.1.6):
+
+- ``closed`` mode: ONE image at ``<rd>/closed/<orgname>/code/``; idempotent.
+- ``open`` mode: per-(benchmark, command) image at
+  ``<rd>/open/<orgname>/code/<benchmark>/<command>/code/``.
+- ``whatif`` mode: returns ``None``; nothing written.
+- Unknown mode: raises ``ValueError``.
+- Excludes ``__pycache__/``, ``*.pyc``, ``tests/``, ``.pytest_cache/`` (V12).
+
+Refs: 01-canonical-layout-and-init / 01-05-PLAN.md Task 1; RESEARCH.md "Per-mode
+code-image capture (LAY-06)"; threat-model T-1-CI2 (symlinks=False).
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+from pathlib import Path
+from unittest import mock
+
+import pytest
+
+from mlpstorage_py.results_dir.code_image import capture_code_image
+
+
+def _make_fake_src(root: Path) -> Path:
+    """Create a fake source tree with some excludable artifacts.
+
+    Returns the path to the fake "package" root, which contains:
+    - ``__init__.py``  (must be copied)
+    - ``submod.py``    (must be copied)
+    - ``__pycache__/cached.pyc``  (must be EXCLUDED, both as a `__pycache__`
+      directory AND as a ``*.pyc`` filename)
+    - ``stray.pyc``  (must be EXCLUDED on filename)
+    - ``tests/test_x.py``  (must be EXCLUDED on dir name)
+    - ``.pytest_cache/v/cache.txt``  (must be EXCLUDED on dir name)
+    - ``inner/keep.py``  (must be copied)
+    """
+    pkg = root / "fake_pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("# fake init\n")
+    (pkg / "submod.py").write_text("VALUE = 1\n")
+    (pkg / "__pycache__").mkdir()
+    (pkg / "__pycache__" / "cached.pyc").write_bytes(b"\x00\x01")
+    (pkg / "stray.pyc").write_bytes(b"\x00\x02")
+    (pkg / "tests").mkdir()
+    (pkg / "tests" / "test_x.py").write_text("def test_x(): pass\n")
+    (pkg / ".pytest_cache").mkdir()
+    (pkg / ".pytest_cache" / "v").mkdir()
+    (pkg / ".pytest_cache" / "v" / "cache.txt").write_text("noop\n")
+    (pkg / "inner").mkdir()
+    (pkg / "inner" / "keep.py").write_text("KEEP = 1\n")
+    return pkg
+
+
+class TestClosedMode:
+    """Closed mode: single ``<rd>/closed/<orgname>/code/`` image; idempotent."""
+
+    def test_closed_captures_once(self, tmp_path):
+        """`capture_code_image` writes the live source tree to
+        ``<rd>/closed/<orgname>/code/`` on first call and returns the path."""
+        dst = capture_code_image(
+            str(tmp_path), "closed", "Acme", "training", "run",
+        )
+        expected = tmp_path / "closed" / "Acme" / "code"
+        assert dst == str(expected)
+        assert expected.is_dir()
+        # Soft assertion: more than a few files were copied.
+        all_files = list(expected.rglob("*"))
+        assert len(all_files) > 10, (
+            f"Expected the source tree image to contain >10 entries; got "
+            f"{len(all_files)}"
+        )
+        # Exclude check on the real tree: no `__pycache__` in the destination.
+        assert not any(
+            p.name == "__pycache__" for p in expected.rglob("*")
+        ), "Destination tree must not contain __pycache__"
+
+    def test_closed_idempotent(self, tmp_path):
+        """Second call with same args does NOT re-copy; ``copytree`` not invoked."""
+        # First call: real copy.
+        first = capture_code_image(
+            str(tmp_path), "closed", "Acme", "training", "run",
+        )
+        assert Path(first).is_dir()
+
+        # Second call: mock copytree and assert it was NOT called.
+        with mock.patch("shutil.copytree") as fake_copytree:
+            second = capture_code_image(
+                str(tmp_path), "closed", "Acme", "training", "run",
+            )
+        assert second == first
+        fake_copytree.assert_not_called()
+
+
+class TestOpenMode:
+    """Open mode: per-(benchmark, command) image."""
+
+    def test_open_captures_per_command(self, tmp_path):
+        """Two distinct commands produce two distinct subtrees."""
+        run_dst = capture_code_image(
+            str(tmp_path), "open", "Acme", "training", "run",
+        )
+        datagen_dst = capture_code_image(
+            str(tmp_path), "open", "Acme", "training", "datagen",
+        )
+        expected_run = tmp_path / "open" / "Acme" / "code" / "training" / "run" / "code"
+        expected_datagen = tmp_path / "open" / "Acme" / "code" / "training" / "datagen" / "code"
+
+        assert run_dst == str(expected_run)
+        assert datagen_dst == str(expected_datagen)
+        assert expected_run.is_dir()
+        assert expected_datagen.is_dir()
+        # Each tree exists independently.
+        assert expected_run != expected_datagen
+
+    def test_open_idempotent_per_tuple(self, tmp_path):
+        """Repeated capture for the same (benchmark, command) does not re-copy."""
+        first = capture_code_image(
+            str(tmp_path), "open", "Acme", "training", "run",
+        )
+        with mock.patch("shutil.copytree") as fake_copytree:
+            second = capture_code_image(
+                str(tmp_path), "open", "Acme", "training", "run",
+            )
+        assert second == first
+        fake_copytree.assert_not_called()
+
+
+class TestWhatifMode:
+    """Whatif mode: no code image; returns None; no filesystem side effects."""
+
+    def test_whatif_skips(self, tmp_path):
+        result = capture_code_image(
+            str(tmp_path), "whatif", "Acme", "training", "run",
+        )
+        assert result is None
+        # No files/dirs were created under tmp_path.
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestErrorPaths:
+    """Unknown modes raise ValueError; production never reaches this branch."""
+
+    def test_unknown_mode_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="garbage"):
+            capture_code_image(
+                str(tmp_path), "garbage", "Acme", "training", "run",
+            )
+
+
+class TestExcludes:
+    """Excludes apply: __pycache__/, *.pyc, tests/, .pytest_cache/."""
+
+    def test_excludes_pycache_and_pyc_and_tests(self, tmp_path):
+        """Use ``src_override`` so we control the source tree contents."""
+        src_root = tmp_path / "src_root"
+        src_root.mkdir()
+        fake_pkg = _make_fake_src(src_root)
+
+        # Results-dir is a separate tmp child.
+        rd = tmp_path / "rd"
+        rd.mkdir()
+
+        dst = capture_code_image(
+            str(rd), "closed", "Acme", "training", "run",
+            src_override=str(fake_pkg),
+        )
+        dst_path = Path(dst)
+        assert dst_path.is_dir()
+
+        # Files that MUST be present.
+        assert (dst_path / "__init__.py").is_file()
+        assert (dst_path / "submod.py").is_file()
+        assert (dst_path / "inner" / "keep.py").is_file()
+
+        # Files / dirs that MUST be excluded.
+        all_paths = list(dst_path.rglob("*"))
+        names = {p.name for p in all_paths}
+        assert "__pycache__" not in names, "must exclude __pycache__/"
+        assert ".pytest_cache" not in names, "must exclude .pytest_cache/"
+        assert "tests" not in names, "must exclude tests/"
+        # No *.pyc anywhere.
+        assert not any(p.suffix == ".pyc" for p in all_paths), (
+            "must exclude *.pyc files"
+        )
+
+
+class TestBenchmarkHook:
+    """Benchmark.__init__ invokes capture_code_image after _reserve_run_directory."""
+
+    def test_benchmark_init_calls_capture(self, tmp_path, monkeypatch):
+        """Construct a benchmark with mocked _reserve_run_directory and verify
+        ``capture_code_image`` is invoked AFTER it.
+
+        We use a minimal subclass that sets BENCHMARK_TYPE so __init__ can run.
+        The capture function itself is mocked so the test doesn't actually copy
+        the live mlpstorage_py/ tree.
+        """
+        # Use kvcache benchmark which has fewer optional deps than training.
+        pytest.importorskip("mlpstorage_py.benchmarks.kvcache")
+        from argparse import Namespace
+        from mlpstorage_py.benchmarks.kvcache import KVCacheBenchmark
+
+        # Track call order: _reserve_run_directory MUST run before capture_code_image.
+        call_log: list[str] = []
+
+        # Patch capture in the module where it is imported (deferred import
+        # inside Benchmark.__init__ — patch at the source).
+        def fake_capture(**kwargs):
+            call_log.append("capture")
+            return str(tmp_path / "fake_code_dst")
+
+        monkeypatch.setattr(
+            "mlpstorage_py.results_dir.code_image.capture_code_image",
+            fake_capture,
+        )
+
+        def fake_reserve(self):
+            call_log.append("reserve")
+            return str(tmp_path / "fake_run_dir")
+
+        monkeypatch.setattr(
+            "mlpstorage_py.benchmarks.base.Benchmark._reserve_run_directory",
+            fake_reserve,
+        )
+
+        args = Namespace(
+            mode="open",
+            orgname="Acme",
+            systemname="sys-v1",
+            results_dir=str(tmp_path),
+            data_dir=str(tmp_path),
+            command="run",
+            debug=False,
+            model="llama3-8b",
+            num_processes=1,
+            stream_log_level="INFO",
+            verbose=0,
+            num_accelerators=1,
+            accelerator_type="h100",
+            allow_invalid_params=False,
+            closed=False,
+            open=True,
+            mpi_bin="mpirun",
+            mpi_extra_args="",
+            exec_type=None,
+            client_host_memory_in_gb=64,
+            host_data_path=None,
+            host_meta_path=None,
+            inter_option_delay=0,
+            num_trials=1,
+            seed=42,
+        )
+
+        # Constructing the benchmark exercises __init__.
+        try:
+            KVCacheBenchmark(args=args, run_datetime="20260619_120000", run_number=0)
+        except Exception:
+            # Any post-capture failure is fine — we only assert ordering.
+            pass
+
+        assert "reserve" in call_log, "Benchmark.__init__ must call _reserve_run_directory"
+        assert "capture" in call_log, "Benchmark.__init__ must call capture_code_image"
+        # Capture must run AFTER reserve.
+        assert call_log.index("reserve") < call_log.index("capture"), (
+            "capture_code_image must run AFTER _reserve_run_directory"
+        )
+
+
+class TestSymlinkSafety:
+    """T-1-CI2: capture uses ``symlinks=False`` (does NOT follow symlinks)."""
+
+    def test_copytree_call_uses_symlinks_false(self, tmp_path):
+        """Mock ``shutil.copytree`` and verify ``symlinks=False`` is passed."""
+        src_root = tmp_path / "src_root"
+        src_root.mkdir()
+        fake_pkg = _make_fake_src(src_root)
+        rd = tmp_path / "rd"
+        rd.mkdir()
+
+        with mock.patch(
+            "mlpstorage_py.results_dir.code_image.shutil.copytree"
+        ) as fake_copytree:
+            capture_code_image(
+                str(rd), "closed", "Acme", "training", "run",
+                src_override=str(fake_pkg),
+            )
+        assert fake_copytree.called, "copytree must be invoked on first capture"
+        # symlinks=False must be passed.
+        kwargs = fake_copytree.call_args.kwargs
+        assert kwargs.get("symlinks") is False, (
+            "shutil.copytree must be invoked with symlinks=False (T-1-CI2)"
+        )
+        assert kwargs.get("ignore") is not None, (
+            "shutil.copytree must be invoked with an ignore predicate"
+        )
