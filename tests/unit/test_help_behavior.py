@@ -200,17 +200,19 @@ class TestRegression:
 
     @pytest.mark.parametrize('argv, expected_attrs', [
         # training datasize with flags interspersed — pre-scan strips flags, leaving
-        # ['closed', 'training', 'unet3d', 'datasize'] → None → falls through to argparse
+        # ['closed', 'training', 'unet3d', 'datasize'] → None → falls through to argparse.
+        # D-10/LAY-04: datasize now requires --systemname + --results-dir.
         (
             ['mlpstorage', 'closed', 'training', 'unet3d', 'datasize',
-             '-cm', '64', '-at', 'b200', '-ma', '4'],
+             '-cm', '64', '-at', 'b200', '-ma', '4',
+             '-rd', '/tmp', '-sn', 'sys-v1'],
             {'mode': 'closed', 'benchmark': 'training', 'command': 'datasize'},
         ),
         # checkpointing run with file storage positional
         (
             ['mlpstorage', 'closed', 'checkpointing', 'run',
              '-cm', '1024', '-m', 'llama3-8b', '-np', '2',
-             '-cf', '/tmp/ckpt', '-rd', '/tmp', 'file'],
+             '-cf', '/tmp/ckpt', '-rd', '/tmp', '-sn', 'sys-v1', 'file'],
             {'benchmark': 'checkpointing', 'command': 'run'},
         ),
         # version subcommand

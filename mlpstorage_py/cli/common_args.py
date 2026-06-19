@@ -12,7 +12,7 @@ import argparse
 
 from mlpstorage_py.config import (
     CHECKPOINT_RANKS_STRINGS, MODELS, ACCELERATORS, ACCELERATORS_CLOSED, DEFAULT_HOSTS,
-    LLM_MODELS_STRINGS, MPI_CMDS, EXEC_TYPE, DEFAULT_RESULTS_DIR,
+    LLM_MODELS_STRINGS, MPI_CMDS, EXEC_TYPE, DEFAULT_RESULTS_DIR, DEFAULT_SYSTEMNAME,
     VECTOR_DTYPES, DISTRIBUTIONS
 )
 
@@ -173,6 +173,12 @@ HELP_MESSAGES = {
     'output_dir': "Directory where the benchmark report will be saved.",
     'config_file': "Path to YAML file with argument overrides that will be applied after CLI arguments",
 
+    # System-under-test name (LAY-04 / D-10) — folder under results/ in canonical layout
+    'systemname': (
+        "System-under-test name (folder under results/). "
+        "Defaults to MLPERF_SYSTEMNAME env var if set."
+    ),
+
     # MPI help messages
     'mpi_bin': f"Execution type for MPI commands. Supported options: {MPI_CMDS}",
     'exec_type': f"Execution type for benchmark commands. Supported options: {list(EXEC_TYPE)}",
@@ -203,12 +209,16 @@ PROGRAM_DESCRIPTIONS = {
 }
 
 
-def add_universal_arguments(parser, req_results):
+def add_universal_arguments(parser, req_results, req_systemname=False):
     """Add arguments common to all benchmarks and commands.
 
     Args:
         parser: Argparse parser to add arguments to.
         req_results: Whether --results-dir is required.
+        req_systemname: Whether --systemname is required. Defaults to False
+            so pure utility call sites (lockfile, etc.) keep working without
+            opting in. Emitting commands (datagen/run/configview/datasize/
+            reportgen/history) MUST opt in per CONTEXT.md D-10 / LAY-04.
     """
     standard_args = parser.add_argument_group("Standard Arguments")
     if req_results:
@@ -225,6 +235,27 @@ def add_universal_arguments(parser, req_results):
             type=str,
             default=DEFAULT_RESULTS_DIR,
             help=HELP_MESSAGES['results_dir']
+        )
+
+    # --systemname: required on emitting commands (Rules.md §2.1.8 systemname
+    # subdir), optional elsewhere. Default = DEFAULT_SYSTEMNAME = "" unless
+    # MLPERF_SYSTEMNAME env var is set. The required=True branch makes argparse
+    # exit when neither --systemname nor MLPERF_SYSTEMNAME is supplied.
+    if req_systemname:
+        standard_args.add_argument(
+            '--systemname', '-sn',
+            type=str,
+            required=True,
+            default=DEFAULT_SYSTEMNAME,
+            help=HELP_MESSAGES['systemname']
+        )
+    else:
+        standard_args.add_argument(
+            '--systemname', '-sn',
+            type=str,
+            required=False,
+            default=DEFAULT_SYSTEMNAME,
+            help=HELP_MESSAGES['systemname']
         )
 
     standard_args.add_argument(

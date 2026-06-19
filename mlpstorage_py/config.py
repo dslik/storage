@@ -147,6 +147,14 @@ DEFAULT_RESULTS_DIR = os.environ.get(
     os.path.join(tempfile.gettempdir(), "mlperf_storage_results"),
 )
 
+# DEFAULT_SYSTEMNAME mirrors DEFAULT_RESULTS_DIR (LAY-04): honor the
+# MLPERF_SYSTEMNAME env var if set, fall back to an empty string. The
+# universal-args layer (add_universal_arguments) decides required-vs-optional
+# per subcommand; an empty default plus required=True on emitting commands
+# makes "no --systemname and no env var" fail at parse time rather than
+# silently producing `<results-dir>/<mode>/<orgname>/results//...` (T-1-02).
+DEFAULT_SYSTEMNAME = os.environ.get("MLPERF_SYSTEMNAME", "")
+
 import enum
 
 class EXIT_CODE(enum.IntEnum):
