@@ -185,22 +185,38 @@ def test_gated_commands_fail_uninitialized(tmp_path, mode, extra_argv):
     argv = ["mlpstorage"] + extra_argv + ["--results-dir", str(uninit)]
 
     # Patch downstream dispatch entry points so an accidental fall-through
-    # doesn't run the real ReportGenerator / HistoryTracker.
-    with patch.object(main_mod, "update_args"), \
-         patch.object(main_mod, "run_benchmark"), \
-         patch.object(main_mod, "validate_benchmark_environment"), \
-         patch("mlpstorage_py.report_generator.ReportGenerator") as mock_reportgen, \
-         patch("mlpstorage_py.history.HistoryTracker.handle_history_command") as mock_history, \
-         patch("sys.argv", argv):
-        with pytest.raises(ConfigurationError) as excinfo:
-            main_mod._main_impl()
-
-    # Verify the gate fired and downstream dispatch did NOT run.
-    assert "has not been initialized" in str(excinfo.value), (
-        f"Expected LAY-03 message for mode={mode}; got: {excinfo.value!r}"
-    )
-    mock_reportgen.assert_not_called()
-    mock_history.assert_not_called()
+    # doesn't run the real ReportGenerator / HistoryTracker. report_generator
+    # is lazy-loaded inside the `args.mode == "reports"` branch and depends on
+    # the optional [full]-extras `psutil` package; only patch its symbol when
+    # the module is actually importable in this venv.
+    try:
+        import mlpstorage_py.report_generator  # noqa: F401
+        with patch.object(main_mod, "update_args"), \
+             patch.object(main_mod, "run_benchmark"), \
+             patch.object(main_mod, "validate_benchmark_environment"), \
+             patch("mlpstorage_py.report_generator.ReportGenerator") as mock_reportgen, \
+             patch("mlpstorage_py.history.HistoryTracker.handle_history_command") as mock_history, \
+             patch("sys.argv", argv):
+            with pytest.raises(ConfigurationError) as excinfo:
+                main_mod._main_impl()
+            assert "has not been initialized" in str(excinfo.value), (
+                f"Expected LAY-03 message for mode={mode}; got: {excinfo.value!r}"
+            )
+            mock_reportgen.assert_not_called()
+            mock_history.assert_not_called()
+    except ModuleNotFoundError:
+        # psutil-free path: skip the report_generator patch, run without it.
+        with patch.object(main_mod, "update_args"), \
+             patch.object(main_mod, "run_benchmark"), \
+             patch.object(main_mod, "validate_benchmark_environment"), \
+             patch("mlpstorage_py.history.HistoryTracker.handle_history_command") as mock_history, \
+             patch("sys.argv", argv):
+            with pytest.raises(ConfigurationError) as excinfo:
+                main_mod._main_impl()
+            assert "has not been initialized" in str(excinfo.value), (
+                f"Expected LAY-03 message for mode={mode}; got: {excinfo.value!r}"
+            )
+            mock_history.assert_not_called()
 
 
 def test_env_orgname_ignored(tmp_path, monkeypatch):

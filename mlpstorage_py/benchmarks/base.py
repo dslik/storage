@@ -46,6 +46,7 @@ from typing import Tuple, Dict, Any, List, Optional, Callable, Set, TYPE_CHECKIN
 from functools import wraps
 
 from mlpstorage_py.config import PARAM_VALIDATION, DATETIME_STR, MLPS_DEBUG, EXEC_TYPE
+from mlpstorage_py.errors import ConfigurationError, ErrorCode
 from mlpstorage_py.run_directory import (
     DEFAULT_COLLISION_BUMP_BUDGET,
     reserve_run_directory,
@@ -112,6 +113,20 @@ class Benchmark(BenchmarkInterface, abc.ABC):
                        Used for testing validation logic.
         """
         self.args = args
+        # Defense-in-depth (Pitfall 3): the orgname-resolution gate in
+        # `main._main_impl` must have populated args.orgname before any
+        # Benchmark subclass is instantiated. Production callers never trip
+        # this; the guard catches direct (test-only) instantiations or any
+        # future codepath that bypasses the main gate.
+        if not getattr(self.args, 'orgname', None):
+            raise ConfigurationError(
+                "orgname was not resolved before Benchmark instantiation",
+                suggestion=(
+                    "Internal error — orgname must be set on args by "
+                    "main._main_impl()'s orgname-resolution gate."
+                ),
+                code=ErrorCode.CONFIG_MISSING_REQUIRED,
+            )
         self.debug = self.args.debug or MLPS_DEBUG
         if logger:
             self.logger = logger

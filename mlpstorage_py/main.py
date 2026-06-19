@@ -39,10 +39,17 @@ from mlpstorage_py.lockfile import (
 )
 from mlpstorage_py.validation_helpers import validate_benchmark_environment
 from mlpstorage_py.progress import progress_context
+from mlpstorage_py.results_dir import resolve_orgname
+from mlpstorage_py.results_dir.errors import ResultsDirNotInitializedError
 
 logger = setup_logging("MLPerfStorage")
 signal_received = False
 error_formatter = ErrorFormatter(use_colors=True)
+
+# CONTEXT.md D-12 — modes that DO NOT require a sentinel-resolved orgname.
+# Every other mode (closed, open, whatif, reports, history, validate) is
+# subject to the LAY-03 orgname-resolution gate in `_main_impl`.
+NON_BENCHMARK_NO_ORGNAME_MODES = frozenset({"init", "version", "lockfile", "rules-coverage"})
 
 
 def signal_handler(sig, frame):
@@ -297,7 +304,46 @@ def _main_impl():
         # Don't save history commands
         hist.add_entry(sys.argv, datetime_str=datetime_str)
 
-    # Handle history command separately
+    # Bypass dispatch for utility modes that do NOT consume an orgname-pinned
+    # results-dir. Per CONTEXT.md D-12 the bypass list is exactly four modes:
+    # `init` (handled above), `version` (handled above), `lockfile`, and
+    # `rules-coverage`. All other modes (closed/open/whatif/reports/history/
+    # validate) flow through the LAY-03 orgname-resolution gate below.
+    if args.mode == "lockfile":
+        return handle_lockfile_command(args)
+
+    if args.mode == "rules-coverage":
+        from mlpstorage_py.submission_checker.tools.rules_coverage import run as run_rules_coverage
+        return run_rules_coverage(args)
+
+    # ------------------------------------------------------------------ #
+    # LAY-03 orgname-resolution gate.
+    #
+    # Every gated mode that supplies `--results-dir` must have a valid
+    # `mlperf-results.yaml` sentinel in that directory; the gate reads the
+    # sentinel, pins `args.orgname` for downstream consumers (path generator,
+    # banner, benchmark base), and fails fast with the EXACT CONTEXT.md
+    # message when the sentinel is missing or malformed.
+    #
+    # The error message backticks are LOCKED VERBATIM per CONTEXT.md LAY-03
+    # / ROADMAP success criterion #2 — do NOT switch to single quotes (`!r`
+    # would render `'…'`) and do NOT add backslash escapes (the backtick is
+    # not a Python escape sequence; `\\`` produces `\` + backtick on screen).
+    # ------------------------------------------------------------------ #
+    if args.mode not in NON_BENCHMARK_NO_ORGNAME_MODES:
+        results_dir_value = getattr(args, 'results_dir', None)
+        if results_dir_value:
+            try:
+                args.orgname = resolve_orgname(results_dir_value)
+            except ResultsDirNotInitializedError as e:
+                raise ConfigurationError(
+                    f"results-dir `{results_dir_value}` has not been initialized.",
+                    suggestion=f"Run `mlpstorage init <orgname> {results_dir_value}` first.",
+                    code=ErrorCode.CONFIG_MISSING_REQUIRED,
+                ) from e
+
+    # Handle history command separately (now AFTER the gate so it inherits
+    # a resolved args.orgname when --results-dir is supplied; D-12).
     if args.mode == 'history':
         new_args = hist.handle_history_command(args)
 
@@ -319,9 +365,6 @@ def _main_impl():
             # If handle_history_command returned an exit code, return it
             return new_args
 
-    if args.mode == "lockfile":
-        return handle_lockfile_command(args)
-
     if args.mode == "reports":
         # Lazy-import: ReportGenerator pulls psutil, which is only required
         # for the reports subcommand. Keeping the import here lets validate /
@@ -334,10 +377,6 @@ def _main_impl():
     if args.mode == "validate":
         from mlpstorage_py.submission_checker.main import run as run_submission_checker
         return run_submission_checker(args)
-
-    if args.mode == "rules-coverage":
-        from mlpstorage_py.submission_checker.tools.rules_coverage import run as run_rules_coverage
-        return run_rules_coverage(args)
 
     run_datetime = datetime_str
 
