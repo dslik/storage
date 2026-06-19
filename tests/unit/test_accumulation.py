@@ -397,7 +397,11 @@ class TestPreviewBenchmarkAccumulation:
     as the distinguishing component in path and metadata."""
 
     def test_vectordb_path_includes_engine(self, tmp_path):
-        """generate_output_location produces vector_database/<engine>/<command>/<datetime>/."""
+        """generate_output_location produces vector_database/<engine>/<command>/<datetime>/.
+
+        Plan 01-03 LAY-05: full canonical prefix
+        <rd>/<mode>/<org>/results/<sys>/vector_database/<engine>/<command>/<dt>/.
+        """
         from types import SimpleNamespace
 
         from mlpstorage_py.config import BENCHMARK_TYPES as _BT
@@ -407,13 +411,17 @@ class TestPreviewBenchmarkAccumulation:
             BENCHMARK_TYPE=_BT.vector_database,
             args=SimpleNamespace(
                 results_dir=str(tmp_path),
+                mode="closed",
+                orgname="Acme",
+                systemname="sys-v1",
                 command="run",
                 vdb_engine="milvus",
             ),
         )
         location = generate_output_location(fake_benchmark, datetime_str="20250111_160000")
         assert location == str(
-            tmp_path / "vector_database" / "milvus" / "run" / "20250111_160000"
+            tmp_path / "closed" / "Acme" / "results" / "sys-v1"
+            / "vector_database" / "milvus" / "run" / "20250111_160000"
         )
 
     def test_vectordb_path_requires_engine(self, tmp_path):
@@ -427,6 +435,9 @@ class TestPreviewBenchmarkAccumulation:
             BENCHMARK_TYPE=_BT.vector_database,
             args=SimpleNamespace(
                 results_dir=str(tmp_path),
+                mode="closed",
+                orgname="Acme",
+                systemname="sys-v1",
                 command="run",
                 # no vdb_engine
             ),
@@ -451,7 +462,11 @@ class TestPreviewBenchmarkAccumulation:
         assert engines == ["elasticsearch", "milvus", "milvus"]
 
     def test_kvcache_path_includes_model(self, tmp_path):
-        """generate_output_location produces kv_cache/<model>/<command>/<datetime>/."""
+        """generate_output_location produces kv_cache/<model>/<command>/<datetime>/.
+
+        Plan 01-03 LAY-05: full canonical prefix
+        <rd>/<mode>/<org>/results/<sys>/kv_cache/<model>/<command>/<dt>/.
+        """
         from types import SimpleNamespace
 
         from mlpstorage_py.config import BENCHMARK_TYPES as _BT
@@ -461,13 +476,17 @@ class TestPreviewBenchmarkAccumulation:
             BENCHMARK_TYPE=_BT.kv_cache,
             args=SimpleNamespace(
                 results_dir=str(tmp_path),
+                mode="closed",
+                orgname="Acme",
+                systemname="sys-v1",
                 command="run",
                 model="llama3.1-8b",
             ),
         )
         location = generate_output_location(fake_benchmark, datetime_str="20250111_170000")
         assert location == str(
-            tmp_path / "kv_cache" / "llama3.1-8b" / "run" / "20250111_170000"
+            tmp_path / "closed" / "Acme" / "results" / "sys-v1"
+            / "kv_cache" / "llama3.1-8b" / "run" / "20250111_170000"
         )
 
     def test_kvcache_path_requires_model(self, tmp_path):
@@ -481,6 +500,9 @@ class TestPreviewBenchmarkAccumulation:
             BENCHMARK_TYPE=_BT.kv_cache,
             args=SimpleNamespace(
                 results_dir=str(tmp_path),
+                mode="closed",
+                orgname="Acme",
+                systemname="sys-v1",
                 command="run",
                 # no model
             ),
