@@ -153,6 +153,23 @@ class Benchmark(BenchmarkInterface, abc.ABC):
         self.command_output_files = list()
         self.run_result_output = self._reserve_run_directory()
 
+        # LAY-06 (Rules.md §2.1.6): capture the live mlpstorage_py/ source
+        # tree alongside the results so the submission package is auditable.
+        # Per-mode policy:
+        #   closed  → ONE image at <rd>/closed/<orgname>/code/ (idempotent).
+        #   open    → one image per (benchmark, command) tuple.
+        #   whatif  → no image (capture_code_image returns None).
+        # Deferred import keeps top-of-file import-time cost minimal and
+        # avoids cycles with `mlpstorage_py.results_dir`.
+        from mlpstorage_py.results_dir.code_image import capture_code_image
+        self.code_image_path: Optional[str] = capture_code_image(
+            results_dir=self.args.results_dir,
+            mode=self.args.mode,
+            orgname=self.args.orgname,
+            benchmark_type=self.BENCHMARK_TYPE.name,
+            command=getattr(self.args, 'command', 'run'),
+        )
+
         self.metadata_filename = f"{self.BENCHMARK_TYPE.value}_{self.run_datetime}_metadata.json"
         self.metadata_file_path = os.path.join(self.run_result_output, self.metadata_filename)
 
