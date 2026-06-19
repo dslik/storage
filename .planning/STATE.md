@@ -1,0 +1,103 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+stopped_at: Completed 01-03-PLAN.md (--systemname plumbing + canonical generate_output_location — LAY-04 + LAY-05)
+last_updated: "2026-06-19T22:16:06Z"
+last_activity: 2026-06-19 -- Phase 01 plan 03 executed
+progress:
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 5
+  completed_plans: 3
+  percent: 60
+---
+
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated 2026-06-18)
+
+**Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
+**Current focus:** Phase 01 — canonical-layout-and-init
+
+## Current Position
+
+Phase: 01 (canonical-layout-and-init) — EXECUTING
+Plan: 4 of 5 (next: 01-04 — main._main_impl orgname-resolution gate)
+Status: Executing Phase 01
+Last activity: 2026-06-19 -- Plan 01-03 complete (--systemname plumbing + canonical generate_output_location; LAY-04 + LAY-05 shipped)
+
+Progress: [██████░░░░] 60%
+
+## Performance Metrics
+
+**Velocity:**
+
+- Total plans completed: 3
+- Average duration: ~38 min
+- Total execution time: ~116 min
+
+**By Phase:**
+
+| Phase | Plans | Total       | Avg/Plan |
+| ----- | ----- | ----------- | -------- |
+| 01    | 3     | ~116 min    | ~38 min  |
+
+**Recent Trend:**
+
+- Last 5 plans: —
+- Trend: —
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- Init: Vertical MVP project mode — each phase ships an end-to-end usable improvement, not a horizontal module.
+- Init: Skip codebase mapping and project-level research; enable per-phase research for `/sys`/`lsblk`/container edge cases.
+- Init: Leave non-derivable schema fields blank so the schema validator surfaces "submitter work to do" naturally.
+- Discuss-phase 1: Insert canonical-layout-and-init as new Phase 1 before yaml-write work; original Phase 1 becomes Phase 2.
+- Discuss-phase 1: Pin orgname to the results-dir via `mlperf-results.yaml` sentinel written by `mlpstorage init`; no `--orgname` flag, no `MLPERF_ORGNAME` env var consulted by non-init commands.
+- Discuss-phase 1: `--systemname` stays per-run via CLI flag + `MLPERF_SYSTEMNAME` env-var default (E5 pattern, matches existing `MLPERF_RESULTS_DIR`).
+- Discuss-phase 1: Cluster collection and systemname.yaml lifecycle fire on `run` only — never `datagen` (datagen client fleet may differ from run fleet).
+- Discuss-phase 1: Universal collection rule — any failure (missing file, missing field, missing tool, parse error) yields empty string for that single data point; collector never fails the benchmark over a collection failure.
+- Discuss-phase 1: Fingerprint for quantity-grouping is extensible (D2) — grows automatically as collector fills more fields.
+- Discuss-phase 1: Single-host fallback (C1) — when `--hosts` is empty, collect from the local host only via existing `collect_local_system_info()`.
+- Discuss-phase 1: Per-mode systemname.yaml — closed/open/whatif each own their own file at their own path, generated and diffed independently.
+- Discuss-phase 1: PDF generation out of scope; remains submitter responsibility.
+- Execute 01-02: orgname idempotency comparison is case-sensitive (RESEARCH.md Pitfall 7) — `Acme` ≠ `acme` is a `DoubleInitError`, not a match.
+- Execute 01-02: `test_init_help_renders` weakened to description+usage assertions because `MLPStorageHelpFormatter` (`common_args.py:49-51`) project-wide suppresses positional docs; changing the formatter is out of scope for Slice 2.
+- Execute 01-02: anti-pattern guard tests in this milestone use AST scans, not textual grep, so educational docstring mentions of forbidden symbols are tolerated (matches Slice 1's resolution of the `yaml.load` grep gate).
+- Execute 01-03: argparse `required=True` is enforced unconditionally on emitting commands; `MLPERF_SYSTEMNAME` populates the default but does not satisfy required-flag semantics — users must still pass `--systemname` on the CLI even when the env var is set.
+- Execute 01-03: checkpointing intentionally omits the `<command>` segment in the canonical path (preserves the pre-refactor shape downstream submission-checkers already accept).
+- Execute 01-03: `generate_output_location()` stays pure (zero calls to `resolve_orgname`/`read_sentinel`); the upstream `main._main_impl()` gate (Slice 4 / Plan 01-04) is the sole orgname resolver, with defense-in-depth empty-string raises as a backstop.
+- Execute 01-03: test-argv migration is owned by this plan (Rule 3 auto-fix); every existing unit test exercising an emitting subcommand now includes `-sn sys-v1`. Argv-only; no semantic change.
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+None yet.
+
+## Deferred Items
+
+Items acknowledged and carried forward from previous milestone close:
+
+| Category | Item | Status | Deferred At |
+|----------|------|--------|-------------|
+| *(none)* | | | |
+
+## Session Continuity
+
+Last session: 2026-06-19 (resumed)
+Stopped at: Completed 01-03-PLAN.md (--systemname plumbing + canonical generate_output_location — LAY-04 + LAY-05)
+Resume file: .planning/phases/01-canonical-layout-and-init/01-04-PLAN.md
