@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The same submitter running `--mode open` and `--mode whatif` against `/tmp/r1` writes to `/tmp/r1/open/Acme/results/sys-v1/...` and `/tmp/r1/whatif/Acme/results/sys-v1/...` respectively; code-image capture under `code/` follows the per-mode policy (closed=one total, open=per-(benchmark,command), whatif=none).
   5. The full unit test suite passes after fixtures are updated for the new layout, and the submission checker's existing layout checks (`mlpstorage_py/submission_checker/checks/directory_checks.py`) pass on output produced by the new generator.
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Slice 1: Sentinel infrastructure (Pydantic schema + atomic YAML I/O + domain errors) (LAY-02)
@@ -47,7 +47,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-04-PLAN.md — Slice 4: Orgname resolution gate in main._main_impl + banner (LAY-03 + D-12)
+- [x] 01-04-PLAN.md — Slice 4: Orgname resolution gate in main._main_impl + banner (LAY-03 + D-12)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 

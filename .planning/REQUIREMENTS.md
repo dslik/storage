@@ -13,7 +13,7 @@ The submission package's directory shape per Rules.md §2.1.5-2.1.8 is `<results
 
 - [x] **LAY-01**: `mlpstorage init <orgname> <path>` subcommand creates the results-dir bootstrap. Refuses if `<path>` is a non-empty directory unless it was previously initialized by the same tool (in which case the existing `mlperf-results.yaml` is read and either confirmed or rejected with a clear message). No `--force` flag in v1.
 - [x] **LAY-02**: `mlpstorage init` writes `<path>/mlperf-results.yaml` containing `mlperf_results_version: 1`, `orgname` (as supplied), `initialized_at` (ISO-8601 timestamp), and `initialized_by` (the running mlpstorage version). The file validates against a ships-with-mlpstorage schema.
-- [ ] **LAY-03**: Every mlpstorage command that takes `--results-dir` (datagen, run, configview, datasize, reportgen, validate, history, etc.) reads orgname exclusively from `<results-dir>/mlperf-results.yaml`. There is NO `--orgname` CLI flag and NO `MLPERF_ORGNAME` env var consulted by these commands. If `mlperf-results.yaml` is missing or unparseable, the command fails before any work begins with: "results-dir `<path>` has not been initialized. Run `mlpstorage init <orgname> <path>` first."
+- [x] **LAY-03**: Every mlpstorage command that takes `--results-dir` (datagen, run, configview, datasize, reportgen, validate, history, etc.) reads orgname exclusively from `<results-dir>/mlperf-results.yaml`. There is NO `--orgname` CLI flag and NO `MLPERF_ORGNAME` env var consulted by these commands. If `mlperf-results.yaml` is missing or unparseable, the command fails before any work begins with: "results-dir `<path>` has not been initialized. Run `mlpstorage init <orgname> <path>` first."
 - [x] **LAY-04**: `mlpstorage` accepts `--systemname` CLI flag for `run` (and other commands that need it), with default from `MLPERF_SYSTEMNAME` env var. A single results-dir can legitimately hold multiple system-name subtrees per Rules.md §2.1.8; systemname is therefore per-run, not pinned at init.
 - [x] **LAY-05**: `generate_output_location()` in `mlpstorage_py/rules/utils.py` produces `<results-dir>/<mode>/<orgname>/results/<systemname>/<benchmark>/<model>/<command>/<datetime>/` for every command that emits results. `<mode>` is `closed`/`open`/`whatif`. `<orgname>` comes from the sentinel. `<systemname>` comes from the CLI flag / env var.
 - [ ] **LAY-06**: Code-image capture policy per the three modes — `closed` captures one code image per submitter (under `<results-dir>/closed/<orgname>/code/`), `open` captures one code image per (benchmark, command) tuple, `whatif` captures no code image at all. The capture mechanism honors Rules.md §2.1.6 for closed.
@@ -90,7 +90,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 |-------------|-------|--------|
 | LAY-01  | Phase 1 | Complete (01-02) |
 | LAY-02  | Phase 1 | Complete (01-01) |
-| LAY-03  | Phase 1 | Pending |
+| LAY-03  | Phase 1 | Complete (01-04) |
 | LAY-04  | Phase 1 | Complete (01-03) |
 | LAY-05  | Phase 1 | Complete (01-03) |
 | LAY-06  | Phase 1 | Pending |

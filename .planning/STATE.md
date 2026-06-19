@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-03-PLAN.md (--systemname plumbing + canonical generate_output_location — LAY-04 + LAY-05)
-last_updated: "2026-06-19T22:16:06Z"
-last_activity: 2026-06-19 -- Phase 01 plan 03 executed
+stopped_at: Completed 01-04-PLAN.md (orgname-resolution gate + banner + canonical conftest fixtures — LAY-03)
+last_updated: "2026-06-19T23:20:19Z"
+last_activity: 2026-06-19 -- Phase 01 plan 04 executed
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -26,25 +26,25 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 ## Current Position
 
 Phase: 01 (canonical-layout-and-init) — EXECUTING
-Plan: 4 of 5 (next: 01-04 — main._main_impl orgname-resolution gate)
+Plan: 5 of 5 (next: 01-05 — test-fixture migration sweep + final integration)
 Status: Executing Phase 01
-Last activity: 2026-06-19 -- Plan 01-03 complete (--systemname plumbing + canonical generate_output_location; LAY-04 + LAY-05 shipped)
+Last activity: 2026-06-19 -- Plan 01-04 complete (orgname-resolution gate + banner; LAY-03 shipped)
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 4
 - Average duration: ~38 min
-- Total execution time: ~116 min
+- Total execution time: ~150 min
 
 **By Phase:**
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
-| 01    | 3     | ~116 min    | ~38 min  |
+| 01    | 4     | ~150 min    | ~37 min  |
 
 **Recent Trend:**
 
@@ -79,6 +79,10 @@ Recent decisions affecting current work:
 - Execute 01-03: checkpointing intentionally omits the `<command>` segment in the canonical path (preserves the pre-refactor shape downstream submission-checkers already accept).
 - Execute 01-03: `generate_output_location()` stays pure (zero calls to `resolve_orgname`/`read_sentinel`); the upstream `main._main_impl()` gate (Slice 4 / Plan 01-04) is the sole orgname resolver, with defense-in-depth empty-string raises as a backstop.
 - Execute 01-03: test-argv migration is owned by this plan (Rule 3 auto-fix); every existing unit test exercising an emitting subcommand now includes `-sn sys-v1`. Argv-only; no semantic change.
+- Execute 01-04: bypass list locked to exactly four modes — `{init, version, lockfile, rules-coverage}`. `history`, `reports`, `validate` are gated per D-12; their dispatch branches were physically moved AFTER the gate in `_main_impl` (not merely guarded inline).
+- Execute 01-04: LAY-03 error message uses literal backticks (not single quotes) via plain f-string interpolation `{var}` (not `{var!r}`) — locked verbatim per CONTEXT.md / ROADMAP success criterion #2.
+- Execute 01-04: `validate` mode currently bypasses the sentinel check at runtime because `add_validate_arguments` registers a positional `input` rather than `--results-dir`. The gate's `if results_dir_value:` guard quietly skips it. Documented as an inert-gate divergence; if a future plan adds `--results-dir` to validate the gate will catch it automatically.
+- Execute 01-04: kvcache `_make_run_benchmark` fixture uses `mode='open'` (not `'closed'`) so the CLOSED-mode override checks (seed/trials/inter-option-delay) don't fire on tests that deliberately override those args. TestClosedEnforcement sets `bm.args.mode='closed'` explicitly to exercise the enforcement path.
 
 ### Pending Todos
 
@@ -99,5 +103,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-19 (resumed)
-Stopped at: Completed 01-03-PLAN.md (--systemname plumbing + canonical generate_output_location — LAY-04 + LAY-05)
-Resume file: .planning/phases/01-canonical-layout-and-init/01-04-PLAN.md
+Stopped at: Completed 01-04-PLAN.md (orgname-resolution gate + banner + canonical conftest fixtures — LAY-03)
+Resume file: .planning/phases/01-canonical-layout-and-init/01-05-PLAN.md
