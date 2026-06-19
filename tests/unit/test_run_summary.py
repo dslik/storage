@@ -208,3 +208,64 @@ class TestCredentialDisplay:
         assert '[SET —' in output, (
             f"Expected redacted '[SET —' marker in output, got: {output!r}"
         )
+
+
+class TestOrgnameSystemnameBanner:
+    """Phase 01-04: banner surfaces orgname + systemname (LAY-03 / D-10)."""
+
+    @patch('mlpstorage_py.run_summary.logger')
+    def test_banner_shows_orgname(self, mock_logger):
+        """Tier 1 banner contains an `orgname` row with the resolved value."""
+        from mlpstorage_py.run_summary import print_run_summary
+
+        args = _make_args(orgname='Acme', systemname='sys-v1', mode='closed',
+                          results_dir='/r', model='unet3d')
+        print_run_summary(args)
+
+        output = _joined_status_calls(mock_logger)
+        assert 'orgname' in output, (
+            f"Expected 'orgname' label in Tier 1 banner; got: {output!r}"
+        )
+        assert 'Acme' in output, (
+            f"Expected 'Acme' (the resolved orgname) in banner; got: {output!r}"
+        )
+
+    @patch('mlpstorage_py.run_summary.logger')
+    def test_banner_shows_systemname(self, mock_logger):
+        """Tier 1 banner contains a `systemname` row with the resolved value."""
+        from mlpstorage_py.run_summary import print_run_summary
+
+        args = _make_args(orgname='Acme', systemname='sys-v1', mode='closed',
+                          results_dir='/r', model='unet3d')
+        print_run_summary(args)
+
+        output = _joined_status_calls(mock_logger)
+        assert 'systemname' in output, (
+            f"Expected 'systemname' label in Tier 1 banner; got: {output!r}"
+        )
+        assert 'sys-v1' in output, (
+            f"Expected 'sys-v1' (the resolved systemname) in banner; got: {output!r}"
+        )
+
+    @patch('mlpstorage_py.run_summary.logger')
+    def test_banner_environment_includes_mlperf_systemname(self, mock_logger,
+                                                           monkeypatch):
+        """Environment section lists the MLPERF_SYSTEMNAME env var alongside
+        the existing MLPERF_RESULTS_DIR row.
+        """
+        from mlpstorage_py.run_summary import print_run_summary
+
+        monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys-v1')
+
+        args = _make_args(orgname='Acme', systemname='env-sys-v1',
+                          mode='closed', results_dir='/r')
+        print_run_summary(args)
+
+        output = _joined_status_calls(mock_logger)
+        assert 'MLPERF_SYSTEMNAME' in output, (
+            f"Expected MLPERF_SYSTEMNAME env-var row in Environment section; "
+            f"got: {output!r}"
+        )
+        assert 'env-sys-v1' in output, (
+            f"Expected env-var value 'env-sys-v1' in output; got: {output!r}"
+        )
