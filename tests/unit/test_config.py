@@ -353,3 +353,31 @@ class TestDefaultResultsDir:
         finally:
             importlib.reload(cfg_mod)  # restore original state for other tests
 
+
+class TestDefaultSystemname:
+    """Tests for the DEFAULT_SYSTEMNAME constant (LAY-04).
+
+    DEFAULT_SYSTEMNAME mirrors the DEFAULT_RESULTS_DIR pattern: reads the
+    MLPERF_SYSTEMNAME env var, falling back to an empty string when unset.
+    """
+
+    def test_default_systemname_env_var(self, monkeypatch):
+        """DEFAULT_SYSTEMNAME reflects MLPERF_SYSTEMNAME env var when set, empty otherwise."""
+        import mlpstorage_py.config as cfg_mod
+
+        # Env var set → constant reflects the value
+        monkeypatch.setenv('MLPERF_SYSTEMNAME', 'sys-v1')
+        importlib.reload(cfg_mod)
+        try:
+            assert cfg_mod.DEFAULT_SYSTEMNAME == 'sys-v1'
+        finally:
+            monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+            importlib.reload(cfg_mod)
+
+        # Env var unset → empty string default
+        importlib.reload(cfg_mod)
+        try:
+            assert cfg_mod.DEFAULT_SYSTEMNAME == ''
+        finally:
+            importlib.reload(cfg_mod)  # restore original state for other tests
+

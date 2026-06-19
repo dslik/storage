@@ -25,12 +25,13 @@ class TestOpenClosedEquivalence:
         are required flags. We verify the common defaults match.
         """
         # Closed mode: model/num-users are set_defaults; only --results-dir required
-        with patch('sys.argv', ['mlpstorage', 'closed', 'kvcache', 'run', '-rd', '/tmp']):
+        with patch('sys.argv', ['mlpstorage', 'closed', 'kvcache', 'run', '-rd', '/tmp',
+                                 '-sn', 'sys-v1']):
             args_closed = parse_arguments()
 
         # Open mode: model and num-users are required flags
         with patch('sys.argv', ['mlpstorage', 'open', 'kvcache', 'run', '-rd', '/tmp',
-                                 '-m', 'llama3.1-8b', '-nu', '100']):
+                                 '-m', 'llama3.1-8b', '-nu', '100', '-sn', 'sys-v1']):
             args_open = parse_arguments()
 
         # Check common defaults that should match between modes
@@ -41,7 +42,7 @@ class TestOpenClosedEquivalence:
 
     def test_checkpointing_open_closed_defaults_match(self):
         """Verify Checkpointing 'closed' forces read/write checkpoint counts to match 'open' defaults."""
-        base_args = ['checkpointing', 'run', '-cm', '1024', '-m', 'llama3-8b', '-np', '2', '-cf', '/tmp/ckpt', '-rd', '/tmp', 'file']
+        base_args = ['checkpointing', 'run', '-cm', '1024', '-m', 'llama3-8b', '-np', '2', '-cf', '/tmp/ckpt', '-rd', '/tmp', '-sn', 'sys-v1', 'file']
 
         with patch('sys.argv', ['mlpstorage', 'closed'] + base_args):
             args_closed = parse_arguments()
@@ -54,7 +55,7 @@ class TestOpenClosedEquivalence:
 
     def test_closed_mode_strips_open_args(self):
         """Open-mode arguments should trigger an unrecognized argument error if passed in closed mode."""
-        test_args = ['mlpstorage', 'closed', 'kvcache', 'run', '-rd', '/tmp', '--allow-invalid-params']
+        test_args = ['mlpstorage', 'closed', 'kvcache', 'run', '-rd', '/tmp', '-sn', 'sys-v1', '--allow-invalid-params']
         with patch('sys.argv', test_args):
             with pytest.raises(SystemExit) as exc_info:
                 parse_arguments()
@@ -70,27 +71,28 @@ class TestCLIStructureAndCombinations:
     @pytest.mark.parametrize("test_name, cmd_list, expected_mode_or_benchmark, expected_command", [
         # Training — model is now a positional (no --model flag); storage type is positional
         # closed mode: only 'unet3d' and 'retinanet' are valid model choices
-        ("01", ['training', 'retinanet', 'run', '-cm', '1024', '-at', 'b200', '-na', '4', '-rd', '/tmp', 'file'], 'training', 'run'),
-        ("02", ['training', 'unet3d', 'datasize', '-cm', '1024', '-at', 'b200', '-ma', '4'], 'training', 'datasize'),
-        ("03", ['training', 'unet3d', 'datagen', '-np', '4', 'file', '-rd', '/tmp'], 'training', 'datagen'),
-        ("04", ['training', 'unet3d', 'configview', '-na', '4', '-cm', '64', '-at', 'b200', '-rd', '/tmp', 'file'], 'training', 'configview'),
+        # NOTE: every emitting command now requires --systemname per D-10/LAY-04.
+        ("01", ['training', 'retinanet', 'run', '-cm', '1024', '-at', 'b200', '-na', '4', '-rd', '/tmp', '-sn', 'sys-v1', 'file'], 'training', 'run'),
+        ("02", ['training', 'unet3d', 'datasize', '-cm', '1024', '-at', 'b200', '-ma', '4', '-rd', '/tmp', '-sn', 'sys-v1'], 'training', 'datasize'),
+        ("03", ['training', 'unet3d', 'datagen', '-np', '4', 'file', '-rd', '/tmp', '-sn', 'sys-v1'], 'training', 'datagen'),
+        ("04", ['training', 'unet3d', 'configview', '-na', '4', '-cm', '64', '-at', 'b200', '-rd', '/tmp', '-sn', 'sys-v1', 'file'], 'training', 'configview'),
 
         # Checkpointing — --model stays as a flag; storage type is positional
-        ("05", ['checkpointing', 'run', '-cm', '1024', '-m', 'llama3-8b', '-np', '4', '-cf', '/tmp/ckpt', '-rd', '/tmp', 'file'], 'checkpointing', 'run'),
-        ("06", ['checkpointing', 'datasize', '-cm', '1024', '-m', 'llama3-8b', '-np', '4'], 'checkpointing', 'datasize'),
+        ("05", ['checkpointing', 'run', '-cm', '1024', '-m', 'llama3-8b', '-np', '4', '-cf', '/tmp/ckpt', '-rd', '/tmp', '-sn', 'sys-v1', 'file'], 'checkpointing', 'run'),
+        ("06", ['checkpointing', 'datasize', '-cm', '1024', '-m', 'llama3-8b', '-np', '4', '-sn', 'sys-v1'], 'checkpointing', 'datasize'),
 
         # KVCache closed mode: model/num-users are not accepted in closed mode
-        ("07", ['kvcache', 'run', '-rd', '/tmp'], 'kvcache', 'run'),
+        ("07", ['kvcache', 'run', '-rd', '/tmp', '-sn', 'sys-v1'], 'kvcache', 'run'),
         ("08", ['kvcache', 'datasize'], 'kvcache', 'datasize'),
 
         # VectorDB
-        ("09", ['vectordb', 'run', '-rd', '/tmp', 'file'], 'vectordb', 'run'),
-        ("10", ['vectordb', 'datagen', 'file', '-rd', '/tmp'], 'vectordb', 'datagen'),
+        ("09", ['vectordb', 'run', '-rd', '/tmp', '-sn', 'sys-v1', 'file'], 'vectordb', 'run'),
+        ("10", ['vectordb', 'datagen', 'file', '-rd', '/tmp', '-sn', 'sys-v1'], 'vectordb', 'datagen'),
         ("11", ['vectordb', 'datasize'], 'vectordb', 'datasize'),
 
         # Utilities — top-level siblings, no mode prefix needed (they are their own mode)
-        ("12", ['reports', 'reportgen', '-rd', '/tmp'], 'reports', 'reportgen'),
-        ("13", ['history', 'show', '-rd', '/tmp'], 'history', 'show'),
+        ("12", ['reports', 'reportgen', '-rd', '/tmp', '-sn', 'sys-v1'], 'reports', 'reportgen'),
+        ("13", ['history', 'show', '-rd', '/tmp', '-sn', 'sys-v1'], 'history', 'show'),
         ("14", ['lockfile', 'generate', '-rd', '/tmp'], 'lockfile', 'generate'),
         ("15", ['lockfile', 'verify', '-rd', '/tmp'], 'lockfile', 'verify'),
     ])
@@ -126,7 +128,7 @@ class TestCLIStructureAndCombinations:
     def test_data_access_protocol_positional(self):
         """Test that the data_access_protocol positional is set correctly."""
         # Use 'unet3d' — a valid model in closed mode
-        test_args = ['mlpstorage', 'closed', 'training', 'unet3d', 'datagen', '-np', '4', 'file', '-rd', '/tmp']
+        test_args = ['mlpstorage', 'closed', 'training', 'unet3d', 'datagen', '-np', '4', 'file', '-rd', '/tmp', '-sn', 'sys-v1']
         with patch('sys.argv', test_args):
             args = parse_arguments()
             assert args.data_access_protocol == 'file'
@@ -154,7 +156,8 @@ class TestCustomValidation:
         """Checkpointing validate_args should reject negative checkpoint counts."""
         test_args = [
             'mlpstorage', 'closed', 'checkpointing', 'run',
-            '-cm', '1024', '-m', 'llama3-8b', '-np', '2', '-cf', '/tmp/ckpt', '-rd', '/tmp', 'file',
+            '-cm', '1024', '-m', 'llama3-8b', '-np', '2', '-cf', '/tmp/ckpt', '-rd', '/tmp',
+            '-sn', 'sys-v1', 'file',
             '--num-checkpoints-read', '-5'
         ]
         with patch('sys.argv', test_args):
@@ -231,7 +234,7 @@ class TestModeAndBenchmarkAttributes:
             'mlpstorage', 'closed', 'training', 'unet3d', 'run',
             '--data-dir', '/tmp', '--results-dir', '/tmp',
             '--num-accelerators', '1', '--accelerator-type', 'b200',
-            '--client-host-memory-in-gb', '64', 'file'
+            '--client-host-memory-in-gb', '64', '--systemname', 'sys-v1', 'file'
         ]
         with patch('sys.argv', test_args):
             args = parse_arguments()
@@ -247,7 +250,8 @@ class TestModeAndBenchmarkAttributes:
             'mlpstorage', 'open', 'training', 'unet3d', 'run',
             '--data-dir', '/tmp', '--results-dir', '/tmp',
             '--num-accelerators', '1', '--accelerator-type', 'b200',
-            '--client-host-memory-in-gb', '64', 'file', '--loops', '3'
+            '--client-host-memory-in-gb', '64',
+            '--systemname', 'sys-v1', 'file', '--loops', '3'
         ]
         with patch('sys.argv', test_args):
             args = parse_arguments()
@@ -256,14 +260,16 @@ class TestModeAndBenchmarkAttributes:
 
     def test_reports_sets_mode(self):
         """reports subcommand should set mode='reports' (no benchmark attribute)."""
-        with patch('sys.argv', ['mlpstorage', 'reports', 'reportgen', '--results-dir', '/tmp']):
+        with patch('sys.argv', ['mlpstorage', 'reports', 'reportgen',
+                                '--results-dir', '/tmp', '--systemname', 'sys-v1']):
             args = parse_arguments()
         assert args.mode == 'reports'
         assert not hasattr(args, 'benchmark')
 
     def test_history_sets_mode(self):
         """history subcommand should set mode='history'."""
-        with patch('sys.argv', ['mlpstorage', 'history', 'show', '--results-dir', '/tmp']):
+        with patch('sys.argv', ['mlpstorage', 'history', 'show',
+                                '--results-dir', '/tmp', '--systemname', 'sys-v1']):
             args = parse_arguments()
         assert args.mode == 'history'
         assert not hasattr(args, 'benchmark')
@@ -281,10 +287,165 @@ class TestModeAndBenchmarkAttributes:
             'mlpstorage', 'closed', 'training', 'unet3d', 'run',
             '--data-dir', '/tmp', '--results-dir', '/tmp',
             '--num-accelerators', '1', '--accelerator-type', 'b200',
-            '--client-host-memory-in-gb', '64', 'file'
+            '--client-host-memory-in-gb', '64', '--systemname', 'sys-v1', 'file'
         ]
         with patch('sys.argv', test_args):
             args = parse_arguments()
         assert args.data_access_protocol == 'file'
         assert not hasattr(args, 'file')
         assert not hasattr(args, 'object')
+
+
+# =====================================================================
+# 6. --systemname / MLPERF_SYSTEMNAME plumbing (LAY-04, D-10)
+# =====================================================================
+
+class TestSystemname:
+    """Tests for the --systemname flag and MLPERF_SYSTEMNAME env-var plumbing.
+
+    Per CONTEXT.md D-10, --systemname is required on every emitting subcommand:
+    training {datagen, run, configview, datasize}, checkpointing {datagen, run,
+    configview, validate}, vectordb {datagen, run}, kvcache {run, datagen}, plus
+    reports reportgen and history (show, rerun).
+
+    Pure utility commands (lockfile, version, init, rules-coverage) are exempt
+    and continue to parse without --systemname.
+    """
+
+    # Sets of full argv (without --systemname) that should each accept the flag.
+    EMITTING_COMMANDS = [
+        # (label, argv tail)
+        ('training-run', [
+            'closed', 'training', 'unet3d', 'run',
+            '--data-dir', '/d', '--results-dir', '/r',
+            '--num-accelerators', '1', '--accelerator-type', 'b200',
+            '--client-host-memory-in-gb', '64', 'file',
+        ]),
+        ('training-datagen', [
+            'closed', 'training', 'unet3d', 'datagen', 'file',
+            '--data-dir', '/d', '--results-dir', '/r',
+            '--num-processes', '1',
+        ]),
+        ('training-configview', [
+            'closed', 'training', 'unet3d', 'configview',
+            '--data-dir', '/d', '--results-dir', '/r',
+            '--num-accelerators', '1', '--accelerator-type', 'b200',
+            '--client-host-memory-in-gb', '64', 'file',
+        ]),
+        ('training-datasize', [
+            'closed', 'training', 'unet3d', 'datasize',
+            '--num-accelerators', '1', '--accelerator-type', 'b200',
+            '--client-host-memory-in-gb', '64',
+            '--data-dir', '/d', '--results-dir', '/r',
+        ]),
+        ('checkpointing-run', [
+            'closed', 'checkpointing', 'run',
+            '-cm', '1024', '-m', 'llama3-8b', '-np', '2',
+            '-cf', '/tmp/ckpt', '-rd', '/r', 'file',
+        ]),
+        ('vectordb-run', [
+            'closed', 'vectordb', 'run',
+            '-rd', '/r', 'file',
+        ]),
+        ('kvcache-run', [
+            'closed', 'kvcache', 'run', '-rd', '/r',
+        ]),
+        ('reports-reportgen', [
+            'reports', 'reportgen', '--results-dir', '/r',
+        ]),
+        ('history-show', [
+            'history', 'show', '--results-dir', '/r',
+        ]),
+    ]
+
+    @pytest.mark.parametrize(
+        "label,argv_tail",
+        EMITTING_COMMANDS,
+        ids=[label for label, _ in EMITTING_COMMANDS],
+    )
+    def test_systemname_on_emitting_commands(self, label, argv_tail, monkeypatch):
+        """Every emitting subcommand accepts --systemname and binds it to args.systemname."""
+        monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+        full = ['mlpstorage'] + argv_tail + ['--systemname', 'sys-v1']
+        with patch('sys.argv', full):
+            args = parse_arguments()
+        assert getattr(args, 'systemname', None) == 'sys-v1', (
+            f"{label}: expected args.systemname=='sys-v1' got "
+            f"{getattr(args, 'systemname', None)!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "label,argv_tail",
+        EMITTING_COMMANDS,
+        ids=[label for label, _ in EMITTING_COMMANDS],
+    )
+    def test_empty_systemname_errors(self, label, argv_tail, monkeypatch):
+        """Omitting --systemname on emitting commands raises SystemExit (argparse required-flag)."""
+        # Ensure env var is unset so the default falls back to '' (which argparse
+        # accepts as a value, but required=True without --systemname on argv fails).
+        monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+        full = ['mlpstorage'] + argv_tail  # no --systemname
+        with patch('sys.argv', full):
+            with pytest.raises(SystemExit):
+                parse_arguments()
+
+    def test_lockfile_does_not_require_systemname(self, monkeypatch):
+        """Pure utility subcommands (lockfile) parse without --systemname."""
+        monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+        with patch('sys.argv', ['mlpstorage', 'lockfile', 'generate',
+                                '-o', '/tmp/x', '--results-dir', '/r']):
+            args = parse_arguments()
+        assert args.mode == 'lockfile'
+
+    def test_init_does_not_require_systemname(self, monkeypatch):
+        """`mlpstorage init` parses without --systemname (init is bootstrap, not emitting)."""
+        monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+        with patch('sys.argv', ['mlpstorage', 'init', 'Acme', '/tmp/r']):
+            args = parse_arguments()
+        assert args.mode == 'init'
+
+    def test_systemname_env_var_default(self, monkeypatch):
+        """When MLPERF_SYSTEMNAME is set, --systemname is satisfied via the env-var default."""
+        monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys')
+        # Reload config + common_args so the new env value flows into argparse defaults.
+        import importlib
+        import mlpstorage_py.config as cfg_mod
+        import mlpstorage_py.cli.common_args as common_args_mod
+        importlib.reload(cfg_mod)
+        importlib.reload(common_args_mod)
+        # Reload modules that close over add_universal_arguments via from-import.
+        for mod_name in (
+            'mlpstorage_py.cli.training_args',
+            'mlpstorage_py.cli.checkpointing_args',
+            'mlpstorage_py.cli.vectordb_args',
+            'mlpstorage_py.cli.kvcache_args',
+            'mlpstorage_py.cli.utility_args',
+            'mlpstorage_py.cli_parser',
+        ):
+            try:
+                mod = importlib.import_module(mod_name)
+                importlib.reload(mod)
+            except ImportError:
+                pass
+        from mlpstorage_py.cli_parser import parse_arguments as parse_args_reloaded
+        try:
+            with patch('sys.argv', ['mlpstorage', 'reports', 'reportgen',
+                                    '--results-dir', '/r']):
+                args = parse_args_reloaded()
+            assert args.systemname == 'env-sys'
+        finally:
+            monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+            importlib.reload(cfg_mod)
+            importlib.reload(common_args_mod)
+            for mod_name in (
+                'mlpstorage_py.cli.training_args',
+                'mlpstorage_py.cli.checkpointing_args',
+                'mlpstorage_py.cli.vectordb_args',
+                'mlpstorage_py.cli.kvcache_args',
+                'mlpstorage_py.cli.utility_args',
+                'mlpstorage_py.cli_parser',
+            ):
+                try:
+                    importlib.reload(importlib.import_module(mod_name))
+                except ImportError:
+                    pass
