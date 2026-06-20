@@ -280,9 +280,23 @@ def _main_impl():
 
     args = parse_arguments()
 
+    # CR-03: logging setup is universal — only **benchmark** plumbing is
+    # gated for ``init`` (RESEARCH.md Pitfall 3). Calling
+    # ``apply_logging_options`` BEFORE the init early-return makes the
+    # init dispatcher's ``logger.info(...)`` confirmations visible and
+    # lets ``--debug`` triage init failures. The function is defensive
+    # via ``hasattr`` checks, so missing ``debug``/``verbose``/
+    # ``stream_log_level`` attributes on the init Namespace are fine.
+    if getattr(args, 'debug', False) or MLPS_DEBUG:
+        sys.excepthook = debugger_hook
+
+    apply_logging_options(logger, args)
+
     # `init` is a filesystem-local utility that must NOT flow through
     # update_args / validate_benchmark_environment / run_benchmark
-    # (RESEARCH.md Pitfall 3). Early-return BEFORE any benchmark plumbing.
+    # (RESEARCH.md Pitfall 3). Early-return BEFORE any benchmark plumbing
+    # — but AFTER apply_logging_options above so the dispatcher's
+    # confirmations are visible.
     if args.mode == "init":
         from mlpstorage_py.results_dir.init import run_init
         return run_init(args)
@@ -291,11 +305,6 @@ def _main_impl():
         from mlpstorage_py import VERSION
         print(VERSION)
         sys.exit(0)
-
-    if getattr(args, 'debug', False) or MLPS_DEBUG:
-        sys.excepthook = debugger_hook
-
-    apply_logging_options(logger, args)
 
     datetime_str = DATETIME_STR
 
