@@ -89,6 +89,24 @@ def run_init(args) -> EXIT_CODE:
             code=ErrorCode.CONFIG_INVALID_VALUE,
         )
 
+    # ── 1b. WR-02 — target exists but is NOT a directory ──────────────────
+    # If we don't catch this here, the path falls through to
+    # ``os.makedirs(target, exist_ok=True)`` at the end, which raises a
+    # raw ``FileExistsError`` (``exist_ok=True`` only suppresses the
+    # error when the path is an existing **directory**). The top-level
+    # ``main()`` handler only catches ``MLPStorageException`` subclasses,
+    # so the user sees an uncaught traceback instead of the friendly
+    # LAY-01 message. Raise a typed error early.
+    if os.path.exists(target) and not os.path.isdir(target):
+        raise NonEmptyDirError(
+            f"results-dir {target!r} exists but is not a directory.",
+            suggestion=(
+                f"Choose a different path, or remove the existing file at "
+                f"{target!r} before running `mlpstorage init`."
+            ),
+            code=ErrorCode.CONFIG_INVALID_VALUE,
+        )
+
     sentinel_path = os.path.join(target, MLPERF_RESULTS_FILENAME)
 
     # ── 2. D-11 — sentinel present: idempotent on match, refuse on mismatch ─
