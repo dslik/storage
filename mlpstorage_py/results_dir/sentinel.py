@@ -128,7 +128,9 @@ def write_sentinel(results_dir: str, orgname: str) -> str:
     # ``os.fdopen`` adopts the fd; closing the file object closes the fd.
     # ``sort_keys=False`` + ``default_flow_style=False`` give us the
     # canonical, block-style YAML in the same order as ``payload`` above.
-    with os.fdopen(fd, "w") as fh:
+    # WR-04: pin ``encoding="utf-8"`` so the write side is locale-independent —
+    # mirrors the explicit encoding on the read side in ``schema.validate_path``.
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         yaml.safe_dump(payload, fh, default_flow_style=False, sort_keys=False)
 
     return sentinel_path

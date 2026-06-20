@@ -92,7 +92,13 @@ def validate_file(path: str) -> MlperfResultsSentinel:
     Security: only ``yaml.safe_load`` is used — never the unsafe loader
     (V12 ASVS).
     """
-    with open(path, "r") as fh:
+    # WR-04: pin encoding="utf-8" so the sentinel round-trips deterministically
+    # regardless of LANG / LC_ALL on the host. Today the constraints on
+    # ``orgname`` (``[A-Za-z0-9._-]+``) and the ISO-8601 timestamp keep both
+    # files ASCII, but ``initialized_by`` embeds ``VERSION`` and a future
+    # release tag with a non-ASCII character (or a new schema field) would
+    # corrupt on a ``LANG=C`` host.
+    with open(path, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     if not isinstance(data, dict):
         # Pydantic would also reject a non-dict, but the resulting error
