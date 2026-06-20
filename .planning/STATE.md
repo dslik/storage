@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 02-03 complete (auto_generator schema-aware blanks scaffolding shipped)
+stopped_at: Plan 02-04 complete (write_systemname_yaml atomic orchestrator shipped — LIFE-01 testable in isolation)
 last_updated: "2026-06-19T00:00:00.000Z"
-last_activity: 2026-06-19 -- Plan 02-03 complete (stub literals + _splice_stub_lists + _build_outer_dict)
+last_activity: 2026-06-19 -- Plan 02-04 complete (write_systemname_yaml + D-7 sort + D-9 atomic O_EXCL + D-10 yaml.safe_dump)
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 10
-  completed_plans: 8
-  percent: 60
+  completed_plans: 9
+  percent: 65
 ---
 
 # Project State
@@ -26,32 +26,32 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 ## Current Position
 
 Phase: 02 (first-run-write-of-partial-systemname-yaml) — EXECUTING
-Plan: 4 of 5
-Status: Executing Phase 02 — Wave 3 complete (Plan 02-03 shipped); Wave 4 (02-04) is next
-Last activity: 2026-06-19 -- Plan 02-03 complete (stub literals + _splice_stub_lists + _build_outer_dict)
+Plan: 5 of 5
+Status: Executing Phase 02 — Wave 4 complete (Plan 02-04 shipped); Wave 5 (02-05 Benchmark.run hook + integration tests) is next
+Last activity: 2026-06-19 -- Plan 02-04 complete (write_systemname_yaml + D-7 sort + D-9 atomic O_EXCL + D-10 yaml.safe_dump)
 
 Progress (Phase 1): [██████████] 100%
-Progress (Phase 2): [██████░░░░] 60% (3/5 plans)
+Progress (Phase 2): [████████░░] 80% (4/5 plans)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 13
+- Total plans completed: 14
 - Average duration: ~28 min
-- Total execution time: ~211 min
+- Total execution time: ~241 min
 
 **By Phase:**
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
 | 01 | 5 | - | - |
-| 02 | 3 | ~51 min | ~17 min |
+| 02 | 4 | ~81 min | ~20 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-04 (~34min), 01-05 (~10min), 02-01 (~8min), 02-02 (~25min), 02-03 (~18min)
-- Trend: 02-03 is a tightly-scoped append to 02-02's module — two `Final[dict]` constants + two pure functions + 14 new tests. RED was a clean ImportError; GREEN landed all 39 file tests on the first run. Comfortably below 02-02's size because the schema-aware blanks logic is much simpler than per-host HostInfo adaptation.
+- Last 5 plans: 01-05 (~10min), 02-01 (~8min), 02-02 (~25min), 02-03 (~18min), 02-04 (~30min)
+- Trend: 02-04 is the largest 02 slice so far — three new symbols (constant + helper + orchestrator) plus 28 new tests including the threading.Barrier race test and the symlink-attack test. RED was a clean ImportError on `_SYSTEMNAME_YAML_MODE`; GREEN required one iteration to correct two PyYAML byte-pattern assumptions in the formatting tests (default_style='"' quotes keys too; integers emit as !!int tagged not bare unquoted). Both fixes preserved semantic intent via round-trip-via-yaml.safe_load assertions.
 
 *Updated after each plan completion*
 
@@ -98,10 +98,13 @@ Recent decisions affecting current work:
 - Execute 02-03: `_splice_stub_lists` is idempotent (replace-not-append) and defensive on missing `system_under_test`/`clients` keys. Returns the input dict (mutates in place) — this is part of the contract so 02-04 callers can write `dump = _splice_stub_lists(_build_outer_dict(...))` even after re-grouping. Shallow `dict(_STUB)` copy is sufficient in Phase 02 (all stub values are immutable scalars except an empty `traffic` list, which no production code mutates in place); switch to `copy.deepcopy` if Phase 4 ever mutates the spliced lists in place.
 - Execute 02-03: PLAN grep-gate-vs-docstring divergence (same flavor as 02-02's quoting note). The D-14 forbidden-token grep uses `grep -v '^#'` which only strips column-0 hashes; multi-line docstrings and indented `# comment` lines pass through. AST-aware verification confirms 0 true code references — semantic D-14 intent fully honored. The docstring enumeration of omitted blocks is intentional for human readability and is NOT stripped to satisfy a flawed grep.
 - Execute 02-03: PLAN.md two-task structure compressed to two commits per `<success_criteria>` mandate (same decision as 02-02). RED gate verifiably observed (`ImportError: cannot import name '_DRIVE_STUB'`) before production code.
+- Execute 02-04: `write_systemname_yaml` atomic orchestrator shipped — three new symbols (`_SYSTEMNAME_YAML_MODE`, `_resolve_host_info_list`, `write_systemname_yaml`). D-9 atomic write mirrors `results_dir/sentinel.py:113-134` verbatim. T-2-01 race (threading.Barrier) and T-2-08 symlink-attack tests both green; D-15 no-validate_file lock green. LIFE-01 satisfied at the write level — calling the function writes YAML at the D-11 canonical path on first run and returns None on re-run.
+- Execute 02-04 surprise: PyYAML `default_style='"'` quotes KEYS as well as values, and emits integers as `!!int "N"` (tagged double-quoted), NOT as bare unquoted. PLAN/RESEARCH Pitfall 6 was incorrect on the on-disk byte pattern. Semantic intent (ints round-trip as ints via `yaml.safe_load`) preserved — locked via two replacement tests: `test_yaml_formatting_integers_round_trip_as_int` (round-trip type) + `test_yaml_formatting_integers_tagged_not_string` (locks `!!int` tag so a future PyYAML version dropping it is caught immediately).
+- Execute 02-04: Pitfall 10 upstream contract confirmed — `mlpstorage_py/rules/utils.py:187-195` `generate_output_location` raises `ConfigurationError` on empty/malformed `args.systemname` during `Benchmark.__init__._reserve_run_directory`, BEFORE `Benchmark.run()` executes. Phase 2's writer can therefore safely consume `args.systemname` without an additional guard. No new threat surface added.
 
 ### Pending Todos
 
-- Phase 2 Wave 4: Plan 02-04 (write_systemname_yaml atomic orchestrator + D-7 sort) — now unblocked by 02-03. Owns the YAML I/O, atomic write, FileExistsError no-op, and the only call sites of `yaml.safe_dump` in the auto-generator subsystem.
+- Phase 2 Wave 5: Plan 02-05 (Benchmark.run() hook + integration tests + kvcache/vectordb regression) — now unblocked by 02-04. Owns the single call-site insertion into `mlpstorage_py/benchmarks/base.py:Benchmark.run()` (after MPI collection completes) and the integration tests that exercise the full Benchmark.run flow end-to-end.
 
 ### Blockers/Concerns
 
@@ -118,5 +121,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-19T00:00:00.000Z
-Stopped at: Plan 02-03 complete — Wave 4 (02-04) is next
-Resume file: .planning/phases/02-first-run-write-of-partial-systemname-yaml/02-04-PLAN.md
+Stopped at: Plan 02-04 complete — Wave 5 (02-05) is next
+Resume file: .planning/phases/02-first-run-write-of-partial-systemname-yaml/02-05-PLAN.md
