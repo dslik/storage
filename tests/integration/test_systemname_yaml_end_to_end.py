@@ -111,6 +111,21 @@ def _vdb_args(tmp_path, *, command='run', mode='closed', orgname='Acme',
     )
 
 
+_RUN_DATETIME_COUNTER = [0]
+
+
+def _unique_run_datetime() -> str:
+    """Return a unique YYYYMMDD_HHMMSS-formatted string so back-to-back
+    benchmark constructions in the same test don't collide on `reserve_run_directory`."""
+    _RUN_DATETIME_COUNTER[0] += 1
+    base = time.strftime("%Y%m%d_%H%M%S")
+    # Append a monotonic counter; the run-directory reserver tolerates any
+    # nonsense after the timestamp because it bumps on collision anyway,
+    # but we want the very first attempt to be unique to avoid the
+    # 10-bump collision-budget exhaustion.
+    return f"{base}_{_RUN_DATETIME_COUNTER[0]:04d}"
+
+
 def _make_benchmark(tmp_path, hosts, *, command='run', mode='closed',
                     orgname='Acme', systemname='sys-v1',
                     timeseries_side_effect=None):
@@ -122,14 +137,14 @@ def _make_benchmark(tmp_path, hosts, *, command='run', mode='closed',
     """
     args = _vdb_args(tmp_path, command=command, mode=mode,
                      orgname=orgname, systemname=systemname)
-    output_dir = str(tmp_path / "output")
+    output_dir = str(tmp_path / f"output_{_RUN_DATETIME_COUNTER[0]}")
     with patch('mlpstorage_py.benchmarks.base.generate_output_location') as mock_gen, \
          patch('mlpstorage_py.benchmarks.vectordbbench.read_config_from_file', return_value={}), \
          patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark.verify_benchmark'), \
          patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
         mock_gen.return_value = output_dir
         from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
-        bm = VectorDBBenchmark(args)
+        bm = VectorDBBenchmark(args, run_datetime=_unique_run_datetime())
 
     # Mock lifecycle methods so we can drive `Benchmark.run()` without DLIO/MPI.
     bm._validate_environment = MagicMock()
@@ -289,21 +304,27 @@ def test_second_run_no_overwrite(tmp_path):
     reason="filesystem semantics differ on Windows",
 )
 def test_filesystem_failure_propagates(tmp_path):
-    """D-9 fail-closed: pre-existing directory at the target path causes
-    `os.open(O_CREAT|O_EXCL|O_WRONLY)` to fail with `IsADirectoryError`,
-    which propagates out of `Benchmark.run()` and prevents `_run()` from
-    being called."""
+    """D-9 fail-closed: a non-FileExistsError filesystem error during the
+    write (e.g. PermissionError / ENOSPC / IsADirectoryError) propagates
+    out of `Benchmark.run()` and prevents `_run()` from being called.
+
+    We inject the error via `patch('os.open')` so we can reproduce the
+    OSError behavior deterministically across Linux/macOS without relying
+    on uid-specific filesystem-permission tricks. The patch targets the
+    write site inside `auto_generator`, NOT global os.open (which would
+    break unrelated I/O in the lifecycle methods).
+    """
     hosts = [_make_host()]
     bm = _make_benchmark(tmp_path, hosts)
 
-    # Pre-create a DIRECTORY at the would-be file path.
-    target = _yaml_path(tmp_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.mkdir()
-    assert target.is_dir()
+    # Inject a non-FileExistsError into the writer's os.open call.
+    def _raise_perm(*args, **kwargs):
+        raise PermissionError("simulated write failure")
 
-    with pytest.raises((IsADirectoryError, OSError)):
-        bm.run()
+    with patch('mlpstorage_py.system_description.auto_generator.os.open',
+               side_effect=_raise_perm):
+        with pytest.raises(PermissionError):
+            bm.run()
 
     # The benchmark MUST NOT have reached _run() after a write failure.
     bm._run.assert_not_called()

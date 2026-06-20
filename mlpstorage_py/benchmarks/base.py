@@ -64,6 +64,7 @@ from mlpstorage_py.cluster_collector import (
     MultiHostTimeSeriesCollector,
 )
 from mlpstorage_py.progress import create_stage_progress, progress_context
+from mlpstorage_py.system_description.auto_generator import write_systemname_yaml
 
 if TYPE_CHECKING:
     import logging
@@ -980,6 +981,27 @@ class Benchmark(BenchmarkInterface, abc.ABC):
 
             # Stage 2: Cluster collection
             self._collect_cluster_start()
+
+            # Phase 2 LIFE-01 write hook. Fires AFTER cluster collection so the
+            # write can consume self._cluster_info_start; BEFORE DLIO launch so
+            # the file lands before any benchmark output exists. The writer owns
+            # its own args.command == 'run' gate (D-12 — belt-and-braces with
+            # _should_collect_cluster_info()).
+            try:
+                write_systemname_yaml(self.args, self._cluster_info_start, self.logger)
+            except FileExistsError:
+                # D-9 no-op-if-exists is handled INSIDE write_systemname_yaml
+                # (the function returns None). Any FileExistsError that bubbles
+                # up here is unexpected; re-raise rather than swallow.
+                raise
+            except Exception as e:
+                # D-9: filesystem failures (EACCES, ENOSPC, IsADirectoryError, etc.)
+                # abort the benchmark BEFORE DLIO launches. The universal
+                # collection-failure rule applies to COLLECTOR failures (which
+                # yield empty strings), NOT to filesystem-level WRITE failures.
+                self.logger.error(f"Failed to write systemname.yaml: {e}")
+                raise
+
             self._start_timeseries_collection()
             advance_stage()
 
