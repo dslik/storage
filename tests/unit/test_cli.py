@@ -119,11 +119,28 @@ class TestAddUniversalArguments:
         args = parser.parse_args(['--config-file', '/path/to/config.yaml'])
         assert args.config_file == '/path/to/config.yaml'
 
-    def test_results_dir_required_when_req_results_true(self, parser):
-        """Should make --results-dir required when req_results=True."""
+    def test_results_dir_required_when_req_results_true(self, parser, monkeypatch):
+        """Should make --results-dir required when req_results=True.
+
+        Post-CR-02 fix: the requirement is enforced at the
+        ``validate_args`` (post-parse) layer rather than via argparse
+        ``required=True``, so the env-var-sourced default can satisfy it.
+        With ``MLPERF_RESULTS_DIR`` unset AND ``DEFAULT_RESULTS_DIR`` also
+        emptied (to simulate the "no env var, no fallback" worst case),
+        the validator must error out via SystemExit.
+        """
+        from mlpstorage_py.cli_parser import _check_universal_required_present
+        # Force DEFAULT_RESULTS_DIR to '' so the resolved value is empty
+        # even though argparse no longer demands the CLI flag.
+        import mlpstorage_py.cli.common_args as common_args_mod
+        monkeypatch.setattr(common_args_mod, 'DEFAULT_RESULTS_DIR', '')
         add_universal_arguments(parser, req_results=True)
+        args = parser.parse_args([])  # no error from argparse itself now
+        assert getattr(args, '_mlps_req_results', False) is True, (
+            "req_results=True must seed the _mlps_req_results marker on the namespace"
+        )
         with pytest.raises(SystemExit):
-            parser.parse_args([])  # Missing required --results-dir
+            _check_universal_required_present(args)
 
     def test_results_dir_optional_when_req_results_false(self, parser):
         """Should make --results-dir optional when req_results=False."""
