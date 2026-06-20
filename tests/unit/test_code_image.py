@@ -276,6 +276,87 @@ class TestAtomicWriteThenRename:
         assert (expected_dst / "submod.py").is_file()
 
 
+class TestDryRunSkipsCapture:
+    """WR-09: ``--dry-run`` must skip ``capture_code_image`` entirely.
+
+    Pre-fix, ``Benchmark.__init__`` invoked ``capture_code_image``
+    unconditionally — so ``mlpstorage ... run --dry-run`` would write
+    multi-MB code images to disk on every invocation even though no
+    benchmark was executed. ``--dry-run`` is meant to be a pure
+    inspection mode; it should leave the filesystem untouched.
+    """
+
+    def test_dry_run_skips_code_image(self, tmp_path, monkeypatch):
+        """Constructing a benchmark with ``args.dry_run=True`` must NOT call
+        ``capture_code_image`` and must set ``self.code_image_path = None``.
+        """
+        pytest.importorskip("mlpstorage_py.benchmarks.kvcache")
+        from argparse import Namespace
+        from mlpstorage_py.benchmarks.kvcache import KVCacheBenchmark
+
+        # Track capture invocations.
+        captured = {"called": False}
+
+        def fake_capture(**kwargs):
+            captured["called"] = True
+            return str(tmp_path / "should-not-be-used")
+
+        monkeypatch.setattr(
+            "mlpstorage_py.results_dir.code_image.capture_code_image",
+            fake_capture,
+        )
+        monkeypatch.setattr(
+            "mlpstorage_py.benchmarks.base.Benchmark._reserve_run_directory",
+            lambda self: str(tmp_path / "fake_run_dir"),
+        )
+
+        args = Namespace(
+            mode="open",
+            orgname="Acme",
+            systemname="sys-v1",
+            results_dir=str(tmp_path),
+            data_dir=str(tmp_path),
+            command="run",
+            debug=False,
+            dry_run=True,  # ← the WR-09 invariant
+            model="llama3-8b",
+            num_processes=1,
+            stream_log_level="INFO",
+            verbose=0,
+            num_accelerators=1,
+            accelerator_type="h100",
+            allow_invalid_params=False,
+            closed=False,
+            open=True,
+            mpi_bin="mpirun",
+            mpi_extra_args="",
+            exec_type=None,
+            client_host_memory_in_gb=64,
+            host_data_path=None,
+            host_meta_path=None,
+            inter_option_delay=0,
+            num_trials=1,
+            seed=42,
+        )
+
+        bench = None
+        try:
+            bench = KVCacheBenchmark(args=args, run_datetime="20260619_120000", run_number=0)
+        except Exception:
+            # Tolerate post-capture failures — only the capture-skip
+            # invariant matters.
+            pass
+
+        assert captured["called"] is False, (
+            "WR-09: capture_code_image MUST NOT be invoked on a --dry-run "
+            "benchmark instantiation"
+        )
+        if bench is not None:
+            assert getattr(bench, "code_image_path", "sentinel") is None, (
+                "WR-09: --dry-run must leave self.code_image_path = None"
+            )
+
+
 class TestBenchmarkHook:
     """Benchmark.__init__ invokes capture_code_image after _reserve_run_directory."""
 
