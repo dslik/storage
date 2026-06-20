@@ -380,14 +380,116 @@ class TestSystemname:
         ids=[label for label, _ in EMITTING_COMMANDS],
     )
     def test_empty_systemname_errors(self, label, argv_tail, monkeypatch):
-        """Omitting --systemname on emitting commands raises SystemExit (argparse required-flag)."""
-        # Ensure env var is unset so the default falls back to '' (which argparse
-        # accepts as a value, but required=True without --systemname on argv fails).
+        """Omitting --systemname on emitting commands raises SystemExit.
+
+        Post CR-02 fix: ``--systemname`` is no longer ``required=True`` at
+        the argparse layer (that would silently neuter the
+        ``MLPERF_SYSTEMNAME`` env-var fallback per D-10). Instead, the post-
+        parse validator checks that the resolved value is non-empty; with
+        neither the CLI flag nor the env var supplied, ``DEFAULT_SYSTEMNAME``
+        resolves to ``""`` and the validator errors out.
+        """
+        # Ensure env var is unset so the default falls back to '' (empty).
         monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
         full = ['mlpstorage'] + argv_tail  # no --systemname
         with patch('sys.argv', full):
             with pytest.raises(SystemExit):
                 parse_arguments()
+
+    # ---- CR-02: MLPERF_SYSTEMNAME / MLPERF_RESULTS_DIR env-var fallback ----
+    #
+    # The reviewer flagged that ``required=True`` + ``default=`` is
+    # contradictory in argparse — ``required=True`` checks the CLI tokens,
+    # not the resolved value, so the env-var defaults were dead on every
+    # emitting subcommand. These tests pin the post-fix behavior: when
+    # ``MLPERF_SYSTEMNAME`` / ``MLPERF_RESULTS_DIR`` is set, the CLI flag
+    # is no longer mandatory.
+
+    @pytest.mark.parametrize(
+        "label,argv_tail",
+        EMITTING_COMMANDS,
+        ids=[label for label, _ in EMITTING_COMMANDS],
+    )
+    def test_systemname_env_var_satisfies_requirement(
+        self, label, argv_tail, monkeypatch,
+    ):
+        """If MLPERF_SYSTEMNAME is set, ``--systemname`` may be omitted on the CLI.
+
+        Pre-fix this raised SystemExit because argparse's ``required=True``
+        ignored the env-var-sourced default. Post-fix, the resolved
+        ``DEFAULT_SYSTEMNAME`` (sourced from the env var) satisfies the
+        requirement and the parsed namespace carries that value.
+        """
+        monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys-v1')
+        # Re-import config so DEFAULT_SYSTEMNAME picks up the env value, then
+        # re-import the modules that captured it at import time.
+        import importlib
+        import mlpstorage_py.config as cfg_mod
+        import mlpstorage_py.cli.common_args as common_args_mod
+        importlib.reload(cfg_mod)
+        importlib.reload(common_args_mod)
+        # Re-importing common_args invalidates downstream builders that
+        # captured DEFAULT_SYSTEMNAME by name — reload the cli_parser
+        # chain so the new default propagates.
+        import mlpstorage_py.cli as cli_mod
+        importlib.reload(cli_mod)
+        import mlpstorage_py.cli_parser as cli_parser_mod
+        importlib.reload(cli_parser_mod)
+        try:
+            full = ['mlpstorage'] + argv_tail  # no --systemname
+            with patch('sys.argv', full):
+                args = cli_parser_mod.parse_arguments()
+            assert getattr(args, 'systemname', None) == 'env-sys-v1', (
+                f"{label}: MLPERF_SYSTEMNAME env var must satisfy --systemname "
+                f"requirement; got {getattr(args, 'systemname', None)!r}"
+            )
+        finally:
+            monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+            importlib.reload(cfg_mod)
+            importlib.reload(common_args_mod)
+            importlib.reload(cli_mod)
+            importlib.reload(cli_parser_mod)
+
+    def test_results_dir_env_var_satisfies_requirement(self, monkeypatch):
+        """If MLPERF_RESULTS_DIR is set, ``--results-dir`` may be omitted on the CLI.
+
+        DEFAULT_RESULTS_DIR has a non-empty tempdir fallback even without
+        the env var, but the contractual D-10 promise is that
+        MLPERF_RESULTS_DIR is honored as a default on every emitting
+        subcommand. Pre-fix, ``required=True`` ignored the env var entirely.
+        """
+        monkeypatch.setenv('MLPERF_RESULTS_DIR', '/env/results')
+        monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys')  # so systemname check passes
+        import importlib
+        import mlpstorage_py.config as cfg_mod
+        import mlpstorage_py.cli.common_args as common_args_mod
+        importlib.reload(cfg_mod)
+        importlib.reload(common_args_mod)
+        import mlpstorage_py.cli as cli_mod
+        importlib.reload(cli_mod)
+        import mlpstorage_py.cli_parser as cli_parser_mod
+        importlib.reload(cli_parser_mod)
+        try:
+            # Training run without --results-dir; everything else still passed.
+            argv = [
+                'mlpstorage', 'closed', 'training', 'unet3d', 'run',
+                '--data-dir', '/d',
+                '--num-accelerators', '1', '--accelerator-type', 'b200',
+                '--client-host-memory-in-gb', '64', 'file',
+            ]
+            with patch('sys.argv', argv):
+                args = cli_parser_mod.parse_arguments()
+            assert args.results_dir == '/env/results', (
+                f"MLPERF_RESULTS_DIR env var must satisfy --results-dir "
+                f"requirement; got {args.results_dir!r}"
+            )
+        finally:
+            monkeypatch.delenv('MLPERF_RESULTS_DIR', raising=False)
+            monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+            importlib.reload(cfg_mod)
+            importlib.reload(common_args_mod)
+            importlib.reload(cli_mod)
+            importlib.reload(cli_parser_mod)
 
     def test_lockfile_does_not_require_systemname(self, monkeypatch):
         """Pure utility subcommands (lockfile) parse without --systemname."""
