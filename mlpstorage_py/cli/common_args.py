@@ -214,49 +214,54 @@ def add_universal_arguments(parser, req_results, req_systemname=False):
 
     Args:
         parser: Argparse parser to add arguments to.
-        req_results: Whether --results-dir is required.
+        req_results: Whether --results-dir is required. The requirement is
+            enforced POST-PARSE (see ``check_universal_arguments_present``)
+            so the ``MLPERF_RESULTS_DIR`` env-var-sourced default counts as
+            satisfying it. Using ``required=True`` here would short-circuit
+            argparse before the env-var default applies — that's the CR-02
+            bug we fixed.
         req_systemname: Whether --systemname is required. Defaults to False
             so pure utility call sites (lockfile, etc.) keep working without
             opting in. Emitting commands (datagen/run/configview/datasize/
             reportgen/history) MUST opt in per CONTEXT.md D-10 / LAY-04.
+            Same post-parse enforcement model as ``req_results``.
     """
     standard_args = parser.add_argument_group("Standard Arguments")
+    # NOTE on the env-var fallback (CR-02): argparse's ``required=True``
+    # checks "was the option supplied on the command line?", NOT "is the
+    # resulting attribute non-None?". The ``default=`` only applies when the
+    # option is OMITTED, but ``required=True`` makes argparse error when it
+    # is omitted — so the env-var-sourced default was unreachable on every
+    # emitting subcommand. We drop ``required=True`` entirely and instead
+    # stash a marker on the namespace (via an argparse.SUPPRESS-defaulted
+    # action) that ``check_universal_arguments_present`` consumes at the
+    # post-parse validation layer to enforce non-emptiness.
+    standard_args.add_argument(
+        '--results-dir', '-rd',
+        type=str,
+        default=DEFAULT_RESULTS_DIR,
+        help=HELP_MESSAGES['results_dir']
+    )
     if req_results:
-        standard_args.add_argument(
-            '--results-dir', '-rd',
-            type=str,
-            required=True,
-            default=DEFAULT_RESULTS_DIR,
-            help=HELP_MESSAGES['results_dir']
-        )
-    else:
-        standard_args.add_argument(
-            '--results-dir', '-rd',
-            type=str,
-            default=DEFAULT_RESULTS_DIR,
-            help=HELP_MESSAGES['results_dir']
-        )
+        # Stash a marker on the namespace — set_defaults does NOT register a
+        # CLI flag; it just seeds the resulting Namespace attribute. The
+        # post-parse validator consumes this to know whether to error on an
+        # empty resolved value.
+        parser.set_defaults(_mlps_req_results=True)
 
     # --systemname: required on emitting commands (Rules.md §2.1.8 systemname
     # subdir), optional elsewhere. Default = DEFAULT_SYSTEMNAME = "" unless
-    # MLPERF_SYSTEMNAME env var is set. The required=True branch makes argparse
-    # exit when neither --systemname nor MLPERF_SYSTEMNAME is supplied.
+    # MLPERF_SYSTEMNAME env var is set. Same env-var-fallback bug as above:
+    # we keep argparse's ``required=False`` and gate emptiness post-parse.
+    standard_args.add_argument(
+        '--systemname', '-sn',
+        type=str,
+        required=False,
+        default=DEFAULT_SYSTEMNAME,
+        help=HELP_MESSAGES['systemname']
+    )
     if req_systemname:
-        standard_args.add_argument(
-            '--systemname', '-sn',
-            type=str,
-            required=True,
-            default=DEFAULT_SYSTEMNAME,
-            help=HELP_MESSAGES['systemname']
-        )
-    else:
-        standard_args.add_argument(
-            '--systemname', '-sn',
-            type=str,
-            required=False,
-            default=DEFAULT_SYSTEMNAME,
-            help=HELP_MESSAGES['systemname']
-        )
+        parser.set_defaults(_mlps_req_systemname=True)
 
     standard_args.add_argument(
         '--config-file', '-c',
