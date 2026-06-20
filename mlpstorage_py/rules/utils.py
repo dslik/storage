@@ -203,9 +203,18 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
         systemname,
     )
 
+    # WR-07: all missing-required failures raise ``ConfigurationError`` (a
+    # ``MLPStorageException`` subclass) so the top-level ``main()`` handler
+    # surfaces them uniformly with the user-facing message + suggestion
+    # (rather than reporting "Unexpected error" with a stack trace gated on
+    # ``MLPS_DEBUG``).
     if benchmark.BENCHMARK_TYPE == BENCHMARK_TYPES.training:
         if not hasattr(args, "model"):
-            raise ValueError("Model name is required for training benchmark output location")
+            raise ConfigurationError(
+                "Model name is required for training benchmark output location.",
+                suggestion="Pass ``--model`` (or ``-m``) on the CLI.",
+                code=ErrorCode.CONFIG_MISSING_REQUIRED,
+            )
         return os.path.join(
             base,
             benchmark.BENCHMARK_TYPE.name,
@@ -217,9 +226,10 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
     if benchmark.BENCHMARK_TYPE == BENCHMARK_TYPES.vector_database:
         engine = getattr(args, "vdb_engine", None)
         if not engine:
-            raise ValueError(
-                "VectorDB engine is required for output location "
-                "(set --vdb-engine on the CLI)."
+            raise ConfigurationError(
+                "VectorDB engine is required for output location.",
+                suggestion="Pass ``--vdb-engine`` on the CLI.",
+                code=ErrorCode.CONFIG_MISSING_REQUIRED,
             )
         return os.path.join(
             base,
@@ -232,10 +242,14 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
     if benchmark.BENCHMARK_TYPE == BENCHMARK_TYPES.kv_cache:
         model = getattr(args, "model", None)
         if not model:
-            raise ValueError(
-                "Model is required for kv_cache output location: set "
-                "args.model before calling generate_output_location "
-                "(KVCacheBenchmark.__init__ defaults this from KVCACHE_MODEL_DEFAULT)."
+            raise ConfigurationError(
+                "Model is required for kv_cache output location.",
+                suggestion=(
+                    "Set args.model before calling generate_output_location "
+                    "(KVCacheBenchmark.__init__ defaults this from "
+                    "KVCACHE_MODEL_DEFAULT)."
+                ),
+                code=ErrorCode.CONFIG_MISSING_REQUIRED,
             )
         return os.path.join(
             base,
@@ -247,7 +261,11 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
 
     if benchmark.BENCHMARK_TYPE == BENCHMARK_TYPES.checkpointing:
         if not hasattr(args, "model"):
-            raise ValueError("Model name is required for checkpointing benchmark output location")
+            raise ConfigurationError(
+                "Model name is required for checkpointing benchmark output location.",
+                suggestion="Pass ``--model`` (or ``-m``) on the CLI.",
+                code=ErrorCode.CONFIG_MISSING_REQUIRED,
+            )
         # Checkpointing intentionally omits the <command> segment; preserves
         # the pre-refactor layout shape that downstream submission-checkers
         # already validate against.
@@ -258,8 +276,19 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
             datetime_str,
         )
 
-    print('The given benchmark is not supported by mlpstorage_py.rules.generate_output_location()')
-    sys.exit(1)
+    # WR-07: unknown BENCHMARK_TYPE used to ``print`` + ``sys.exit(1)``,
+    # bypassing the logger and leaving no trail in log files. Raise a typed
+    # error instead — the ``main()`` handler will log it through the normal
+    # ConfigurationError flow.
+    raise ConfigurationError(
+        f"Unsupported benchmark type {benchmark.BENCHMARK_TYPE!r} for "
+        "generate_output_location().",
+        suggestion=(
+            "Add the new benchmark to the if/elif chain in "
+            "rules/utils.generate_output_location."
+        ),
+        code=ErrorCode.CONFIG_INVALID_VALUE,
+    )
 
 
 def get_runs_files(results_dir: str, logger=None) -> List:

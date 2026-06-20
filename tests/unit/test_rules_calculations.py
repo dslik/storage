@@ -245,7 +245,14 @@ class TestGenerateOutputLocation:
         assert '/results/closed/Acme/results/sys-v1/checkpointing/llama3-8b/20250111_143022' == result
 
     def test_raises_for_training_without_model(self, mock_logger):
-        """generate_output_location raises error for training without model."""
+        """generate_output_location raises ConfigurationError for training without model.
+
+        Post WR-07: missing-required errors now raise the typed
+        ``ConfigurationError`` so the top-level ``main()`` handler can
+        surface them uniformly. Previously this was a bare ``ValueError``,
+        which bypassed the typed-error handler.
+        """
+        from mlpstorage_py.errors import ConfigurationError
         mock_benchmark = MagicMock()
         mock_benchmark.BENCHMARK_TYPE = BENCHMARK_TYPES.training
         mock_benchmark.args.results_dir = '/results'
@@ -254,11 +261,15 @@ class TestGenerateOutputLocation:
         mock_benchmark.args.systemname = 'sys-v1'
         del mock_benchmark.args.model  # Remove model attribute
 
-        with pytest.raises(ValueError, match="Model name is required"):
+        with pytest.raises(ConfigurationError, match="Model name is required"):
             generate_output_location(mock_benchmark, datetime_str='20250111_143022')
 
     def test_raises_for_checkpointing_without_model(self, mock_logger):
-        """generate_output_location raises error for checkpointing without model."""
+        """generate_output_location raises ConfigurationError for checkpointing without model.
+
+        Post WR-07: see ``test_raises_for_training_without_model``.
+        """
+        from mlpstorage_py.errors import ConfigurationError
         mock_benchmark = MagicMock()
         mock_benchmark.BENCHMARK_TYPE = BENCHMARK_TYPES.checkpointing
         mock_benchmark.args.results_dir = '/results'
@@ -267,7 +278,7 @@ class TestGenerateOutputLocation:
         mock_benchmark.args.systemname = 'sys-v1'
         del mock_benchmark.args.model  # Remove model attribute
 
-        with pytest.raises(ValueError, match="Model name is required"):
+        with pytest.raises(ConfigurationError, match="Model name is required"):
             generate_output_location(mock_benchmark, datetime_str='20250111_143022')
 
     def test_vectordb_benchmark_output_location(self, mock_logger):
