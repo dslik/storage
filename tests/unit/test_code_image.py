@@ -188,6 +188,92 @@ class TestExcludes:
         )
 
 
+class TestAtomicWriteThenRename:
+    """WR-01: capture uses write-then-rename so a partial tree from an
+    SIGKILL/OOM'd previous run is never trusted as a completed image.
+
+    The contract is: ``dst.exists()`` after ``capture_code_image`` returns
+    success implies "complete and trustworthy". If ``copytree`` raises mid-
+    copy, the partial tree must end up under a temp name (e.g. a sibling
+    starting with ``.``), NOT at the final ``dst`` path.
+    """
+
+    def test_partial_copy_does_not_leave_dst_in_place(self, tmp_path):
+        """If ``shutil.copytree`` fails partway, the final ``dst`` must not exist.
+
+        Simulate a torn copy by patching ``shutil.copytree`` to create a
+        partial tree at the path it was called with (mimicking what would
+        be left behind by a real SIGKILL / OOM mid-copytree) and then
+        raise. The implementation MUST stage into a temp location and only
+        atomically rename to the final ``dst`` after success — so when the
+        copy raises mid-way, the final ``dst`` is empty.
+
+        A subsequent ``capture_code_image`` call must NOT see
+        ``dst.exists()`` and early-return on a torn copy.
+        """
+        src_root = tmp_path / "src_root"
+        src_root.mkdir()
+        fake_pkg = _make_fake_src(src_root)
+        rd = tmp_path / "rd"
+        rd.mkdir()
+
+        final_dst = rd / "closed" / "Acme" / "code"
+
+        def fake_copytree(src, dst, **kwargs):
+            # Mimic a real partial copytree: create dst, drop a partial file,
+            # then explode. This is exactly what the kernel would leave
+            # behind on SIGKILL.
+            os.makedirs(dst, exist_ok=True)
+            with open(os.path.join(dst, "partial_marker.txt"), "w") as f:
+                f.write("partial")
+            raise OSError("simulated mid-copy crash")
+
+        with mock.patch(
+            "mlpstorage_py.results_dir.code_image.shutil.copytree",
+            side_effect=fake_copytree,
+        ):
+            with pytest.raises(OSError, match="simulated mid-copy crash"):
+                capture_code_image(
+                    str(rd), "closed", "Acme", "training", "run",
+                    src_override=str(fake_pkg),
+                )
+
+        # The contract: after a failed copy, the FINAL dst path must NOT
+        # exist. The partial tree may exist under a sibling temp name (we
+        # don't pin which name here — the impl chooses), but the final
+        # canonical path that future calls early-return on must not.
+        assert not final_dst.exists(), (
+            "WR-01: a failed mid-copy must NOT leave the final dst path in "
+            "place; otherwise the next run would trust a torn copy via the "
+            "idempotency early-return. The implementation should stage into "
+            "a temp sibling and atomically rename only after success."
+        )
+
+    def test_successful_copy_lands_at_dst(self, tmp_path):
+        """The atomic rename must land the staged tree at the final dst path.
+
+        Belt-and-suspenders: WR-01 says torn copies must not leave dst in
+        place. A successful copy MUST still leave dst in place — otherwise
+        we've broken the happy path.
+        """
+        src_root = tmp_path / "src_root"
+        src_root.mkdir()
+        fake_pkg = _make_fake_src(src_root)
+        rd = tmp_path / "rd"
+        rd.mkdir()
+
+        result = capture_code_image(
+            str(rd), "closed", "Acme", "training", "run",
+            src_override=str(fake_pkg),
+        )
+
+        expected_dst = rd / "closed" / "Acme" / "code"
+        assert Path(result) == expected_dst
+        assert expected_dst.is_dir()
+        assert (expected_dst / "__init__.py").is_file()
+        assert (expected_dst / "submod.py").is_file()
+
+
 class TestBenchmarkHook:
     """Benchmark.__init__ invokes capture_code_image after _reserve_run_directory."""
 
