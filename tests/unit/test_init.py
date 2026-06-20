@@ -334,6 +334,41 @@ def test_init_refuses_non_empty_dir(tmp_path):
     assert "non-empty" in str(excinfo.value).lower()
 
 
+def test_init_refuses_when_target_is_a_regular_file(tmp_path):
+    """WR-02: target exists as a regular file (not a directory) → friendly error.
+
+    Pre-fix, this path fell through every existing branch:
+    ``os.path.isfile(sentinel_path)`` was False (join under a regular
+    file is non-traversable but still not a file), ``os.path.isdir(target)``
+    was False (so the non-empty check was skipped), and the final
+    ``os.makedirs(target, exist_ok=True)`` raised raw ``FileExistsError``
+    because ``exist_ok=True`` only suppresses the error when the path is
+    an existing **directory**. The user got an uncaught traceback (the
+    ``ConfigurationError`` handler doesn't match ``FileExistsError``)
+    instead of the friendly "Choose a different path..." message that
+    LAY-01 promises.
+
+    Post-fix, ``run_init`` checks "exists and not a directory" early and
+    raises ``NonEmptyDirError`` with a clear suggestion.
+    """
+    from mlpstorage_py.results_dir.errors import NonEmptyDirError
+    from mlpstorage_py.results_dir.init import run_init
+
+    # Create the target path AS A REGULAR FILE (not a directory).
+    target = tmp_path / "r1"
+    target.write_text("I am a file, not a directory\n")
+
+    with pytest.raises(NonEmptyDirError) as excinfo:
+        run_init(argparse.Namespace(mode="init", orgname="Acme", path=str(target)))
+
+    msg = str(excinfo.value)
+    # The error should mention that the path is not a directory so the user
+    # understands what went wrong.
+    assert "not a directory" in msg.lower(), (
+        f"Error message should explain target is not a directory: {msg!r}"
+    )
+
+
 def test_init_auto_creates_when_parent_exists(tmp_path):
     """D-09: parent exists, target missing → leaf is auto-created."""
     from mlpstorage_py.config import EXIT_CODE
