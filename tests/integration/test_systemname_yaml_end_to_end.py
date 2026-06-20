@@ -541,18 +541,22 @@ def test_run_does_not_raise_when_cluster_info_start_attribute_is_uninitialized_r
     # D-8 fallback hermetic stub: _resolve_host_info_list(None) calls
     # collect_local_system_info(). Feed it a minimal HostInfo-compatible
     # dict so HostInfo.from_collected_data produces a populated host.
+    # Per `rules/models.py:212-222`, cpuinfo must be a list of dicts (each
+    # representing one logical CPU); summarize_cpuinfo derives socket count
+    # from unique `physical id` values and model from cpuinfo_list[0].
     fake_local = {
         'hostname': 'localhost',
         'meminfo': {'MemTotal': 274_877_906_944},
-        'cpuinfo': (
-            'processor\t: 0\n'
-            'physical id\t: 0\n'
-            'model name\t: Intel(R) Xeon Platinum 8480+\n'
-            'cpu cores\t: 56\n'
-        ),
+        'cpuinfo': [
+            {
+                'processor': '0',
+                'physical id': '0',
+                'model name': 'Intel(R) Xeon Platinum 8480+',
+                'cpu cores': '56',
+                'flags': '',
+            },
+        ],
         'os_release': {'NAME': 'Rocky Linux', 'VERSION_ID': '9.5'},
-        'cmdline': '',
-        'uname': {'machine': 'x86_64'},
     }
     with patch(
         'mlpstorage_py.system_description.auto_generator.collect_local_system_info',

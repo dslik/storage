@@ -145,6 +145,14 @@ class Benchmark(BenchmarkInterface, abc.ABC):
 
         # Dependency injection for testability
         self._cluster_collector = cluster_collector
+        # Initialize cluster-info attributes up front so the Phase 2
+        # systemname.yaml write hook at run() can read them on the
+        # early-return path through _collect_cluster_start (which fires
+        # for datagen/configview and for any benchmark whose --hosts
+        # default is None, e.g. VectorDB). When None, the writer's D-8
+        # fallback at auto_generator.py:374-378 takes over via
+        # _resolve_host_info_list. See CR-01 in 02-REVIEW.md.
+        self._cluster_info_start = None
         self._validator = validator
 
         self.benchmark_run_verifier = None
