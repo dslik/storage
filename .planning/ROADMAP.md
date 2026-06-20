@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The same submitter running `--mode open` and `--mode whatif` against `/tmp/r1` writes to `/tmp/r1/open/Acme/results/sys-v1/...` and `/tmp/r1/whatif/Acme/results/sys-v1/...` respectively; code-image capture under `code/` follows the per-mode policy (closed=one total, open=per-(benchmark,command), whatif=none).
   5. The full unit test suite passes after fixtures are updated for the new layout, and the submission checker's existing layout checks (`mlpstorage_py/submission_checker/checks/directory_checks.py`) pass on output produced by the new generator.
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Slice 1: Sentinel infrastructure (Pydantic schema + atomic YAML I/O + domain errors) (LAY-02)
@@ -51,7 +51,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 01-05-PLAN.md — Slice 5: Per-mode code-image capture + end-to-end integration tests (LAY-06, LAY-07, LAY-08)
+- [x] 01-05-PLAN.md — Slice 5: Per-mode code-image capture + end-to-end integration tests (LAY-06, LAY-07, LAY-08)
 
 ### Phase 2: First-Run Write of Partial systemname.yaml
 
@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Canonical Layout & Init | 5/5 | Complete | 2026-06-19 |
+| 1. Canonical Layout & Init | 5/5 | Complete    | 2026-06-20 |
 | 2. First-Run Write of Partial systemname.yaml | 0/TBD | Not started | - |
 | 3. Chassis Model + Networking Coverage | 0/TBD | Not started | - |
 | 4. Sysctl, Environment, and Drives Coverage | 0/TBD | Not started | - |

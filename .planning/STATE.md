@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: phase-complete
-stopped_at: Completed 01-05-PLAN.md (per-mode code-image capture + canonical-layout E2E — LAY-06/07/08); Phase 1 SHIPS
-last_updated: "2026-06-19T23:48:27Z"
-last_activity: 2026-06-19 -- Phase 01 plan 05 executed; Phase 1 complete (LAY-01..LAY-08)
+status: completed
+stopped_at: Completed 01-05-PLAN.md (per-mode code-image + canonical-layout E2E — LAY-06/07/08); Phase 1 SHIPS
+last_updated: "2026-06-20T02:25:38.559Z"
+last_activity: 2026-06-20
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 5
   completed_plans: 5
-  percent: 100
+  percent: 20
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 
 ## Current Position
 
-Phase: 01 (canonical-layout-and-init) — COMPLETE
-Plan: 5 of 5 complete; Phase 1 ships
+Phase: 2
+Plan: Not started
 Status: Phase 01 complete — ready for Phase 02 kickoff
-Last activity: 2026-06-19 -- Plan 01-05 complete (LAY-06 per-mode code-image; LAY-07 whatif layout uniformity; LAY-08 DirectoryCheck regression)
+Last activity: 2026-06-20
 
 Progress (Phase 1): [██████████] 100%
 
@@ -36,7 +36,7 @@ Progress (Phase 1): [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 5
+- Total plans completed: 10
 - Average duration: ~32 min
 - Total execution time: ~160 min
 
@@ -44,7 +44,7 @@ Progress (Phase 1): [██████████] 100%
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
-| 01    | 5     | ~160 min    | ~32 min  |
+| 01 | 5 | - | - |
 
 **Recent Trend:**
 
