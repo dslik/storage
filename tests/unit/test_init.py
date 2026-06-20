@@ -100,6 +100,55 @@ def test_init_dispatch_early_returns(tmp_path):
     mock_validate_env.assert_not_called()
 
 
+def test_init_dispatch_applies_logging_options_before_run_init(tmp_path):
+    """CR-03: ``apply_logging_options`` must run BEFORE the ``init`` dispatch.
+
+    Previously, ``_main_impl`` early-returned to ``run_init`` BEFORE
+    ``apply_logging_options(logger, args)`` had a chance to fire, so:
+
+    1. The init dispatcher's ``logger.info(...)`` confirmations were
+       invisible (the stream handler's level had not been adjusted from
+       its setup_logging default).
+    2. ``--debug`` could not be used to triage init failures, because
+       the debug-formatter / debug-level switch happens inside
+       ``apply_logging_options``.
+
+    The fix is to call ``apply_logging_options`` BEFORE the
+    ``args.mode == "init"`` early-return. Logging setup is universal;
+    only **benchmark** plumbing is gated (RESEARCH.md Pitfall 3).
+
+    This test asserts the call ordering inside ``_main_impl``.
+    """
+    from mlpstorage_py import main as main_mod
+    from mlpstorage_py.config import EXIT_CODE
+
+    target = str(tmp_path / "r1")
+    call_log: list[str] = []
+
+    def fake_apply_logging(_logger, _args):
+        call_log.append("apply_logging_options")
+
+    def fake_run_init(args):
+        call_log.append("run_init")
+        return EXIT_CODE.SUCCESS
+
+    with patch.object(main_mod, "apply_logging_options", side_effect=fake_apply_logging), \
+         patch("mlpstorage_py.results_dir.init.run_init", side_effect=fake_run_init), \
+         patch("sys.argv", ["mlpstorage", "init", "Acme", target]):
+        rc = main_mod._main_impl()
+
+    assert rc == EXIT_CODE.SUCCESS
+    assert "apply_logging_options" in call_log, (
+        "apply_logging_options must be invoked on the init code path"
+    )
+    assert "run_init" in call_log, "run_init must be invoked for mode=init"
+    assert call_log.index("apply_logging_options") < call_log.index("run_init"), (
+        "CR-03: apply_logging_options must run BEFORE run_init so the "
+        "dispatcher's logger.info confirmations are visible and --debug "
+        "can triage init failures. Got call order: " + str(call_log)
+    )
+
+
 def test_no_orgname_flag_on_non_init_commands():
     """No top-level ``--orgname`` flag on any subcommand other than (potentially)
     ``init`` itself. Even ``init`` uses a POSITIONAL ``orgname`` — never the
