@@ -153,6 +153,7 @@ class HostCPUInfo:
     num_logical_cores: int = 0
     model: str = ""
     architecture: str = ""
+    num_sockets: int = 0
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'HostCPUInfo':
@@ -162,6 +163,7 @@ class HostCPUInfo:
             num_logical_cores=data.get('num_logical_cores', 0),
             model=data.get('model', ""),
             architecture=data.get('architecture', ""),
+            num_sockets=data.get('num_sockets', 0),
         )
 
 
@@ -216,6 +218,7 @@ class HostInfo:
                 num_logical_cores=cpu_summary.get('num_logical_cores', 0),
                 model=cpu_summary.get('model', ''),
                 architecture=cpu_summary.get('architecture', ''),
+                num_sockets=cpu_summary.get('num_sockets', 0),
             )
 
         diskstats = data.get('diskstats', [])
