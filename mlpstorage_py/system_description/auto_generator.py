@@ -20,10 +20,33 @@ Phase 02 / Plan 02-02 deliverables (Slice 2 of the auto-collector vertical):
 - `_FINGERPRINT_KEYS` — the six-key tuple per D-4 that defines what makes two
   hosts "the same" for quantity-grouping purposes.
 
+Phase 02 / Plan 02-03 deliverables (Slice 3 — schema-aware blanks scaffolding):
+
+- `_NETWORKING_STUB`, `_DRIVE_STUB` — `Final[dict]` stub literals carrying the
+  empty-string / empty-list values the YAML emit needs for the `networking[]`
+  and `drives[]` sublists. D-3 (CONTEXT.md): these intentionally bypass the
+  StrictModel Pydantic classes since empty strings fail enum / `min_length=1`
+  validation but ARE the desired emit shape (SER-02 visible to-do reminders).
+  Field-name parity with `NetworkPort.model_fields` /
+  `DriveInstance.model_fields` is asserted at TEST time
+  (`test_stub_keys_match_pydantic_fields`) so any schema change forces the
+  stubs to be updated in lockstep.
+
+- `_splice_stub_lists(dump)` — post-dump mutator that injects exactly one
+  stub `networking` entry and one stub `drives` entry into every client.
+  Idempotent (re-runs REPLACE, do not append). Defensive on shape: missing
+  `system_under_test` or `clients` returns the dump unchanged.
+
+- `_build_outer_dict(stanzas)` — `{system_under_test: {clients: [...]}}`
+  scaffolding. Per D-14, the top-level `solution`, `deployment`,
+  `product_nodes`, `product_switches`, `total_rack_units`, and
+  `rack_power_supplies` blocks are OMITTED — the auto-collector cannot supply
+  legal enum values for `solution.architecture.storage_location` (Pitfall 1),
+  so `schema_validator.validate_file()` will fail on the missing required
+  fields, which IS the intended "submitter has work to do" UX (SER-02).
+
 Symbols arriving in later slices of Phase 02 (NOT in this module yet):
 
-- `_NETWORKING_STUB`, `_DRIVE_STUB`, `_splice_stub_lists`,
-  `_build_outer_dict` → Plan 02-03 (stub splice + outer dict scaffolding).
 - `write_systemname_yaml`, `_resolve_host_info_list`, atomic write,
   FileExistsError no-op → Plan 02-04.
 
@@ -37,7 +60,7 @@ and are exercised only at validation time and at test time (via
 """
 
 import copy
-from typing import Any
+from typing import Any, Final
 
 from mlpstorage_py.rules.models import HostInfo
 
@@ -211,4 +234,96 @@ def node_dict_from_host(host: HostInfo) -> dict:
         },
         # environment / sysctl: Phase 4 territory — not emitted here
         # quantity: injected by group_by_fingerprint downstream
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plan 02-03 — D-3 stub literals for the networking[] and drives[] sublists.
+#
+# These intentionally bypass the NetworkPort / DriveInstance StrictModel
+# constructors: those models enforce enum membership and `min_length=1`
+# constraints which fail on empty strings, but empty-string stubs ARE the
+# desired emit shape — the schema_validator failures at submission time are
+# the SER-02 "submitter has work to do" UX, not a bug.
+#
+# Field-name parity with NetworkPort.model_fields / DriveInstance.model_fields
+# is asserted at TEST time by
+# tests/unit/test_auto_generator.py::test_stub_keys_match_pydantic_fields.
+# Any future schema change failing that test forces the stub to be updated.
+# ---------------------------------------------------------------------------
+_NETWORKING_STUB: Final[dict] = {
+    "unit_count": "",   # NetworkPort.unit_count: int(ge=1) — '' fails validation
+    "type":       "",   # NetworkPort.type: NetworkType enum — '' fails enum check
+    "speed":      "",   # NetworkPort.speed: int(ge=1)
+    "traffic":    [],   # NetworkPort.traffic: List[TrafficType], min_length=1
+}
+
+_DRIVE_STUB: Final[dict] = {
+    "unit_count":     "",   # DriveInstance.unit_count: int(ge=1)
+    "vendor_name":    "",
+    "model_name":     "",
+    "interface":      "",   # DriveInstance.interface: DriveInterface enum
+    "media_type":     "",   # DriveInstance.media_type: DriveMediaType enum
+    "capacity_in_GB": "",   # DriveInstance.capacity_in_GB: int(ge=1)
+    # performance: OMITTED per D-2 row 4 — optional + non-derivable spec-sheet fact
+}
+
+
+def _splice_stub_lists(dump: dict) -> dict:
+    """Splice stub networking[] and drives[] entries into every client.
+
+    D-3 (CONTEXT.md): stub entries intentionally bypass the StrictModel
+    Pydantic classes — empty-string fields fail enum / min=1 / list-non-empty
+    checks at construction time but ARE the desired emit shape (visible
+    to-do reminders for the submitter; SER-02). Each stub is a fresh dict
+    (`dict(_NETWORKING_STUB)`) so callers can safely mutate without
+    aliasing the module-level constant.
+
+    Idempotent: re-running on the same dict REPLACES the spliced entries,
+    not appends. Plan 02-04 relies on this so callers can chain
+    `_splice_stub_lists(_build_outer_dict(stanzas))` even after re-grouping.
+
+    Defensive on shape: if `dump` has no `system_under_test` or no
+    `clients`, the function returns the dump unchanged (no `KeyError`).
+
+    Returns the input dict (mutated in place). Callers can write
+    `dump = _splice_stub_lists(dump)` for clarity even though the return
+    value is identity.
+    """
+    clients = dump.get("system_under_test", {}).get("clients", [])
+    for client in clients:
+        client["networking"] = [dict(_NETWORKING_STUB)]
+        client["drives"]     = [dict(_DRIVE_STUB)]
+    return dump
+
+
+def _build_outer_dict(stanzas: list[dict]) -> dict:
+    """Construct {system_under_test: {clients: [...]}} per D-14.
+
+    Top-level optional and required blocks are OMITTED:
+      - solution         (required at schema level; submitter fills via D-14)
+      - deployment       (required at schema level; submitter fills via D-14)
+      - product_nodes    (optional)
+      - product_switches (optional)
+      - total_rack_units (optional)
+      - rack_power_supplies (optional)
+
+    Rationale (Pitfall 1 / D-14): `Solution.architecture.storage_location` is
+    an enum and `""` is not a legal enum value. `Architecture.check_na_pairing`
+    and `Capabilities.check_remap_time` are `model_validator`s that fire at
+    construction time. Whole-file `schema_validator.validate_file()` will fail
+    on the missing required fields — that IS the intended "submitter has work
+    to do" UX (SER-02). Stubbing these blocks would just shift the failure
+    from "missing block" to "invalid enum value", which is a worse signal.
+    """
+    return {
+        "system_under_test": {
+            # solution: OMITTED per D-14 (submitter fills)
+            # deployment: OMITTED per D-14 (submitter fills)
+            # product_nodes: OMITTED (optional)
+            # product_switches: OMITTED (optional)
+            # total_rack_units: OMITTED (optional)
+            # rack_power_supplies: OMITTED (optional)
+            "clients": stanzas,
+        }
     }
