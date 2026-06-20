@@ -16,9 +16,9 @@ The submission package's directory shape per Rules.md §2.1.5-2.1.8 is `<results
 - [x] **LAY-03**: Every mlpstorage command that takes `--results-dir` (datagen, run, configview, datasize, reportgen, validate, history, etc.) reads orgname exclusively from `<results-dir>/mlperf-results.yaml`. There is NO `--orgname` CLI flag and NO `MLPERF_ORGNAME` env var consulted by these commands. If `mlperf-results.yaml` is missing or unparseable, the command fails before any work begins with: "results-dir `<path>` has not been initialized. Run `mlpstorage init <orgname> <path>` first."
 - [x] **LAY-04**: `mlpstorage` accepts `--systemname` CLI flag for `run` (and other commands that need it), with default from `MLPERF_SYSTEMNAME` env var. A single results-dir can legitimately hold multiple system-name subtrees per Rules.md §2.1.8; systemname is therefore per-run, not pinned at init.
 - [x] **LAY-05**: `generate_output_location()` in `mlpstorage_py/rules/utils.py` produces `<results-dir>/<mode>/<orgname>/results/<systemname>/<benchmark>/<model>/<command>/<datetime>/` for every command that emits results. `<mode>` is `closed`/`open`/`whatif`. `<orgname>` comes from the sentinel. `<systemname>` comes from the CLI flag / env var.
-- [ ] **LAY-06**: Code-image capture policy per the three modes — `closed` captures one code image per submitter (under `<results-dir>/closed/<orgname>/code/`), `open` captures one code image per (benchmark, command) tuple, `whatif` captures no code image at all. The capture mechanism honors Rules.md §2.1.6 for closed.
-- [ ] **LAY-07**: `whatif` mode produces the same directory shape (`<results-dir>/whatif/<orgname>/results/<systemname>/...`) for self-consistency, even though whatif is non-submittable. The submission checker will continue to reject `whatif/` at the top level — that's correct.
-- [ ] **LAY-08**: Existing test fixtures and submission-checker tests that hard-code the old layout (`tests/unit/test_loader_metadata_refresh.py`, `tests/unit/test_definition_of_done.py`, `tests/unit/test_checkpointing_check_retrofit.py`, `mlpstorage_py/tests/conftest.py`, and others) are updated to expect the new layout. The submission-checker's existing layout checks continue to pass on the new output shape.
+- [x] **LAY-06**: Code-image capture policy per the three modes — `closed` captures one code image per submitter (under `<results-dir>/closed/<orgname>/code/`), `open` captures one code image per (benchmark, command) tuple, `whatif` captures no code image at all. The capture mechanism honors Rules.md §2.1.6 for closed.
+- [x] **LAY-07**: `whatif` mode produces the same directory shape (`<results-dir>/whatif/<orgname>/results/<systemname>/...`) for self-consistency, even though whatif is non-submittable. The submission checker will continue to reject `whatif/` at the top level — that's correct.
+- [x] **LAY-08**: Existing test fixtures and submission-checker tests that hard-code the old layout (`tests/unit/test_loader_metadata_refresh.py`, `tests/unit/test_definition_of_done.py`, `tests/unit/test_checkpointing_check_retrofit.py`, `mlpstorage_py/tests/conftest.py`, and others) are updated to expect the new layout. The submission-checker's existing layout checks continue to pass on the new output shape.
 
 ### Collection (COLL)
 
@@ -93,9 +93,9 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | LAY-03  | Phase 1 | Complete (01-04) |
 | LAY-04  | Phase 1 | Complete (01-03) |
 | LAY-05  | Phase 1 | Complete (01-03) |
-| LAY-06  | Phase 1 | Pending |
-| LAY-07  | Phase 1 | Pending |
-| LAY-08  | Phase 1 | Pending |
+| LAY-06  | Phase 1 | Complete (01-05) |
+| LAY-07  | Phase 1 | Complete (01-05) |
+| LAY-08  | Phase 1 | Complete (01-05) |
 | COLL-01 | Phase 2 | Pending |
 | COLL-02 | Phase 2 | Pending |
 | COLL-03 | Phase 3 | Pending |

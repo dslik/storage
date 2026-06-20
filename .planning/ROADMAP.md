@@ -13,7 +13,7 @@ This milestone delivers auto-population of the `clients[]` section of `systemnam
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Canonical Layout & Init** — Add `mlpstorage init <orgname> <path>` plus the `mlperf-results.yaml` sentinel; refactor `generate_output_location()` to emit the Rules.md §2.1-shaped tree; add `--systemname` CLI flag + `MLPERF_SYSTEMNAME` env-var default; update affected tests.
+- [x] **Phase 1: Canonical Layout & Init** — Add `mlpstorage init <orgname> <path>` plus the `mlperf-results.yaml` sentinel; refactor `generate_output_location()` to emit the Rules.md §2.1-shaped tree; add `--systemname` CLI flag + `MLPERF_SYSTEMNAME` env-var default; update affected tests. (Completed 2026-06-19 — LAY-01..LAY-08 all green.)
 - [ ] **Phase 2: First-Run Write of Partial systemname.yaml** — On first `run`, write a quantity-grouped `systemname.yaml` containing CPU, memory, and OS for every client; leave non-derivable fields blank; no-op if the file already exists.
 - [ ] **Phase 3: Chassis Model + Networking Coverage** — Extend the auto-filled YAML with DMI chassis `model_name` and a `networking[]` block sourced from sysfs.
 - [ ] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Canonical Layout & Init | 2/5 | In Progress|  |
+| 1. Canonical Layout & Init | 5/5 | Complete | 2026-06-19 |
 | 2. First-Run Write of Partial systemname.yaml | 0/TBD | Not started | - |
 | 3. Chassis Model + Networking Coverage | 0/TBD | Not started | - |
 | 4. Sysctl, Environment, and Drives Coverage | 0/TBD | Not started | - |

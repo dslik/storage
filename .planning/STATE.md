@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-04-PLAN.md (orgname-resolution gate + banner + canonical conftest fixtures — LAY-03)
-last_updated: "2026-06-19T23:20:19Z"
-last_activity: 2026-06-19 -- Phase 01 plan 04 executed
+status: phase-complete
+stopped_at: Completed 01-05-PLAN.md (per-mode code-image capture + canonical-layout E2E — LAY-06/07/08); Phase 1 SHIPS
+last_updated: "2026-06-19T23:48:27Z"
+last_activity: 2026-06-19 -- Phase 01 plan 05 executed; Phase 1 complete (LAY-01..LAY-08)
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -21,35 +21,35 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-18)
 
 **Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
-**Current focus:** Phase 01 — canonical-layout-and-init
+**Current focus:** Phase 02 — first-run write of partial systemname.yaml (next)
 
 ## Current Position
 
-Phase: 01 (canonical-layout-and-init) — EXECUTING
-Plan: 5 of 5 (next: 01-05 — test-fixture migration sweep + final integration)
-Status: Executing Phase 01
-Last activity: 2026-06-19 -- Plan 01-04 complete (orgname-resolution gate + banner; LAY-03 shipped)
+Phase: 01 (canonical-layout-and-init) — COMPLETE
+Plan: 5 of 5 complete; Phase 1 ships
+Status: Phase 01 complete — ready for Phase 02 kickoff
+Last activity: 2026-06-19 -- Plan 01-05 complete (LAY-06 per-mode code-image; LAY-07 whatif layout uniformity; LAY-08 DirectoryCheck regression)
 
-Progress: [████████░░] 80%
+Progress (Phase 1): [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 4
-- Average duration: ~38 min
-- Total execution time: ~150 min
+- Total plans completed: 5
+- Average duration: ~32 min
+- Total execution time: ~160 min
 
 **By Phase:**
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
-| 01    | 4     | ~150 min    | ~37 min  |
+| 01    | 5     | ~160 min    | ~32 min  |
 
 **Recent Trend:**
 
-- Last 5 plans: —
-- Trend: —
+- Last 5 plans: 01-01 (~34min), 01-02, 01-03 (61min), 01-04 (~34min), 01-05 (~10min)
+- Trend: 01-05 was integration-test heavy with minimal source changes — short execution
 
 *Updated after each plan completion*
 
@@ -83,14 +83,18 @@ Recent decisions affecting current work:
 - Execute 01-04: LAY-03 error message uses literal backticks (not single quotes) via plain f-string interpolation `{var}` (not `{var!r}`) — locked verbatim per CONTEXT.md / ROADMAP success criterion #2.
 - Execute 01-04: `validate` mode currently bypasses the sentinel check at runtime because `add_validate_arguments` registers a positional `input` rather than `--results-dir`. The gate's `if results_dir_value:` guard quietly skips it. Documented as an inert-gate divergence; if a future plan adds `--results-dir` to validate the gate will catch it automatically.
 - Execute 01-04: kvcache `_make_run_benchmark` fixture uses `mode='open'` (not `'closed'`) so the CLOSED-mode override checks (seed/trials/inter-option-delay) don't fire on tests that deliberately override those args. TestClosedEnforcement sets `bm.args.mode='closed'` explicitly to exercise the enforcement path.
+- Execute 01-05: `shutil.copytree(symlinks=False)` is locked as the V12 ASVS mitigation for T-1-CI2 (symlink traversal in code-image source). The grep gate (`grep -c 'symlinks=False'`) returns 2 (call site + docstring); the `test_copytree_call_uses_symlinks_false` test mocks `copytree` and asserts `kwargs["symlinks"] is False`.
+- Execute 01-05: Exclude set kept inline in `code_image.py` (`_EXCLUDE_DIRS`, `_EXCLUDE_FILENAMES`) rather than imported from `submission_checker.constants` — avoids a circular-import surface and lets the two consumers (the on-disk image and the reader-side MD5 checksum) evolve independently.
+- Execute 01-05: `capture_code_image` exposes `src_override` as a test-only kw-only parameter so the hermetic exclude test can construct a fake source tree under tmp_path. Production callers (Benchmark.__init__) ALWAYS pass None, which resolves to `Path(mlpstorage_py.__file__).parent`.
+- Execute 01-05: Integration test exercises helpers directly (run_init → capture_code_image → DirectoryCheck) rather than full DLIO/MPI runs — dev-shell-compatible AND tests exactly what Phase 1 ships (the filesystem-layout surface). Full-DLIO E2E remains the operator-side manual smoke check.
 
 ### Pending Todos
 
-None yet.
+None — Phase 1 ships.
 
 ### Blockers/Concerns
 
-None yet.
+None.
 
 ## Deferred Items
 
@@ -103,5 +107,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-19 (resumed)
-Stopped at: Completed 01-04-PLAN.md (orgname-resolution gate + banner + canonical conftest fixtures — LAY-03)
-Resume file: .planning/phases/01-canonical-layout-and-init/01-05-PLAN.md
+Stopped at: Completed 01-05-PLAN.md (per-mode code-image + canonical-layout E2E — LAY-06/07/08); Phase 1 SHIPS
+Resume file: .planning/phases/02-first-run-systemname-yaml/02-CONTEXT.md (or `/gsd-transition` → `/gsd-discuss-phase 2`)
