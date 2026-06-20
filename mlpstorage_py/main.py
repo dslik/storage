@@ -374,6 +374,25 @@ def _main_impl():
             # If handle_history_command returned an exit code, return it
             return new_args
 
+        # WR-03: the replayed entry may carry a bypass mode (version /
+        # lockfile / rules-coverage) or even 'init'. The bypass dispatches
+        # above ran on the ORIGINAL args (mode='history'), so they did not
+        # match. Re-route here before falling through to the benchmark
+        # loop. Without this, a replayed bypass-mode entry would land in
+        # ``update_args`` → ``run_benchmark`` with a non-benchmark mode.
+        if args.mode == "init":
+            from mlpstorage_py.results_dir.init import run_init
+            return run_init(args)
+        if args.mode == "version":
+            from mlpstorage_py import VERSION
+            print(VERSION)
+            sys.exit(0)
+        if args.mode == "lockfile":
+            return handle_lockfile_command(args)
+        if args.mode == "rules-coverage":
+            from mlpstorage_py.submission_checker.tools.rules_coverage import run as run_rules_coverage
+            return run_rules_coverage(args)
+
     if args.mode == "reports":
         # Lazy-import: ReportGenerator pulls psutil, which is only required
         # for the reports subcommand. Keeping the import here lets validate /
