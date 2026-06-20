@@ -30,8 +30,12 @@ from mlpstorage_py.rules.models import (
 )
 from mlpstorage_py.cluster_collector import HostSystemInfo
 from mlpstorage_py.system_description.auto_generator import (
+    _DRIVE_STUB,
     _FINGERPRINT_KEYS,
+    _NETWORKING_STUB,
+    _build_outer_dict,
     _get_dotted,
+    _splice_stub_lists,
     group_by_fingerprint,
     node_dict_from_host,
 )
@@ -349,3 +353,290 @@ def test_node_dict_field_names_match_pydantic_reflection():
         f"operating_system dict drift from OperatingSystem: "
         f"missing={os_schema_keys - os_keys}, extra={os_keys - os_schema_keys}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Plan 02-03 / Task 1 — _NETWORKING_STUB, _DRIVE_STUB module constants
+# ---------------------------------------------------------------------------
+
+
+def test_networking_stub_shape():
+    """_NETWORKING_STUB has the four NetworkPort field names with empty-string /
+    empty-list values per RESEARCH.md Pattern 3 (D-3 seam).
+
+    `traffic` is a List[TrafficType] with min_length=1 in NetworkPort, so the
+    stub uses `[]` (not `""`) — Pydantic will reject `[]` at validation time,
+    which is the intended visible-to-do UX (SER-02).
+    """
+    assert _NETWORKING_STUB == {
+        "unit_count": "",
+        "type": "",
+        "speed": "",
+        "traffic": [],
+    }
+    # traffic specifically must be the empty LIST, not empty string.
+    assert _NETWORKING_STUB["traffic"] == []
+    assert isinstance(_NETWORKING_STUB["traffic"], list)
+
+
+def test_drive_stub_shape():
+    """_DRIVE_STUB has the six expected DriveInstance field names with
+    empty-string values. `performance` is deliberately OMITTED per D-2 row 4
+    (optional + non-derivable spec-sheet fact).
+    """
+    assert _DRIVE_STUB == {
+        "unit_count": "",
+        "vendor_name": "",
+        "model_name": "",
+        "interface": "",
+        "media_type": "",
+        "capacity_in_GB": "",
+    }
+    # D-2 row 4: performance is optional and non-derivable. Not stubbed.
+    assert "performance" not in _DRIVE_STUB
+
+
+def test_stub_keys_match_pydantic_fields():
+    """D-3 single-source-of-truth: stub literals must match the Pydantic
+    StrictModel field names exactly (minus the optional `performance` field
+    deliberately omitted from _DRIVE_STUB per D-2 row 4).
+
+    This is the load-bearing schema-drift discipline test. If NetworkPort or
+    DriveInstance gains a field in a later phase, this test fires — forcing
+    the stub literal to be updated in lockstep (D-1).
+    """
+    from mlpstorage_py.system_description.schema_validator import (
+        DriveInstance,
+        NetworkPort,
+    )
+
+    assert set(_NETWORKING_STUB.keys()) == set(NetworkPort.model_fields.keys()), (
+        f"_NETWORKING_STUB drift from NetworkPort: "
+        f"missing={set(NetworkPort.model_fields.keys()) - set(_NETWORKING_STUB.keys())}, "
+        f"extra={set(_NETWORKING_STUB.keys()) - set(NetworkPort.model_fields.keys())}"
+    )
+
+    # `performance` is optional on DriveInstance and intentionally omitted per D-2 row 4.
+    drive_pydantic_keys = set(DriveInstance.model_fields.keys()) - {"performance"}
+    assert set(_DRIVE_STUB.keys()) == drive_pydantic_keys, (
+        f"_DRIVE_STUB drift from DriveInstance (minus optional `performance`): "
+        f"missing={drive_pydantic_keys - set(_DRIVE_STUB.keys())}, "
+        f"extra={set(_DRIVE_STUB.keys()) - drive_pydantic_keys}"
+    )
+
+
+def test_stub_constants_are_module_level_not_mutated_by_callers():
+    """`dict(_NETWORKING_STUB)` yields a fresh dict so the splice helper can
+    hand out copies without aliasing the module-level constant. Mutating a
+    copy must not affect the original.
+    """
+    original_net = copy.deepcopy(_NETWORKING_STUB)
+    original_drive = copy.deepcopy(_DRIVE_STUB)
+
+    # Simulate a downstream caller mutating a returned stub.
+    mutated_net = dict(_NETWORKING_STUB)
+    mutated_net["unit_count"] = 16
+    mutated_drive = dict(_DRIVE_STUB)
+    mutated_drive["vendor_name"] = "Acme"
+
+    # Module-level constants remain pristine.
+    assert _NETWORKING_STUB == original_net
+    assert _DRIVE_STUB == original_drive
+
+
+# ---------------------------------------------------------------------------
+# Plan 02-03 / Task 2 — _splice_stub_lists
+# ---------------------------------------------------------------------------
+
+
+def _bare_client_dump(num_clients: int = 1) -> dict:
+    """Build a dump shaped like _build_outer_dict's output but without
+    networking/drives — the shape 02-02's node_dict_from_host produces before
+    Plan 02-03's splice step.
+    """
+    clients = [
+        {
+            "friendly_description": "",
+            "chassis": {
+                "model_name": "",
+                "cpu_model": f"CPU-{i}",
+                "cpu_qty": 2,
+                "cpu_cores": 64,
+                "memory_capacity": 256,
+            },
+            "operating_system": {"name": "Rocky", "version": "9.5"},
+        }
+        for i in range(num_clients)
+    ]
+    return {"system_under_test": {"clients": clients}}
+
+
+def test_splice_stub_lists_adds_to_every_client():
+    """Single-client dump: networking and drives lists each get one stub entry."""
+    dump = _bare_client_dump(num_clients=1)
+    result = _splice_stub_lists(dump)
+
+    client = result["system_under_test"]["clients"][0]
+    assert client["networking"] == [_NETWORKING_STUB]
+    assert client["drives"] == [_DRIVE_STUB]
+
+    # The spliced entries are FRESH dicts (not aliases of the module constants).
+    # Mutating one must not mutate the other.
+    assert client["networking"][0] is not _NETWORKING_STUB
+    assert client["drives"][0] is not _DRIVE_STUB
+
+
+def test_splice_stub_lists_multiple_clients():
+    """All clients in a multi-client dump receive their own stub lists."""
+    dump = _bare_client_dump(num_clients=3)
+    result = _splice_stub_lists(dump)
+
+    for client in result["system_under_test"]["clients"]:
+        assert client["networking"] == [_NETWORKING_STUB]
+        assert client["drives"] == [_DRIVE_STUB]
+
+
+def test_splice_stub_lists_idempotent():
+    """Calling twice REPLACES the spliced entries — does not append.
+
+    Idempotence is a contractual property: callers (Plan 02-04) may chain
+    `_splice_stub_lists(_build_outer_dict(stanzas))` and trust that re-running
+    on the same dict yields the same final state.
+    """
+    dump = _bare_client_dump(num_clients=1)
+    _splice_stub_lists(dump)
+    _splice_stub_lists(dump)
+
+    client = dump["system_under_test"]["clients"][0]
+    assert len(client["networking"]) == 1
+    assert len(client["drives"]) == 1
+    assert client["networking"] == [_NETWORKING_STUB]
+    assert client["drives"] == [_DRIVE_STUB]
+
+
+def test_splice_stub_lists_empty_clients():
+    """Empty clients list → no crash, dump returned unchanged."""
+    dump = {"system_under_test": {"clients": []}}
+    result = _splice_stub_lists(dump)
+    assert result == {"system_under_test": {"clients": []}}
+
+
+def test_splice_stub_lists_missing_system_under_test():
+    """Defensive `dict.get` chain: missing system_under_test → no KeyError."""
+    dump: dict = {}
+    result = _splice_stub_lists(dump)
+    # The contract is "no crash"; the exact return shape is whatever the
+    # defensive chain produces (here, the unchanged input).
+    assert result == {}
+
+
+def test_splice_stub_lists_returns_same_object():
+    """The helper mutates in place and returns the input dict — 02-04 callers
+    rely on this so they can chain `dump = _splice_stub_lists(_build_outer_dict(...))`.
+    """
+    dump = _bare_client_dump(num_clients=1)
+    assert _splice_stub_lists(dump) is dump
+
+
+# ---------------------------------------------------------------------------
+# Plan 02-03 / Task 2 — _build_outer_dict
+# ---------------------------------------------------------------------------
+
+
+def test_build_outer_dict_shape():
+    """D-14: outer dict has exactly `system_under_test` at top level, and
+    `system_under_test` contains exactly `clients` — nothing else.
+    """
+    stanzas = [
+        {
+            "friendly_description": "",
+            "chassis": {"cpu_model": "X"},
+            "operating_system": {"name": "Rocky", "version": "9.5"},
+            "quantity": 4,
+        }
+    ]
+    result = _build_outer_dict(stanzas)
+
+    assert set(result.keys()) == {"system_under_test"}
+    sut = result["system_under_test"]
+    assert set(sut.keys()) == {"clients"}
+    assert sut["clients"] == stanzas
+
+
+def test_build_outer_dict_omits_solution_deployment():
+    """D-14 explicit lock: solution, deployment, product_nodes,
+    product_switches, total_rack_units, rack_power_supplies are ALL absent.
+
+    Per Pitfall 1, those top-level blocks would require enum values and
+    model-validator-satisfying inputs which the auto-collector cannot supply.
+    Omitting them lets schema_validator.validate_file() surface "submitter
+    has work to do" as the intended UX (SER-02).
+    """
+    result = _build_outer_dict([])
+    sut = result["system_under_test"]
+    for forbidden in (
+        "solution",
+        "deployment",
+        "product_nodes",
+        "product_switches",
+        "total_rack_units",
+        "rack_power_supplies",
+    ):
+        assert forbidden not in sut, f"D-14 violation: {forbidden} present in outer dict"
+
+
+def test_build_outer_dict_empty_stanzas():
+    """Empty stanzas list → empty clients list under system_under_test."""
+    result = _build_outer_dict([])
+    assert result == {"system_under_test": {"clients": []}}
+
+
+def test_outer_dict_with_spliced_stubs_yaml_roundtrip():
+    """End-to-end sanity: build outer dict + splice stubs + YAML safe_dump +
+    safe_load reproduces the structure intact.
+
+    This is a sanity check that the combined output is a valid YAML data
+    structure. Full formatting tests (block style, default_style, etc.) live
+    in Plan 02-04 — only `yaml.safe_*` is used here (T-2-04 mitigation).
+    """
+    import yaml
+
+    stanzas = [
+        {
+            "friendly_description": "",
+            "chassis": {
+                "model_name": "",
+                "cpu_model": "Intel(R) Xeon Platinum 8480+",
+                "cpu_qty": 2,
+                "cpu_cores": 56,
+                "memory_capacity": 256,
+            },
+            "operating_system": {"name": "Rocky Linux", "version": "9.5"},
+            "quantity": 4,
+        }
+    ]
+    dump = _build_outer_dict(stanzas)
+    dump = _splice_stub_lists(dump)
+
+    yaml_text = yaml.safe_dump(dump, default_flow_style=False, sort_keys=False)
+    reloaded = yaml.safe_load(yaml_text)
+
+    client = reloaded["system_under_test"]["clients"][0]
+    assert client["chassis"]["cpu_qty"] == 2
+    assert client["operating_system"]["name"] == "Rocky Linux"
+    assert client["networking"] == [
+        {"unit_count": "", "type": "", "speed": "", "traffic": []}
+    ]
+    assert client["drives"] == [
+        {
+            "unit_count": "",
+            "vendor_name": "",
+            "model_name": "",
+            "interface": "",
+            "media_type": "",
+            "capacity_in_GB": "",
+        }
+    ]
+    # D-14: top-level forbidden blocks remain absent after YAML roundtrip.
+    assert "solution" not in reloaded["system_under_test"]
+    assert "deployment" not in reloaded["system_under_test"]
