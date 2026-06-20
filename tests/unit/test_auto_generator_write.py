@@ -306,34 +306,69 @@ def test_yaml_formatting_document_marker(args, cluster_info, target_path):
 
 
 def test_yaml_formatting_strings_double_quoted(args, cluster_info, target_path):
-    """D-10: string scalars are wrapped in `"` (default_style='"')."""
-    write_systemname_yaml(args, cluster_info, MagicMock())
-    text = target_path.read_text()
-    # cpu_model is a string and must be double-quoted.
-    assert re.search(r'cpu_model:\s*"[^"]+"', text), (
-        f"cpu_model not double-quoted in:\n{text}"
-    )
-    # operating_system.name is a string and must be double-quoted.
-    assert re.search(r'name:\s*"[^"]+"', text), (
-        f"name not double-quoted in:\n{text}"
-    )
+    """D-10: with default_style='"' PyYAML double-quotes ALL scalars and KEYS.
 
-
-def test_yaml_formatting_integers_unquoted(args, cluster_info, target_path):
-    """Pitfall 6: PyYAML emits integers natively even with default_style='"'.
-
-    Locks against a hypothetical PyYAML version that silently quotes integers.
+    Surprise vs. PLAN: `default_style='"'` quotes keys too (not just values),
+    so the emitted text contains `"cpu_model": "Intel..."` (both sides quoted),
+    not `cpu_model: "Intel..."`. Semantic intent (D-10: strings round-trip as
+    strings via yaml.safe_load, no plain-scalar misinterpretation) is still
+    locked — the round-trip test below proves it.
     """
     write_systemname_yaml(args, cluster_info, MagicMock())
     text = target_path.read_text()
-    # quantity is an int → unquoted.
-    assert re.search(r"quantity:\s+\d+\s*$", text, re.MULTILINE), (
-        f"quantity quoted or missing in:\n{text}"
+    # cpu_model value is a string and must be double-quoted on the value side.
+    assert re.search(r'"cpu_model":\s*"[^"]+"', text), (
+        f"cpu_model not double-quoted in:\n{text}"
     )
-    # cpu_qty / cpu_cores / memory_capacity are ints → unquoted.
-    assert re.search(r"cpu_qty:\s+\d+\s*$", text, re.MULTILINE)
-    assert re.search(r"cpu_cores:\s+\d+\s*$", text, re.MULTILINE)
-    assert re.search(r"memory_capacity:\s+\d+\s*$", text, re.MULTILINE)
+    # operating_system.name value is a string and must be double-quoted.
+    assert re.search(r'"name":\s*"[^"]+"', text), (
+        f"name not double-quoted in:\n{text}"
+    )
+    # Round-trip: strings load back as Python strings.
+    data = yaml.safe_load(text)
+    assert isinstance(
+        data["system_under_test"]["clients"][0]["chassis"]["cpu_model"], str
+    )
+
+
+def test_yaml_formatting_integers_round_trip_as_int(args, cluster_info, target_path):
+    """D-10 / Pitfall 6 (corrected): integers must round-trip as Python `int`.
+
+    Surprise vs. PLAN: modern PyYAML with `default_style='"'` emits integers
+    as `!!int "N"` (tagged double-quoted), NOT as bare unquoted ints. The
+    PLAN claim that "PyYAML emits int natively even with default_style='\"'"
+    is incorrect for this PyYAML version. What MATTERS for the schema
+    validator and submission checker is that `quantity`, `cpu_qty`,
+    `cpu_cores`, and `memory_capacity` round-trip as Python `int` — which
+    the `!!int` tag guarantees. This test locks the round-trip type, not
+    the on-disk byte pattern.
+    """
+    write_systemname_yaml(args, cluster_info, MagicMock())
+    data = yaml.safe_load(target_path.read_text())
+    client = data["system_under_test"]["clients"][0]
+    assert isinstance(client["quantity"], int)
+    assert isinstance(client["chassis"]["cpu_qty"], int)
+    assert isinstance(client["chassis"]["cpu_cores"], int)
+    assert isinstance(client["chassis"]["memory_capacity"], int)
+    assert client["quantity"] == 3
+
+
+def test_yaml_formatting_integers_tagged_not_string(args, cluster_info, target_path):
+    """Lock the `!!int` tag emission so a PyYAML version-bump that drops it
+    (and silently turns ints into strings) is caught at test time.
+
+    `!!int "N"` (tagged) round-trips as int; bare `"N"` (no tag) would
+    round-trip as str and break the schema validator.
+    """
+    write_systemname_yaml(args, cluster_info, MagicMock())
+    text = target_path.read_text()
+    # quantity must be either bare-unquoted (`quantity: 3`) OR `!!int`-tagged
+    # (`"quantity": !!int "3"`). Both round-trip as int. Forbid the
+    # untagged-double-quoted form (`"quantity": "3"`) which would round-trip
+    # as str.
+    assert re.search(r'"quantity":\s+!!int\s+"\d+"', text) or re.search(
+        r"quantity:\s+\d+\s*$", text, re.MULTILINE
+    ), f"quantity must be int-tagged or bare int, got:\n{text}"
 
 
 def test_yaml_block_style(args, cluster_info, target_path):
@@ -343,7 +378,8 @@ def test_yaml_block_style(args, cluster_info, target_path):
     assert "{" not in text, f"flow-style {{ leaked in:\n{text}"
     # `[` only legitimately appears in `traffic: []` (empty list, allowed).
     # Strip those occurrences and ensure no other `[` remains.
-    stripped = re.sub(r"traffic:\s*\[\]", "", text)
+    stripped = re.sub(r'"traffic":\s*\[\]', "", text)
+    stripped = re.sub(r"traffic:\s*\[\]", "", stripped)
     assert "[" not in stripped, (
         f"flow-style [ leaked outside empty traffic list in:\n{stripped}"
     )

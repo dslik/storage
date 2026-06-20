@@ -60,8 +60,13 @@ and are exercised only at validation time and at test time (via
 """
 
 import copy
-from typing import Any, Final
+import os
+from pathlib import Path
+from typing import Any, Final, Optional
 
+import yaml
+
+from mlpstorage_py.cluster_collector import collect_local_system_info
 from mlpstorage_py.rules.models import HostInfo
 
 
@@ -327,3 +332,169 @@ def _build_outer_dict(stanzas: list[dict]) -> dict:
             "clients": stanzas,
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# Plan 02-04 — Filesystem write orchestrator (LIFE-01).
+#
+# Composes 02-02 (adapter + grouping) + 02-03 (stub splice + outer dict) + the
+# D-7 sort + atomic O_CREAT|O_EXCL|O_WRONLY write into a single callable that
+# materializes systemname.yaml on disk at the canonical Rules.md §2.1.8 path.
+# The atomic-write recipe mirrors results_dir/sentinel.py:113-134 verbatim
+# (same flags, same mode, same `os.fdopen`+`yaml.safe_dump` pattern) — Phase 2
+# only deviates from that analog in three places:
+#
+# 1. FileExistsError → return None + logger.debug (Phase 5 will replace this
+#    branch with diff-and-fail); the sentinel raises DoubleInitError.
+# 2. yaml.safe_dump adds default_style='"' + explicit_start=True per D-10;
+#    the sentinel uses defaults that emit unquoted plain scalars.
+# 3. systemname.yaml's parent (<mode>/<orgname>/systems/) is created on
+#    demand via mkdir(parents=True, exist_ok=True); the sentinel relies on
+#    the init command having created its parent up front.
+# ---------------------------------------------------------------------------
+
+# File mode for the emitted systemname.yaml. World-readable on purpose
+# (LAY-03 parity with the sentinel — every command must be able to read).
+_SYSTEMNAME_YAML_MODE: Final[int] = 0o644
+
+
+def _resolve_host_info_list(cluster_info) -> list:
+    """Return the list of HostInfo to feed into the adapter.
+
+    D-8: when the caller has a populated `cluster_info.host_info_list`, return
+    that list as-is. Otherwise fall back to the single-host local collector —
+    this covers the dev-iteration and CI-smoke-test paths where `--hosts` was
+    not supplied and `cluster_info` is either None or carries an empty
+    `host_info_list`.
+
+    The fallback reuses `collect_local_system_info` + `HostInfo.from_collected_data`
+    so the produced HostInfo has the same dict-derived shape as the MPI path —
+    the adapter cannot tell the two paths apart.
+    """
+    if cluster_info is not None and getattr(cluster_info, "host_info_list", None):
+        return cluster_info.host_info_list
+    # D-8 single-host fallback.
+    local_data = collect_local_system_info()
+    return [HostInfo.from_collected_data(local_data)]
+
+
+def write_systemname_yaml(args, cluster_info, logger) -> Optional[str]:
+    """Materialize systemname.yaml at the Rules.md §2.1.8 canonical path.
+
+    Composes the full Phase 02 pipeline:
+      - D-12 writer-side gate: only `args.command == 'run'` writes; any other
+        command (datagen, configview, datasize, validate, history, reportgen)
+        returns None without touching the filesystem.
+      - D-8 empty-fleet fallback: if `cluster_info` is None or has an empty
+        `host_info_list`, falls back to local-only collection via
+        `_resolve_host_info_list`.
+      - Adapter + grouping: each HostInfo → node-shaped dict (02-02's
+        `node_dict_from_host`), then quantity-collapsed via
+        `group_by_fingerprint`.
+      - D-7 sort: stanzas sorted by `(-quantity, chassis.cpu_model)` —
+        largest quantity first, alphabetical cpu_model on ties.
+      - D-14 outer dict + D-3 stub splice (02-03's helpers).
+      - D-11 path derivation:
+        `<results_dir>/<mode>/<orgname>/systems/<systemname>.yaml`. Parent
+        directories are created on demand (mkdir parents=True, exist_ok=True).
+      - D-9 atomic exclusive create: `os.open(..., O_CREAT|O_EXCL|O_WRONLY,
+        0o644)`. Mirrors `results_dir/sentinel.py:113-134`. On FileExistsError
+        (T-2-01 race loser OR pre-existing file OR T-2-08 symlink at target),
+        returns None and emits a logger.debug — does NOT raise. Any OTHER
+        filesystem error (EACCES, ENOSPC, …) propagates per D-9: the writer
+        does NOT swallow non-FileExistsError exceptions.
+      - D-10 emit: `yaml.safe_dump(..., default_flow_style=False,
+        default_style='"', explicit_start=True, sort_keys=False)`.
+
+    NOT done here (deferred):
+      - Validation (`schema_validator.validate_file`): D-15 — never called
+        from the writer. The schema_validator is the user-facing check at
+        submission time, surfacing the SER-02 blanks as "submitter has work
+        to do". Calling it inside the writer would couple the two lifecycles
+        and turn a known-incomplete YAML emit into a hard error.
+      - Diff-and-fail on existing file: Phase 5 LIFE-02 territory; Phase 2's
+        FileExistsError branch is a deliberate no-op.
+      - `args.systemname` syntactic validation: Pitfall 10 — Phase 1's
+        `generate_output_location` already enforces non-empty +
+        well-formed systemname via the upstream `_reserve_run_directory` call
+        in `Benchmark.__init__`. Phase 2's writer relies on that upstream
+        contract rather than adding a redundant guard.
+
+    Args:
+        args: namespace with `command`, `results_dir`, `mode`, `orgname`,
+            `systemname` attributes (e.g. argparse Namespace).
+        cluster_info: optional object with `.host_info_list: list[HostInfo]`.
+            None or empty `host_info_list` triggers D-8 fallback.
+        logger: standard Python logger (used for .debug on no-op-if-exists
+            and .info on successful write).
+
+    Returns:
+        str path to the written file on success, None if D-12 gated the write
+        or if D-9 FileExistsError fired (already exists / race loser / symlink
+        at target).
+
+    Raises:
+        OSError / PermissionError / etc. for filesystem errors OTHER than
+        FileExistsError (D-9: the universal collection-failure rule applies
+        to collector failures, NOT filesystem failures).
+    """
+    # D-12: writer-side gate. Defensive getattr in case `args` is a MagicMock
+    # without `command` set explicitly — yields None, which != 'run'.
+    if getattr(args, "command", None) != "run":
+        return None
+
+    # D-8: resolve hosts (cluster fleet OR local-only fallback).
+    hosts = _resolve_host_info_list(cluster_info)
+
+    # 02-02 adapter + grouping.
+    node_items = [node_dict_from_host(h) for h in hosts]
+    stanzas = group_by_fingerprint(node_items, _FINGERPRINT_KEYS, "quantity")
+
+    # D-7: largest quantity first, alphabetical cpu_model on ties.
+    stanzas.sort(key=lambda n: (-n["quantity"], n["chassis"]["cpu_model"]))
+
+    # 02-03 outer dict + stub splice.
+    dump = _build_outer_dict(stanzas)
+    dump = _splice_stub_lists(dump)
+
+    # D-11: canonical path.
+    systemname_path = (
+        Path(args.results_dir)
+        / args.mode
+        / args.orgname
+        / "systems"
+        / f"{args.systemname}.yaml"
+    )
+    systemname_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # D-9: atomic exclusive create. Kernel-level race-free. POSIX guarantees
+    # O_EXCL fails (EEXIST → FileExistsError) if the path resolves to anything
+    # pre-existing including a symlink — that covers T-2-01 (race) AND T-2-08
+    # (symlink-at-target) in one syscall.
+    try:
+        fd = os.open(
+            str(systemname_path),
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            _SYSTEMNAME_YAML_MODE,
+        )
+    except FileExistsError:
+        logger.debug(
+            f"systemname.yaml already exists at {systemname_path}; no-op "
+            f"(Phase 5 will own diff-and-fail)"
+        )
+        return None
+
+    # `os.fdopen` adopts the fd; closing the file object closes the fd.
+    # D-10 emit kwargs locked here.
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(
+            dump,
+            fh,
+            default_flow_style=False,
+            default_style='"',
+            explicit_start=True,
+            sort_keys=False,
+        )
+
+    logger.info(f"Wrote {systemname_path}")
+    return str(systemname_path)
