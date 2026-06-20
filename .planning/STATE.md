@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 02-02 complete (auto_generator pure-transformation core shipped)
+stopped_at: Plan 02-03 complete (auto_generator schema-aware blanks scaffolding shipped)
 last_updated: "2026-06-19T00:00:00.000Z"
-last_activity: 2026-06-19 -- Plan 02-02 complete (node_dict_from_host adapter + group_by_fingerprint helper)
+last_activity: 2026-06-19 -- Plan 02-03 complete (stub literals + _splice_stub_lists + _build_outer_dict)
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
-  percent: 40
+  completed_plans: 8
+  percent: 60
 ---
 
 # Project State
@@ -26,32 +26,32 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 ## Current Position
 
 Phase: 02 (first-run-write-of-partial-systemname-yaml) — EXECUTING
-Plan: 3 of 5
-Status: Executing Phase 02 — Wave 2 complete (Plan 02-02 shipped); Wave 3 (02-03) is next
-Last activity: 2026-06-19 -- Plan 02-02 complete (node_dict_from_host adapter + group_by_fingerprint helper)
+Plan: 4 of 5
+Status: Executing Phase 02 — Wave 3 complete (Plan 02-03 shipped); Wave 4 (02-04) is next
+Last activity: 2026-06-19 -- Plan 02-03 complete (stub literals + _splice_stub_lists + _build_outer_dict)
 
 Progress (Phase 1): [██████████] 100%
-Progress (Phase 2): [████░░░░░░] 40% (2/5 plans)
+Progress (Phase 2): [██████░░░░] 60% (3/5 plans)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 12
-- Average duration: ~29 min
-- Total execution time: ~193 min
+- Total plans completed: 13
+- Average duration: ~28 min
+- Total execution time: ~211 min
 
 **By Phase:**
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
 | 01 | 5 | - | - |
-| 02 | 2 | ~33 min | ~16 min |
+| 02 | 3 | ~51 min | ~17 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-03 (61min), 01-04 (~34min), 01-05 (~10min), 02-01 (~8min), 02-02 (~25min)
-- Trend: 02-02 is a single-module pure-transformation slice (one new source file, one new test file, two commits). Slightly above Slice-1 size because the adapter has more parametrized fallback paths (universal collection-failure rule applied across cpu/memory/os) plus a Pydantic .model_fields reflection test to lock against schema drift.
+- Last 5 plans: 01-04 (~34min), 01-05 (~10min), 02-01 (~8min), 02-02 (~25min), 02-03 (~18min)
+- Trend: 02-03 is a tightly-scoped append to 02-02's module — two `Final[dict]` constants + two pure functions + 14 new tests. RED was a clean ImportError; GREEN landed all 39 file tests on the first run. Comfortably below 02-02's size because the schema-aware blanks logic is much simpler than per-host HostInfo adaptation.
 
 *Updated after each plan completion*
 
@@ -93,10 +93,15 @@ Recent decisions affecting current work:
 - Execute 02-02: `auto_generator` shipped as a pure-transformation module — zero I/O, zero Pydantic construction (Pitfall 2 locked), four symbols (`_FINGERPRINT_KEYS`, `_get_dotted`, `group_by_fingerprint`, `node_dict_from_host`). Universal collection-failure rule applied uniformly: `cpu=None`, `os_release={}`, `memory.total=0`, `system=None` all map to `""` for the affected field without raising. PLAN.md two-task structure compressed to two commits per `<success_criteria>` mandate ("Slice 2 ships in two commits") — RED gate verifiably observed before any production code existed.
 - Execute 02-02: Surprise — the 271_652_882_432-byte parametrized memory test case is actually ~252.9965 GiB, not 252.5 GiB as the PLAN author cited; result is still 253 but comes from straight float arithmetic, not from banker's rounding at a true half-GiB boundary. Test docstring corrected.
 - Execute 02-02: Quoting-convention divergence — PLAN's `'NAME'/'VERSION_ID'` grep gate expects single-quoted Python strings; the project's convention (and surrounding modules) is double-quoted. Semantic intent (Pitfall 4 explicit key selection) is honored; the double-quoted equivalent grep returns the required count of 2.
+- Execute 02-03: D-3 stub literals (`_NETWORKING_STUB`, `_DRIVE_STUB`) land as `Final[dict]` module constants with TEST-time field-name parity reflection against `NetworkPort.model_fields` and `DriveInstance.model_fields` (minus optional `performance` per D-2 row 4). Any future schema field addition fires `test_stub_keys_match_pydantic_fields` — single-source-of-truth (D-1) locked at the constant level.
+- Execute 02-03: D-14 outer-dict scaffold locked: `_build_outer_dict` returns `{system_under_test: {clients: stanzas}}` with `solution`, `deployment`, `product_nodes`, `product_switches`, `total_rack_units`, `rack_power_supplies` ALL absent. Pitfall 1 honored — zero top-level Pydantic construction attempted; `schema_validator.validate_file()` naturally surfaces the missing required blocks as the intended "submitter has work to do" SER-02 UX.
+- Execute 02-03: `_splice_stub_lists` is idempotent (replace-not-append) and defensive on missing `system_under_test`/`clients` keys. Returns the input dict (mutates in place) — this is part of the contract so 02-04 callers can write `dump = _splice_stub_lists(_build_outer_dict(...))` even after re-grouping. Shallow `dict(_STUB)` copy is sufficient in Phase 02 (all stub values are immutable scalars except an empty `traffic` list, which no production code mutates in place); switch to `copy.deepcopy` if Phase 4 ever mutates the spliced lists in place.
+- Execute 02-03: PLAN grep-gate-vs-docstring divergence (same flavor as 02-02's quoting note). The D-14 forbidden-token grep uses `grep -v '^#'` which only strips column-0 hashes; multi-line docstrings and indented `# comment` lines pass through. AST-aware verification confirms 0 true code references — semantic D-14 intent fully honored. The docstring enumeration of omitted blocks is intentional for human readability and is NOT stripped to satisfy a flawed grep.
+- Execute 02-03: PLAN.md two-task structure compressed to two commits per `<success_criteria>` mandate (same decision as 02-02). RED gate verifiably observed (`ImportError: cannot import name '_DRIVE_STUB'`) before production code.
 
 ### Pending Todos
 
-- Phase 2 Wave 3: Plan 02-03 (stub literals + _splice_stub_lists + _build_outer_dict) — now unblocked by 02-02.
+- Phase 2 Wave 4: Plan 02-04 (write_systemname_yaml atomic orchestrator + D-7 sort) — now unblocked by 02-03. Owns the YAML I/O, atomic write, FileExistsError no-op, and the only call sites of `yaml.safe_dump` in the auto-generator subsystem.
 
 ### Blockers/Concerns
 
@@ -108,10 +113,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| Test env | `psutil` not installed in dev shell; `pytest tests/unit/test_benchmarks_*.py` and any test transitively importing `mlpstorage_py.utils` fails at collection time with `ModuleNotFoundError: No module named 'psutil'`. Pre-existing, not introduced by 02-02. Resolution: `pip install -e ".[test]"` once. | Deferred | 02-02 |
+| Test env | `psutil` not installed in dev shell; `pytest tests/unit/test_benchmarks_*.py` and any test transitively importing `mlpstorage_py.utils` fails at collection time with `ModuleNotFoundError: No module named 'psutil'`. Pre-existing, not introduced by 02-02 or 02-03. Resolution: `pip install -e ".[test]"` once. | Deferred | 02-02 |
 
 ## Session Continuity
 
 Last session: 2026-06-19T00:00:00.000Z
-Stopped at: Plan 02-02 complete — Wave 3 (02-03) is next
-Resume file: .planning/phases/02-first-run-write-of-partial-systemname-yaml/02-03-PLAN.md
+Stopped at: Plan 02-03 complete — Wave 4 (02-04) is next
+Resume file: .planning/phases/02-first-run-write-of-partial-systemname-yaml/02-04-PLAN.md
