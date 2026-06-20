@@ -373,15 +373,26 @@ class TestSymlinkSafety:
     """
 
     def test_copytree_call_uses_symlinks_true(self, tmp_path):
-        """Mock ``shutil.copytree`` and verify ``symlinks=True`` is passed."""
+        """Mock ``shutil.copytree`` and verify ``symlinks=True`` is passed.
+
+        Note: post WR-01, ``capture_code_image`` stages into a temp sibling
+        and atomically renames to ``dst``. The mock must therefore at least
+        create the directory it was called with, otherwise the follow-up
+        ``os.rename`` raises FileNotFoundError. We mimic real-copytree side
+        effects minimally — just enough to let the rename succeed.
+        """
         src_root = tmp_path / "src_root"
         src_root.mkdir()
         fake_pkg = _make_fake_src(src_root)
         rd = tmp_path / "rd"
         rd.mkdir()
 
+        def fake_copytree_create_dst(src, dst, **kwargs):
+            os.makedirs(dst, exist_ok=True)
+
         with mock.patch(
-            "mlpstorage_py.results_dir.code_image.shutil.copytree"
+            "mlpstorage_py.results_dir.code_image.shutil.copytree",
+            side_effect=fake_copytree_create_dst,
         ) as fake_copytree:
             capture_code_image(
                 str(rd), "closed", "Acme", "training", "run",

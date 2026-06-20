@@ -46,6 +46,7 @@ Refs: 01-canonical-layout-and-init / 01-05-PLAN.md Task 1; RESEARCH.md
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -130,8 +131,10 @@ def capture_code_image(
     dst = _destination_for(results_dir, mode, orgname, benchmark_type, command)
 
     # Idempotency: if the destination already exists, this is a re-entry
-    # (closed mode: same orgname; open mode: same benchmark+command). Trust
-    # the previously-written tree.
+    # (closed mode: same orgname; open mode: same benchmark+command). The
+    # atomic-rename pattern below ensures that ``dst.exists()`` implies
+    # "completed, trustworthy" — a torn copy from an SIGKILL'd previous
+    # run lives under a temp sibling, not at ``dst``. See WR-01.
     if dst.exists():
         return str(dst)
 
@@ -142,17 +145,41 @@ def capture_code_image(
     # final segment; everything above it must exist.
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    shutil.copytree(
-        src,
-        dst,
-        # T-1-CI2: preserve symlinks as symlinks in the destination — do
-        # NOT follow them. ``symlinks=True`` in ``shutil.copytree`` means
-        # "reproduce the link as a link"; ``symlinks=False`` would copy
-        # the link's TARGET contents, which is exactly the V12 ASVS
-        # threat we mitigate against (out-of-tree exfiltration).
-        symlinks=True,
-        ignore=shutil.ignore_patterns(*_EXCLUDE_DIRS, *_EXCLUDE_FILENAMES),
-    )
+    # WR-01: write-then-rename for crash-safe idempotency. Stage into a temp
+    # sibling first; ``os.rename`` to the final ``dst`` only after
+    # ``copytree`` returns success. ``os.rename`` is atomic on the same
+    # filesystem, so a successful rename means the final ``dst`` is
+    # guaranteed-complete. If the process dies during ``copytree``, the
+    # partial tree lives under the temp sibling — the next run does NOT
+    # see ``dst.exists()`` and re-copies cleanly. We also clean up the
+    # temp sibling on copy failure so we don't leak disk.
+    tmp = dst.parent / f".{dst.name}.tmp.{os.getpid()}"
+    # If a previous run died after we created tmp but before rename, clean
+    # it now so copytree (which requires its target NOT to exist) does not
+    # error out on the stale sibling.
+    if tmp.exists():
+        shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        shutil.copytree(
+            src,
+            tmp,
+            # T-1-CI2: preserve symlinks as symlinks in the destination — do
+            # NOT follow them. ``symlinks=True`` in ``shutil.copytree`` means
+            # "reproduce the link as a link"; ``symlinks=False`` would copy
+            # the link's TARGET contents, which is exactly the V12 ASVS
+            # threat we mitigate against (out-of-tree exfiltration).
+            symlinks=True,
+            ignore=shutil.ignore_patterns(*_EXCLUDE_DIRS, *_EXCLUDE_FILENAMES),
+        )
+    except BaseException:
+        # On any failure (OSError, KeyboardInterrupt, shutil.Error, ...) try
+        # to clean up the temp sibling so a follow-up run starts fresh.
+        # Best-effort: if even cleanup fails, prefer to surface the original
+        # exception, not the cleanup exception.
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    # Atomic on same filesystem — after this returns, ``dst`` is complete.
+    os.rename(tmp, dst)
     return str(dst)
 
 
