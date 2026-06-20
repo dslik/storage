@@ -271,10 +271,23 @@ class TestBenchmarkHook:
 
 
 class TestSymlinkSafety:
-    """T-1-CI2: capture uses ``symlinks=False`` (does NOT follow symlinks)."""
+    """T-1-CI2: capture uses ``symlinks=True`` so symlinks are preserved as
+    symlinks (NOT followed) — out-of-tree targets cannot leak into the
+    results-dir.
 
-    def test_copytree_call_uses_symlinks_false(self, tmp_path):
-        """Mock ``shutil.copytree`` and verify ``symlinks=False`` is passed."""
+    Note on Python ``shutil.copytree`` semantics (counter-intuitive):
+
+    * ``symlinks=True``  → symbolic links in the source tree are reproduced
+                            as symbolic links in the destination tree (their
+                            targets are NOT read/copied). This is the V12
+                            mitigation we want.
+    * ``symlinks=False`` → the **contents** of files pointed to by symbolic
+                            links are copied. Out-of-tree targets get
+                            materialized. This is what we want to AVOID.
+    """
+
+    def test_copytree_call_uses_symlinks_true(self, tmp_path):
+        """Mock ``shutil.copytree`` and verify ``symlinks=True`` is passed."""
         src_root = tmp_path / "src_root"
         src_root.mkdir()
         fake_pkg = _make_fake_src(src_root)
@@ -289,11 +302,59 @@ class TestSymlinkSafety:
                 src_override=str(fake_pkg),
             )
         assert fake_copytree.called, "copytree must be invoked on first capture"
-        # symlinks=False must be passed.
+        # symlinks=True must be passed — preserves symlinks as symlinks so
+        # out-of-tree targets are NOT followed.
         kwargs = fake_copytree.call_args.kwargs
-        assert kwargs.get("symlinks") is False, (
-            "shutil.copytree must be invoked with symlinks=False (T-1-CI2)"
+        assert kwargs.get("symlinks") is True, (
+            "shutil.copytree must be invoked with symlinks=True (T-1-CI2): "
+            "preserve symlinks as symlinks so out-of-tree targets cannot leak."
         )
         assert kwargs.get("ignore") is not None, (
             "shutil.copytree must be invoked with an ignore predicate"
+        )
+
+    def test_outoftree_symlink_target_is_not_copied(self, tmp_path):
+        """End-to-end: an in-tree symlink pointing at an out-of-tree file
+        must NOT cause that file's contents to be materialized into the
+        results-dir. The destination entry must be a symlink (broken or
+        otherwise) — its target's bytes must not be read.
+
+        This is the concrete T-1-CI2 invariant the threat model requires.
+        """
+        # Out-of-tree secret file — would-be exfiltration target.
+        secret = tmp_path / "out_of_tree_secret.txt"
+        secret.write_text("SECRET-CONTENTS\n")
+
+        # In-tree source package with a symlink pointing at the secret.
+        src_root = tmp_path / "src_root"
+        src_root.mkdir()
+        pkg = src_root / "fake_pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("# fake init\n")
+        link_path = pkg / "leaky_link.txt"
+        os.symlink(secret, link_path)
+        # Sanity: the symlink is set up so that following it yields the secret.
+        assert os.path.islink(link_path)
+        assert link_path.read_text() == "SECRET-CONTENTS\n"
+
+        rd = tmp_path / "rd"
+        rd.mkdir()
+
+        dst = capture_code_image(
+            str(rd), "closed", "Acme", "training", "run",
+            src_override=str(pkg),
+        )
+        dst_link = Path(dst) / "leaky_link.txt"
+        # The destination entry must exist AS A SYMLINK — not as a regular
+        # file containing the secret's bytes.
+        assert dst_link.is_symlink(), (
+            "T-1-CI2: in-tree symlink must be preserved as a symlink in the "
+            "destination, not materialized as a regular file with the "
+            "out-of-tree target's contents."
+        )
+        # Belt-and-suspenders: even if the link still resolves to the secret
+        # on this filesystem, the on-disk entry itself must not be a regular
+        # file holding the secret bytes.
+        assert not (dst_link.is_file() and not dst_link.is_symlink()), (
+            "destination link must not be a plain file copy of the secret"
         )
