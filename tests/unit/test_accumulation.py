@@ -429,6 +429,7 @@ class TestPreviewBenchmarkAccumulation:
         from types import SimpleNamespace
 
         from mlpstorage_py.config import BENCHMARK_TYPES as _BT
+        from mlpstorage_py.errors import ConfigurationError
         from mlpstorage_py.rules.utils import generate_output_location
 
         fake_benchmark = SimpleNamespace(
@@ -442,7 +443,7 @@ class TestPreviewBenchmarkAccumulation:
                 # no vdb_engine
             ),
         )
-        with pytest.raises(ValueError, match="VectorDB engine is required"):
+        with pytest.raises(ConfigurationError, match="VectorDB engine is required"):
             generate_output_location(fake_benchmark, datetime_str="20250111_160000")
 
     def test_vectordb_runs_distinguished_by_engine(self, tmp_path, mock_logger):
@@ -494,6 +495,7 @@ class TestPreviewBenchmarkAccumulation:
         from types import SimpleNamespace
 
         from mlpstorage_py.config import BENCHMARK_TYPES as _BT
+        from mlpstorage_py.errors import ConfigurationError
         from mlpstorage_py.rules.utils import generate_output_location
 
         fake_benchmark = SimpleNamespace(
@@ -507,7 +509,7 @@ class TestPreviewBenchmarkAccumulation:
                 # no model
             ),
         )
-        with pytest.raises(ValueError, match="Model is required for kv_cache"):
+        with pytest.raises(ConfigurationError, match="Model is required for kv_cache"):
             generate_output_location(fake_benchmark, datetime_str="20250111_170000")
 
     def test_kvcache_runs_distinguished_by_model(self, tmp_path, mock_logger):
