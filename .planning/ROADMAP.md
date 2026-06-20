@@ -69,7 +69,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   6. The `datagen` command does NOT touch the systemname.yaml — neither writes nor diffs (datagen client fleet may legitimately differ from the run fleet).
   7. Per the universal collection-failure rule, any unreadable source (e.g., the test environment's `/proc/cpuinfo` is mocked to return a parse error) yields empty strings for the affected fields; `datagen` / `run` still completes.
 
-**Plans:** TBD
+**Plans:** 1/5 plans complete
+**Wave 1**
+
+- [x] 02-01-PLAN.md — Slice 1: HostCPUInfo.num_sockets data-model extension (D-16; COLL-01 prep)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 02-02-PLAN.md — Slice 2: node_dict_from_host adapter + group_by_fingerprint helper (COLL-01, COLL-02, SER-01; D-4, D-5, D-6)
+
+**Wave 3** *(blocked on Wave 2; same-file sequencing with 02-02)*
+
+- [ ] 02-03-PLAN.md — Slice 3: stub literals + _splice_stub_lists + _build_outer_dict (SER-02; D-3, D-14)
+
+**Wave 4** *(blocked on Waves 2 + 3)*
+
+- [ ] 02-04-PLAN.md — Slice 4: write_systemname_yaml atomic orchestrator (LIFE-01, SER-01..03; D-7..D-12, T-2-01/04/08)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 02-05-PLAN.md — Slice 5: Benchmark.run() hook + integration tests + kvcache/vectordb regression (LIFE-01 end-to-end)
 
 ### Phase 3: Chassis Model + Networking Coverage
 
@@ -128,7 +147,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Canonical Layout & Init | 5/5 | Complete    | 2026-06-20 |
-| 2. First-Run Write of Partial systemname.yaml | 0/TBD | Not started | - |
+| 2. First-Run Write of Partial systemname.yaml | 1/5 | In progress | - |
 | 3. Chassis Model + Networking Coverage | 0/TBD | Not started | - |
 | 4. Sysctl, Environment, and Drives Coverage | 0/TBD | Not started | - |
 | 5. Logical Diff Lifecycle + Capacity Gate | 0/TBD | Not started | - |

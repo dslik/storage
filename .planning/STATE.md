@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 01-05-PLAN.md (per-mode code-image + canonical-layout E2E — LAY-06/07/08); Phase 1 SHIPS
-last_updated: "2026-06-20T02:25:38.559Z"
-last_activity: 2026-06-20
+status: executing
+stopped_at: Plan 02-01 complete (HostCPUInfo.num_sockets shipped)
+last_updated: "2026-06-19T00:00:00.000Z"
+last_activity: 2026-06-19 -- Plan 02-01 complete (HostCPUInfo.num_sockets data-model extension)
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 5
-  completed_plans: 5
-  percent: 20
+  total_plans: 10
+  completed_plans: 6
+  percent: 30
 ---
 
 # Project State
@@ -21,35 +21,37 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-18)
 
 **Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
-**Current focus:** Phase 02 — first-run write of partial systemname.yaml (next)
+**Current focus:** Phase 02 — first-run-write-of-partial-systemname-yaml
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Phase 01 complete — ready for Phase 02 kickoff
-Last activity: 2026-06-20
+Phase: 02 (first-run-write-of-partial-systemname-yaml) — EXECUTING
+Plan: 2 of 5
+Status: Executing Phase 02 — Wave 1 complete (Plan 02-01 shipped)
+Last activity: 2026-06-19 -- Plan 02-01 complete (HostCPUInfo.num_sockets data-model extension)
 
 Progress (Phase 1): [██████████] 100%
+Progress (Phase 2): [██░░░░░░░░] 20% (1/5 plans)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 10
-- Average duration: ~32 min
-- Total execution time: ~160 min
+- Total plans completed: 11
+- Average duration: ~30 min
+- Total execution time: ~168 min
 
 **By Phase:**
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
 | 01 | 5 | - | - |
+| 02 | 1 | ~8 min | ~8 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-01 (~34min), 01-02, 01-03 (61min), 01-04 (~34min), 01-05 (~10min)
-- Trend: 01-05 was integration-test heavy with minimal source changes — short execution
+- Last 5 plans: 01-02, 01-03 (61min), 01-04 (~34min), 01-05 (~10min), 02-01 (~8min)
+- Trend: 02-01 was a tiny additive data-model widening (3 lines of production code + 1 test class); short execution as expected for Slice 1 prep work.
 
 *Updated after each plan completion*
 
@@ -87,10 +89,11 @@ Recent decisions affecting current work:
 - Execute 01-05: Exclude set kept inline in `code_image.py` (`_EXCLUDE_DIRS`, `_EXCLUDE_FILENAMES`) rather than imported from `submission_checker.constants` — avoids a circular-import surface and lets the two consumers (the on-disk image and the reader-side MD5 checksum) evolve independently.
 - Execute 01-05: `capture_code_image` exposes `src_override` as a test-only kw-only parameter so the hermetic exclude test can construct a fake source tree under tmp_path. Production callers (Benchmark.__init__) ALWAYS pass None, which resolves to `Path(mlpstorage_py.__file__).parent`.
 - Execute 01-05: Integration test exercises helpers directly (run_init → capture_code_image → DirectoryCheck) rather than full DLIO/MPI runs — dev-shell-compatible AND tests exactly what Phase 1 ships (the filesystem-layout surface). Full-DLIO E2E remains the operator-side manual smoke check.
+- Execute 02-01: D-16 lands as a 3-line additive diff to `mlpstorage_py/rules/models.py` (field + from_dict kwarg + from_collected_data kwarg). `summarize_cpuinfo` already produces `num_sockets` at `cluster_collector.py:826` (len(physical_ids) else 1); this plan simply stops `HostInfo.from_collected_data` from dropping it. Assumption A4 confirmed: every existing HostCPUInfo caller uses keyword construction, so the additive default is a pure no-op for all current sites. Test placement = `tests/unit/test_cluster_collector.py::TestHostCPUInfoNumSockets` (canonical home — TimeSeriesSample/TimeSeriesData tests already live here, so rules/models dataclass tests stay co-located).
 
 ### Pending Todos
 
-None — Phase 1 ships.
+- Phase 2 Wave 2: Plan 02-02 (node_dict_from_host adapter + group_by_fingerprint helper) — now unblocked by 02-01.
 
 ### Blockers/Concerns
 
@@ -106,6 +109,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-19 (resumed)
-Stopped at: Completed 01-05-PLAN.md (per-mode code-image + canonical-layout E2E — LAY-06/07/08); Phase 1 SHIPS
-Resume file: .planning/phases/02-first-run-systemname-yaml/02-CONTEXT.md (or `/gsd-transition` → `/gsd-discuss-phase 2`)
+Last session: 2026-06-19T00:00:00.000Z
+Stopped at: Plan 02-01 complete — Wave 2 (02-02) is next
+Resume file: .planning/phases/02-first-run-write-of-partial-systemname-yaml/02-02-PLAN.md
