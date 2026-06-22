@@ -6,11 +6,44 @@ components for calculating requirements and generating output paths.
 """
 
 import os
+import re
 import sys
 from typing import Tuple, List, Optional
 
 from mlpstorage_py.config import BENCHMARK_TYPES, DATETIME_STR
 from mlpstorage_py.errors import ConfigurationError, ErrorCode
+
+# Env-var names used by the CLI dispatch layer to source orgname/systemname.
+# generate_output_location itself does NOT read these; values are threaded in
+# via benchmark.args (populated upstream by main._main_impl()'s sentinel-
+# resolution gate). The names are exported here as a single source of truth
+# for the env-var spelling.
+MLPSTORAGE_ORGNAME_ENVVAR = "MLPSTORAGE_ORGNAME"
+MLPSTORAGE_SYSTEMNAME_ENVVAR = "MLPSTORAGE_SYSTEMNAME"
+
+# Each path segment appended to results_dir by generate_output_location must
+# match this — POSIX-safe alphanumeric plus '.', '_', '-' — and must not be
+# '.' or '..'. Blocks path-traversal ('../') and absolute-path resets ('/')
+# at the trust boundary between args/env-var input and os.path.join, even
+# for callers that bypass the CLI's argparse choices= validation.
+_SAFE_PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _check_safe_path_component(name: str, value: str) -> None:
+    """Raise ValueError if value is not safe as a single path segment.
+
+    Caller handles None/empty upstream as a separate "missing required arg"
+    failure mode; this helper assumes value is a non-empty string.
+    """
+    if value in (".", ".."):
+        raise ValueError(
+            f"{name}={value!r} is not a safe path component (reserved name)"
+        )
+    if not _SAFE_PATH_COMPONENT_RE.match(value):
+        raise ValueError(
+            f"{name}={value!r} is not a safe path component "
+            f"(must match {_SAFE_PATH_COMPONENT_RE.pattern})"
+        )
 
 
 def calculate_training_data_size(args, cluster_information, dataset_params, reader_params, logger,
@@ -119,13 +152,26 @@ def calculate_training_data_size(args, cluster_information, dataset_params, read
     return int(required_file_count), int(required_subfolders_count), int(total_disk_bytes)
 
 
-def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
+def generate_output_location(
+    benchmark,
+    datetime_str=None,
+    *,
+    orgname: Optional[str] = None,
+    systemname: Optional[str] = None,
+    **kwargs,
+) -> str:
     """
     Generate the canonical Rules.md §2.1-shaped output path for benchmark results.
 
     Canonical shape (LAY-05, Phase 1 Plan 01-03):
 
         <results-dir>/<mode>/<orgname>/results/<systemname>/<benchmark>/<model>/<command>/<datetime>/
+
+    Vector-database results include the index_type between engine and command
+    (closed/open results for AISAQ vs DISKANN/HNSW must live in separate
+    trees per Rules.md §2.1.27):
+
+        <results-dir>/<mode>/<orgname>/results/<systemname>/vector_database/<engine>/<index>/<command>/<datetime>/
 
     Checkpointing intentionally omits the <command> segment to preserve the
     pre-refactor layout of checkpointing runs:
@@ -138,11 +184,17 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
     main._main_impl()'s sentinel-resolution gate (Slice 4); the universal
     --systemname plumbing (Slice 3 / this plan) populates args.systemname.
 
+    Every path segment appended to results_dir is validated via
+    _check_safe_path_component() to block path-traversal ('../') and
+    absolute-path resets ('/') at the trust boundary, even for callers that
+    bypass the CLI's argparse choices= validation.
+
     Args:
         benchmark: Benchmark instance. Expected attributes:
             - benchmark.BENCHMARK_TYPE — one of BENCHMARK_TYPES enum values.
             - benchmark.args.results_dir, args.mode, args.orgname, args.systemname.
-            - benchmark.args.{model | vdb_engine}, args.command (per BENCHMARK_TYPE).
+            - benchmark.args.{model | vdb_engine[, vdb_index]}, args.command
+              (per BENCHMARK_TYPE).
         datetime_str: Optional datetime string for the run; defaults to
             mlpstorage_py.config.DATETIME_STR.
         **kwargs: Reserved for forward compatibility; currently unused.
@@ -157,9 +209,10 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
             os.makedirs collapses to a different shape that breaks
             submission-checker layout invariants). Same for empty orgname
             (Pitfall 1 defense-in-depth: orgname must be resolved upstream).
-        ValueError: If a per-benchmark-type required field is missing:
+        ValueError: If a per-benchmark-type required field is missing or if
+            any path component fails _check_safe_path_component() validation:
             - training/checkpointing: args.model.
-            - vector_database: args.vdb_engine.
+            - vector_database: args.vdb_engine, args.vdb_index (or .index_type).
             - kv_cache: args.model.
     """
     if datetime_str is None:
@@ -194,6 +247,15 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
             code=ErrorCode.CONFIG_MISSING_REQUIRED,
         )
 
+    # Validate every user-supplied path segment that goes into the base
+    # prefix and per-type tail. Blocks path-traversal ('../') and absolute-
+    # path resets ('/') at the trust boundary (args/env-var → os.path.join),
+    # even for callers that bypass the CLI's argparse choices= validation.
+    _check_safe_path_component("mode", args.mode)
+    _check_safe_path_component("orgname", orgname)
+    _check_safe_path_component("systemname", systemname)
+    _check_safe_path_component("datetime_str", datetime_str)
+
     # Shared Rules.md §2.1 prefix for every benchmark type.
     base = os.path.join(
         args.results_dir,
@@ -215,6 +277,8 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
                 suggestion="Pass ``--model`` (or ``-m``) on the CLI.",
                 code=ErrorCode.CONFIG_MISSING_REQUIRED,
             )
+        _check_safe_path_component("model", args.model)
+        _check_safe_path_component("command", args.command)
         return os.path.join(
             base,
             benchmark.BENCHMARK_TYPE.name,
@@ -231,10 +295,28 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
                 suggestion="Pass ``--vdb-engine`` on the CLI.",
                 code=ErrorCode.CONFIG_MISSING_REQUIRED,
             )
+        # Results split by index_type because AISAQ is not comparable to
+        # DISKANN/HNSW — they must live in separate on-disk trees so
+        # submission validation and downstream tooling never collate them
+        # (per Rules.md §2.1.27).
+        vdb_index = (
+            getattr(args, "vdb_index", None)
+            or getattr(args, "index_type", None)
+        )
+        if not vdb_index:
+            raise ConfigurationError(
+                "VectorDB index is required for output location.",
+                suggestion="Pass ``--vdb-index`` on the CLI.",
+                code=ErrorCode.CONFIG_MISSING_REQUIRED,
+            )
+        _check_safe_path_component("vdb_engine", engine)
+        _check_safe_path_component("vdb_index", vdb_index)
+        _check_safe_path_component("command", args.command)
         return os.path.join(
             base,
             benchmark.BENCHMARK_TYPE.name,
             engine,
+            vdb_index,
             args.command,
             datetime_str,
         )
@@ -251,6 +333,8 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
                 ),
                 code=ErrorCode.CONFIG_MISSING_REQUIRED,
             )
+        _check_safe_path_component("model", model)
+        _check_safe_path_component("command", args.command)
         return os.path.join(
             base,
             benchmark.BENCHMARK_TYPE.name,
@@ -266,6 +350,7 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs) -> str:
                 suggestion="Pass ``--model`` (or ``-m``) on the CLI.",
                 code=ErrorCode.CONFIG_MISSING_REQUIRED,
             )
+        _check_safe_path_component("model", args.model)
         # Checkpointing intentionally omits the <command> segment; preserves
         # the pre-refactor layout shape that downstream submission-checkers
         # already validate against.

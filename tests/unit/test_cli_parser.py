@@ -198,6 +198,16 @@ class TestUpdateArgsAndConfig:
         update_args(args)
         assert args.params == ['key=val1', 'key=val2']
 
+    def test_update_args_rejects_space_separated_params(self):
+        """update_args should fail with a clear error when --param uses space instead of '='. (issue #469)"""
+        # Simulates `--param dataset.num_files_train 35000` — argparse with
+        # nargs="+" captures both tokens; without validation the missing '='
+        # surfaces later as "not enough values to unpack".
+        args = argparse.Namespace(params=[['dataset.num_files_train', '35000']])
+        with pytest.raises(SystemExit) as excinfo:
+            update_args(args)
+        assert excinfo.value.code == EXIT_CODE.INVALID_ARGUMENTS
+
     def test_yaml_config_overrides(self):
         """apply_yaml_config_overrides should update namespace attributes safely."""
         mock_yaml_content = """
@@ -220,6 +230,26 @@ class TestUpdateArgsAndConfig:
         assert updated_args.duration == 999
         assert updated_args.hosts == ['node1', 'node2']  # Special yaml handling for hosts
 
+    def test_update_args_allows_none_hosts_for_single_node(self):
+        """Optional --hosts=None must remain valid for single-node benchmarks."""
+        args = argparse.Namespace(
+            hosts=None,
+            num_client_hosts=None,
+        )
+
+        update_args(args)
+
+        assert args.hosts is None
+        assert args.num_client_hosts is None
+
+    def test_update_args_allows_missing_num_client_hosts_with_none_hosts(self):
+        """A namespace with hosts=None must not evaluate len(None)."""
+        args = argparse.Namespace(hosts=None)
+
+        update_args(args)
+
+        assert args.hosts is None
+        assert not hasattr(args, "num_client_hosts")
 
 # =====================================================================
 # 5. args.mode and args.benchmark attributes

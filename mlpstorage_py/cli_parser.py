@@ -332,6 +332,22 @@ def update_args(args):
     # Check for list of lists in params and flatten them
     if hasattr(args, 'params') and args.params:
         flattened_params = [item for sublist in args.params for item in sublist]
+        # Each token must be of the form KEY=VALUE. argparse with nargs="+"
+        # silently accepts space-separated pairs (--param KEY VALUE), which
+        # used to surface as "not enough values to unpack" inside the DLIO
+        # param processor (issue #469). Catch it here with a message that
+        # actually names the offending token and the right syntax.
+        bad = [tok for tok in flattened_params if '=' not in tok]
+        if bad:
+            print(
+                "Error: --params expects KEY=VALUE tokens joined with '=' "
+                "(no space).\n"
+                f"  Offending token(s): {bad}\n"
+                "  Wrong: --param dataset.num_files_train 35000\n"
+                "  Right: --param dataset.num_files_train=35000\n"
+                "  Multiple overrides: --params A=1 B=2 C=3"
+            )
+            sys.exit(EXIT_CODE.INVALID_ARGUMENTS)
         setattr(args, 'params', flattened_params)
 
     if hasattr(args, 'mpi_params') and args.mpi_params:
@@ -374,8 +390,8 @@ def update_args(args):
             sys.exit(EXIT_CODE.INVALID_ARGUMENTS)
         args.hosts = normalized
 
-    if hasattr(args, 'hosts') and getattr(args, 'num_client_hosts', None) is None:
-        setattr(args, "num_client_hosts", len(args.hosts))
+        if getattr(args, 'num_client_hosts', None) is None:
+            setattr(args, "num_client_hosts", len(args.hosts))
 
 
 if __name__ == "__main__":

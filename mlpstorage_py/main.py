@@ -42,6 +42,7 @@ from mlpstorage_py.validation_helpers import validate_benchmark_environment
 from mlpstorage_py.progress import progress_context
 from mlpstorage_py.results_dir import resolve_orgname
 from mlpstorage_py.results_dir.errors import ResultsDirNotInitializedError
+from mlpstorage_py.submission_checker.tools.code_image import capture_or_verify_code_image, CodeImageError
 
 logger = setup_logging("MLPerfStorage")
 signal_received = False
@@ -209,6 +210,18 @@ def run_benchmark(args, run_datetime):
             validate_benchmark_environment(args, logger=logger)
     else:
         logger.warning("Skipping environment validation (--skip-validation flag)")
+
+    # Capture/verify code image BEFORE benchmark instantiation (Phase 2 D-07).
+    # Helper internally gates on (args.mode, args.command) per D-10, so it is
+    # safe to call unconditionally — non-result-generating commands no-op.
+    # Helper also owns ALL env-var reading and validation (POSIX regex + inline
+    # `.`/`..` path-traversal guard) — see Plan 02 REVIEWS.md consensus finding.
+    with progress_context(
+        "Capturing or verifying code image...",
+        total=None,
+        logger=logger
+    ) as (update, set_desc):
+        capture_or_verify_code_image(args, os.environ, logger)
 
     program_switch_dict = dict(
         training=TrainingBenchmark,
@@ -502,6 +515,15 @@ def main():
             logger.info(f"Suggestion: {e.suggestion}")
         return EXIT_CODE.FAILURE
 
+    except CodeImageError as e:
+        # Phase 2 D-22: code-image capture/verify failures (incl. MissingHashFile,
+        # MalformedHashFile, hash-mismatch CodeImageError) map to a dedicated
+        # exit code distinct from generic FAILURE so CI/scripts can detect them.
+        # CodeImageError is NOT a MLPStorageException subclass, so it requires
+        # an explicit handler ordered BEFORE the MLPStorageException catch-all.
+        logger.error(str(e))
+        return EXIT_CODE.CODE_IMAGE_ERROR
+
     except MLPStorageException as e:
         # Catch-all for any other custom exceptions
         logger.error(str(e))
@@ -522,8 +544,12 @@ def main():
         logger.error(f"Unexpected error: {str(e)}")
         logger.error(format_error('INTERNAL_ERROR', error=str(e)))
 
-        # Show traceback if in debug mode
-        if MLPS_DEBUG:
+        # Show traceback if in debug mode. MLPS_DEBUG is the env-var path
+        # (read at import time); also check `--debug` directly via sys.argv
+        # so the CLI flag emits a trace even though `args` is not in scope
+        # here. `--debug` is store_true so a bare-token check suffices.
+        debug_cli = '--debug' in sys.argv
+        if MLPS_DEBUG or debug_cli:
             logger.debug("Stack trace:")
             traceback.print_exc()
         else:
