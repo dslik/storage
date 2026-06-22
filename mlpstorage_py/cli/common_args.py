@@ -20,17 +20,29 @@ from mlpstorage_py.config import (
 class MLPStorageHelpFormatter(argparse.HelpFormatter):
     """Argparse formatter for leaf-command help output.
 
-    Positionals (file|object, model, command) are already present in the
-    command path the user typed — the same way ``closed``, ``training``, and
-    ``run`` live in the _prog prefix and never appear again.  This formatter:
+    Tree-dispatch positionals (``file|object``, subparser selectors like
+    ``closed``/``training``/``run``) are already present in the command path
+    the user typed — listing them again is noise. This formatter:
 
-    1. Excludes positionals from both the usage line and the detailed sections.
-    2. Lists required options before optional options (both alphabetically)
+    1. Excludes tree-dispatch positionals (those with ``choices`` set —
+       ``data_access_protocol`` and ``_SubParsersAction``) from both the
+       usage line and the detailed sections.
+    2. KEEPS user-supplied positionals (those with ``choices is None`` —
+       e.g. ``validate input``, ``init orgname``, ``init path``) so the
+       user can discover what runtime values the command requires.
+    3. Lists required options before optional options (both alphabetically)
        in the usage line and in every argument group.
     """
 
     @staticmethod
     def _sort_opts(actions):
+        # User-supplied positionals (no option_strings, no choices) — keep in
+        # registration order at the front so argparse routes them into the
+        # positional-arguments section and lists them ahead of options in usage.
+        user_positionals = [
+            a for a in actions
+            if not a.option_strings and a.choices is None
+        ]
         required = sorted(
             [a for a in actions if a.option_strings and a.required],
             key=lambda a: a.option_strings[0].lstrip('-').lower()
@@ -39,7 +51,7 @@ class MLPStorageHelpFormatter(argparse.HelpFormatter):
             [a for a in actions if a.option_strings and not a.required],
             key=lambda a: a.option_strings[0].lstrip('-').lower()
         )
-        return required + optional
+        return user_positionals + required + optional
 
     def _format_usage(self, usage, actions, groups, prefix):
         return super()._format_usage(
@@ -47,7 +59,6 @@ class MLPStorageHelpFormatter(argparse.HelpFormatter):
         )
 
     def add_arguments(self, actions):
-        # Positionals are suppressed — they are already consumed in the command path.
         super().add_arguments(self._sort_opts(actions))
 
 
