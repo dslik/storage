@@ -408,7 +408,11 @@ class TestPreviewBenchmarkAccumulation:
     as the distinguishing component in path and metadata."""
 
     def test_vectordb_path_includes_engine_and_index(self, tmp_path):
-        """Path is vector_database/<engine>/<index>/<command>/<datetime>."""
+        """Path is vector_database/<engine>/<index_type>/<command>/<datetime>.
+
+        The index directory uses the UPPERCASE token (e.g. "DISKANN"),
+        matching args.vdb_index / args.index_type.
+        """
         from types import SimpleNamespace
 
         from mlpstorage_py.config import BENCHMARK_TYPES as _BT
