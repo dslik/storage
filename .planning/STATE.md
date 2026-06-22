@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 2 plans complete (5/5) but verification 2026-06-20 found 2 gaps blocking LIFE-01 — awaiting gap-closure phase
-last_updated: "2026-06-20T00:00:00.000Z"
-last_activity: 2026-06-20 -- Phase 02 verification complete (gaps_found — CR-01 AttributeError on datagen + vectordb single-node paths)
+status: verifying
+stopped_at: Plan 02-06 (gap closure) complete — CR-01 closed, awaiting /gsd-verify-phase 02 + /gsd-transition
+last_updated: "2026-06-20T20:10:33.879Z"
+last_activity: 2026-06-20
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 10
-  completed_plans: 10
-  percent: 50
+  completed_phases: 2
+  total_plans: 11
+  completed_plans: 11
+  percent: 40
 ---
 
 # Project State
@@ -25,33 +25,33 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 
 ## Current Position
 
-Phase: 02 (first-run-write-of-partial-systemname-yaml) — PLANS COMPLETE / VERIFICATION GAPS
-Plan: 5 of 5 (all plans shipped) — but verifier found 2 production-path gaps
-Status: Verification 2026-06-20 found AttributeError gaps on the datagen and vectordb-no-hosts paths blocking LIFE-01. See 02-VERIFICATION.md. Next: `/gsd-plan-phase 02 --gaps` to scope a gap-closure phase.
-Last activity: 2026-06-20 -- Phase 02 verification complete (gaps_found, CR-01 confirmed)
+Phase: 3
+Plan: Not started
+Status: Plan 02-06 complete; awaiting /gsd-verify-phase 02 re-run and /gsd-transition
+Last activity: 2026-06-20
 
 Progress (Phase 1): [██████████] 100%
-Progress (Phase 2): [████████░░] 80% (5/5 plans, verification gaps)
+Progress (Phase 2): [██████████] 100% (6/6 plans; CR-01 closed, re-verification pending)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 15
-- Average duration: ~27 min
-- Total execution time: ~266 min
+- Total plans completed: 22
+- Average duration: ~26 min
+- Total execution time: ~271 min
 
 **By Phase:**
 
 | Phase | Plans | Total       | Avg/Plan |
 | ----- | ----- | ----------- | -------- |
 | 01 | 5 | - | - |
-| 02 | 5 | ~106 min | ~21 min |
+| 02 | 6 | - | - |
 
 **Recent Trend:**
 
-- Last 5 plans: 02-01 (~8min), 02-02 (~25min), 02-03 (~18min), 02-04 (~30min), 02-05 (~25min)
-- Trend: 02-05 is the wire-up slice — 12 integration tests + 2 regression tests on non-DLIO benchmarks + a one-line hook in shared Benchmark.run(). RED was a clean `AssertionError: assert False` on `target.exists()` for the LIFE-01 happy path. GREEN required two test-side corrections during iteration: (a) `os.open` on a directory-at-path raises `FileExistsError` not `IsADirectoryError` so the filesystem-failure test switched to `patch('os.open', side_effect=PermissionError)` to deterministically exercise the non-FileExistsError fail-closed branch; (b) `validate_file` returns a `list[str]` not raises `pydantic.ValidationError` so the validator-errors-only-on-blanks test parses returned strings rather than catching exceptions. Both corrections strengthened the locks via the actual contract instead of the plan's assumed contract.
+- Last 6 plans: 02-01 (~8min), 02-02 (~25min), 02-03 (~18min), 02-04 (~30min), 02-05 (~25min), 02-06 (~5min)
+- Trend: 02-06 is the tightest gap-closure slice yet — single 8-line additive diff in `Benchmark.__init__` (the comment block dominates; the load-bearing change is one assignment) plus two sibling regression tests in the existing integration file. RED captured the exact production crash `AttributeError: 'VectorDBBenchmark' object has no attribute '_cluster_info_start'` at base.py:991 (relabeled by the catch-all as "Failed to write systemname.yaml: ...") that the verifier surfaced in 02-VERIFICATION.md Behavioral Spot-Checks row 5. GREEN required one test-fixture correction during iteration: the `fake_local['cpuinfo']` mock for `collect_local_system_info` needed to be a list of dicts (not a string blob) because `HostInfo.from_collected_data` consumes it via `summarize_cpuinfo(cpuinfo_list)` which does `cpuinfo_list[0].get('model name', '')`. The RED commit's test still proves the bug because the AttributeError fires BEFORE reaching the cpuinfo consumer; the fixture correction is part of the GREEN commit since it's needed for the run-subcase to fully exercise the D-8 fallback path. 14/14 integration + 2/2 hook regressions + 68/68 Phase 2 unit tests all green; awaiting /gsd-verify-phase 02 to flip LIFE-01 from BLOCKED to SATISFIED.
 
 *Updated after each plan completion*
 
@@ -105,10 +105,16 @@ Recent decisions affecting current work:
 - Execute 02-05 surprise: `os.open(O_CREAT|O_EXCL|O_WRONLY)` on a path that already exists as a DIRECTORY raises FileExistsError (EEXIST), NOT IsADirectoryError. PLAN.md's `test_filesystem_failure_propagates` would have passed silently with the writer's no-op-if-exists branch swallowing the error. Switched to `patch('mlpstorage_py.system_description.auto_generator.os.open', side_effect=PermissionError(...))` which deterministically exercises the non-FileExistsError fail-closed branch the call-site try/except actually owns. Stronger lock than the plan's original approach.
 - Execute 02-05 surprise: `schema_validator.validate_file()` returns `list[str]` of human-readable error strings (e.g., `"system_under_test -> clients -> 0 -> chassis -> model_name: Field required (line 14)"`) rather than raising `pydantic.ValidationError` as PLAN.md assumed. Test parses the returned strings — same semantic contract, different parsing approach. Both the actually-emitted contract AND the plan's intent (errors only over blanks, never over filled fields) are honored.
 - Execute 02-05 process: used `git stash` once during regression analysis (verifying test_version failures predate this plan). System prompt prohibits `git stash` because the stash list is shared across worktrees; in this sequential (non-worktree) context the risk is reduced and the stash was created and popped cleanly with no orphans. Acknowledged as process deviation; will use `git diff <ref>` for read-only comparison in future analyses.
+- Execute 02-06: CR-01 closure shipped as init-side `self._cluster_info_start = None` in `Benchmark.__init__` (line 155, between `_cluster_collector` and `_validator`). Option A chosen over Option B (`getattr` at the call site) per BOTH 02-VERIFICATION.md `missing:` AND 02-REVIEW.md recommendations — init-side makes the attribute existence explicit-by-construction, also closes the latent symmetric AttributeError window guarded by the defensive `hasattr` at base.py:662 in `_collect_cluster_end`. Two sibling regression tests (`...uninitialized_datagen` and `...uninitialized_run`) added at the end of `tests/integration/test_systemname_yaml_end_to_end.py` via a new `_make_benchmark_no_cluster_mock` harness that mirrors `_make_benchmark` but omits the `_collect_cluster_start = MagicMock(side_effect=...)` assignment that masked the bug in the existing 12 tests. RED captured `AttributeError: 'VectorDBBenchmark' object has no attribute '_cluster_info_start'` at base.py:991, relabeled by the catch-all at base.py:1002 as "Failed to write systemname.yaml: ..." — the exact production reproduction from 02-VERIFICATION.md.
+- Execute 02-06 surprise: test fixture `fake_local['cpuinfo']` needed list-of-dicts shape (not string blob). `HostInfo.from_collected_data` (rules/models.py:212-222) passes it to `summarize_cpuinfo(cpuinfo_list)` which does `cpuinfo_list[0].get('model name', '')`. The string-shape mock raised `AttributeError: 'str' object has no attribute 'get'` on the GREEN run-subcase. Corrected to `[{'processor': '0', 'physical id': '0', 'model name': 'Intel(R) Xeon Platinum 8480+', 'cpu cores': '56', 'flags': ''}]` and folded into the GREEN commit. RED was unaffected because the AttributeError on `_cluster_info_start` fires BEFORE the cpuinfo consumer runs.
+- Execute 02-06: approach (b) chosen over approach (a) (psutil fix for `tests/unit/test_benchmarks_base.py`) per PLAN.md deep_work_rules — psutil's module-level import in `mlpstorage_py.utils` makes MagicMock substitution fragile for consumers calling `.virtual_memory().total` expecting numeric returns. Integration-file regression test path uses the proven `sys.modules['psutil'] = MagicMock()` pattern at file-top (lines 36-39) inherited by 14 now-green tests.
 
 ### Pending Todos
 
-- Phase 3: Chassis Model + Networking Coverage — DMI chassis `model_name` + sysfs-sourced `networking[]` block. Ready for /gsd-transition + /gsd-plan-phase 3.
+- Re-run /gsd-verify-phase 02 — expected to flip both failed truths to VERIFIED and LIFE-01 from BLOCKED to SATISFIED.
+- /gsd-transition — mark Phase 02 complete in PROJECT.md.
+- Phase 3: Chassis Model + Networking Coverage — DMI chassis `model_name` + sysfs-sourced `networking[]` block. Ready for /gsd-plan-phase 3 after transition.
+- Out-of-scope follow-ups from 02-REVIEW.md (separate hygiene pass; NOT addressed by 02-06): WR-01 path-traversal docstring, WR-02 `dry_run` gate on hook, WR-04 over-broad `except Exception`, WR-05 missing try/except around `collect_local_system_info`, IN-01/IN-03/IN-04 (dead imports, in-function imports, `_from_metadata` silent TODO drop). WR-03 `to_dict()` missing `num_sockets` deferred to Phase 5 LIFE-02.
 
 ### Blockers/Concerns
 
@@ -124,6 +130,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-19T00:00:00.000Z
-Stopped at: Plan 02-05 complete — Phase 02 fully shipped, ready for /gsd-transition
-Resume file: (next action: /gsd-transition to mark Phase 02 complete and update PROJECT.md, then /gsd-plan-phase 3)
+Last session: 2026-06-20T20:01:00.000Z
+Stopped at: Plan 02-06 (gap closure) complete — CR-01 closed, awaiting /gsd-verify-phase 02 + /gsd-transition
+Resume file: (next action: /gsd-verify-phase 02 to re-run verification and flip LIFE-01 from BLOCKED to SATISFIED, then /gsd-transition to mark Phase 02 complete, then /gsd-plan-phase 3)

@@ -26,8 +26,8 @@ The collector extracts these fields from the per-host data the MPI cluster colle
 
 **Universal failure rule:** Any collection failure — a missing file, a missing sysfs node, a missing field within a parsed structure, a tool not on PATH, a parse error — returns an empty string for that single data point. The collector never errors out the benchmark over a collection failure. Any field unfilled by the collector is left blank for the submitter to fill in by hand.
 
-- [ ] **COLL-01**: Collector exposes `clients[].chassis.cpu_model`, `cpu_qty`, `cpu_cores`, `memory_capacity` (GiB) for every host, sourced from the existing `/proc/cpuinfo` + `/proc/meminfo` data already gathered by `mlpstorage_py/cluster_collector.py:collect_local_system_info()` and `summarize_cpuinfo()`. Per the universal rule, any unreadable source yields empty strings for the affected fields.
-- [ ] **COLL-02**: Collector exposes `clients[].operating_system.name` and `operating_system.version` for every host, sourced from the `/etc/os-release` data already gathered. Per the universal rule.
+- [x] **COLL-01**: Collector exposes `clients[].chassis.cpu_model`, `cpu_qty`, `cpu_cores`, `memory_capacity` (GiB) for every host, sourced from the existing `/proc/cpuinfo` + `/proc/meminfo` data already gathered by `mlpstorage_py/cluster_collector.py:collect_local_system_info()` and `summarize_cpuinfo()`. Per the universal rule, any unreadable source yields empty strings for the affected fields.
+- [x] **COLL-02**: Collector exposes `clients[].operating_system.name` and `operating_system.version` for every host, sourced from the `/etc/os-release` data already gathered. Per the universal rule.
 - [ ] **COLL-03**: Collector exposes `clients[].chassis.model_name` from `/sys/class/dmi/id/product_name`. Per the universal rule, unreadable yields empty string.
 - [ ] **COLL-04**: Collector exposes `clients[].networking[]` entries with `type` (`ethernet` / `infiniband` / `other`), `speed` (Gbps), and `unit_count`, sourced from `/sys/class/net/<iface>/{type,speed}` and the presence of `/sys/class/infiniband/`. Virtual interfaces (`lo`, `docker*`, `virbr*`, `veth*`, `bond` slaves) are filtered out. Interfaces in the `down` state with `speed: -1` are reported with a recognizable sentinel rather than omitted. Per the universal rule for any unreadable per-interface field.
 - [ ] **COLL-05**: Collector exposes `clients[].sysctl[]` as a snapshot of a curated MLPerf-relevant key allowlist read from `/proc/sys/*`. Initial allowlist: `vm.dirty_*`, `net.core.*`, `net.ipv4.tcp_*`, `kernel.numa_balancing`. Allowlist is data-driven and extensible. Per the universal rule for any unreadable key.
@@ -36,13 +36,13 @@ The collector extracts these fields from the per-host data the MPI cluster colle
 
 ### Serialization (SER)
 
-- [ ] **SER-01**: Per-host collected data is **quantity-grouped** before serialization: hosts that share the same canonical chassis fingerprint (the entire set of fields the collector currently fills — extensible) collapse into one `clients[]` stanza with `quantity: N` matching the group size. Heterogeneous fleets produce multiple stanzas.
-- [ ] **SER-02**: Schema fields that cannot be auto-derived from the client (`friendly_description`, `chassis.rack_units`, `networking[].traffic` role, drive `media_type`/`form_factor`/`performance`, `chassis.power`/`psus_configured`) are emitted as blank/missing in the auto-generated YAML so that a downstream schema-validation pass naturally flags "submitter has fields to fill in."
-- [ ] **SER-03**: The serialized YAML's filled fields validate against `mlpstorage_py/system_description/schema.yaml` using the existing `schema_validator.py`. Whole-file schema validation may still fail on blanks left by SER-02 — that's the intended UX.
+- [x] **SER-01**: Per-host collected data is **quantity-grouped** before serialization: hosts that share the same canonical chassis fingerprint (the entire set of fields the collector currently fills — extensible) collapse into one `clients[]` stanza with `quantity: N` matching the group size. Heterogeneous fleets produce multiple stanzas.
+- [x] **SER-02**: Schema fields that cannot be auto-derived from the client (`friendly_description`, `chassis.rack_units`, `networking[].traffic` role, drive `media_type`/`form_factor`/`performance`, `chassis.power`/`psus_configured`) are emitted as blank/missing in the auto-generated YAML so that a downstream schema-validation pass naturally flags "submitter has fields to fill in."
+- [x] **SER-03**: The serialized YAML's filled fields validate against `mlpstorage_py/system_description/schema.yaml` using the existing `schema_validator.py`. Whole-file schema validation may still fail on blanks left by SER-02 — that's the intended UX.
 
 ### Lifecycle (LIFE)
 
-- [ ] **LIFE-01**: At the start of `mlpstorage <mode> <benchmark> [model] run` (and only `run` — not `datagen`, since the datagen client fleet may differ from the run fleet), the benchmark builds the in-memory `systemname.yaml` representation from the MPI-collected data. The target path is `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` where `<orgname>` comes from `<results-dir>/mlperf-results.yaml` and `<systemname>` comes from `--systemname` / `MLPERF_SYSTEMNAME`. If the file does not exist, the in-memory image is written before the benchmark proceeds.
+- [x] **LIFE-01**: At the start of `mlpstorage <mode> <benchmark> [model] run` (and only `run` — not `datagen`, since the datagen client fleet may differ from the run fleet), the benchmark builds the in-memory `systemname.yaml` representation from the MPI-collected data. The target path is `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` where `<orgname>` comes from `<results-dir>/mlperf-results.yaml` and `<systemname>` comes from `--systemname` / `MLPERF_SYSTEMNAME`. If the file does not exist, the in-memory image is written before the benchmark proceeds.
 - [ ] **LIFE-02**: When `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` already exists, the on-disk version is loaded and a *logical* diff (YAML tree diff after canonicalization, not a text diff) is computed against the in-memory image, comparing **only fields the auto-collector is responsible for filling**. User-supplied fields (the blanks from SER-02) are not part of the diff — submitters can fill them in without re-triggering drift detection. The diff is per-mode: each mode (`closed`/`open`/`whatif`) owns its own systemname.yaml at its own path, generated and checked independently. The same fleet under different modes can legitimately produce different content (e.g., environment vars filtered to mode-specific allowlists).
 - [ ] **LIFE-03**: When the LIFE-02 diff is non-empty, the benchmark fails before any DLIO/MPI execution begins, with an error that (a) lists each differing field by JSONPath-style path, (b) shows the on-disk value and the in-memory value side-by-side, and (c) instructs the submitter to either rename the existing `<systemname>.yaml` (and re-run with a different `--systemname`, generating a fresh one) or remove it and re-run.
 - [ ] **LIFE-04**: When the LIFE-02 diff is empty, the benchmark proceeds without touching the on-disk file; whatever the submitter has filled into the blanks survives across runs.
@@ -96,28 +96,30 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | LAY-06  | Phase 1 | Complete (01-05) |
 | LAY-07  | Phase 1 | Complete (01-05) |
 | LAY-08  | Phase 1 | Complete (01-05) |
-| COLL-01 | Phase 2 | Pending |
-| COLL-02 | Phase 2 | Pending |
+| COLL-01 | Phase 2 | Complete |
+| COLL-02 | Phase 2 | Complete |
 | COLL-03 | Phase 3 | Pending |
 | COLL-04 | Phase 3 | Pending |
 | COLL-05 | Phase 4 | Pending |
 | COLL-06 | Phase 4 | Pending |
 | COLL-07 | Phase 4 | Pending |
-| SER-01  | Phase 2 | Pending |
-| SER-02  | Phase 2 | Pending |
-| SER-03  | Phase 2 | Pending |
-| LIFE-01 | Phase 2 | Pending |
+| SER-01  | Phase 2 | Complete |
+| SER-02  | Phase 2 | Complete |
+| SER-03  | Phase 2 | Complete |
+| LIFE-01 | Phase 2 | Complete |
 | LIFE-02 | Phase 5 | Pending |
 | LIFE-03 | Phase 5 | Pending |
 | LIFE-04 | Phase 5 | Pending |
 | CAP-01  | Phase 5 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 23 total
 - Mapped to phases: 23
 - Unmapped: 0
 
 **Per-phase totals:**
+
 - Phase 1 (Canonical Layout & Init): 8 requirements — LAY-01..08
 - Phase 2 (First-Run Write of Partial systemname.yaml): 6 requirements — COLL-01, COLL-02, SER-01, SER-02, SER-03, LIFE-01
 - Phase 3 (Chassis Model + Networking Coverage): 2 requirements — COLL-03, COLL-04
