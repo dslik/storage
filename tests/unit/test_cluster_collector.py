@@ -2480,3 +2480,320 @@ class TestSysctlWiring:
         result = cc.collect_local_system_info()
         assert result["sysctl"] == []
         assert result.get("errors", {}).get("sysctl") == "boom"
+
+
+# =============================================================================
+# Phase 4 / Plan 04-02 — Environment collector (COLL-06, D-23/24/25/26/36)
+# =============================================================================
+#
+# The environment collector applies a prefix-or-literal allowlist over
+# os.environ, dispatches AWS_ACCESS_KEY_ID through `_mask_credential_id` and
+# AWS_SECRET_ACCESS_KEY through `_redact_secret`, and emits sorted
+# {name, value} dicts ready for `clients[].environment[]` in the YAML.
+#
+# Pattern B (D-36): The script body inside MPI_COLLECTOR_SCRIPT duplicates
+# the collector + both redactors inline (storage_config can't be imported
+# from inside the exec'd script).
+# =============================================================================
+
+
+_ENV_ALLOWLIST_VARS_FOR_CLEANUP = (
+    # Vars the tests below set/check. Helper clears them between cases so
+    # one test's leftover doesn't contaminate the next. Also includes the
+    # negative-match anchors PATH/HOME/MY_RANDOM_VAR (we never delete PATH;
+    # those are only checked for "not in output", not cleared).
+    "BUCKET",
+    "BUCKET_NAME",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "STORAGE_BACKEND",
+    "OMPI_COMM_WORLD_RANK",
+    "UCX_NET_DEVICES",
+    "NCCL_DEBUG",
+    "MY_RANDOM_VAR",
+)
+
+
+def _clear_env_allowlist_vars(monkeypatch):
+    for v in _ENV_ALLOWLIST_VARS_FOR_CLEANUP:
+        monkeypatch.delenv(v, raising=False)
+
+
+class TestEnvAllowlistMatch:
+    """`_env_allowlist_match(name)` enforces D-26 (`BUCKET` literal only;
+    `AWS_*`, `STORAGE_*`, `OMPI_*`, `UCX_*`, `NCCL_*` prefix matches)."""
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ("BUCKET", True),
+            ("BUCKET_NAME", False),  # literal-only per D-26
+            ("AWS_ACCESS_KEY_ID", True),
+            ("AWS_SECRET_ACCESS_KEY", True),
+            ("AWS_REGION", True),
+            ("STORAGE_BACKEND", True),
+            ("STORAGE_URI_SCHEME", True),
+            ("OMPI_COMM_WORLD_RANK", True),
+            ("UCX_NET_DEVICES", True),
+            ("NCCL_DEBUG", True),
+            ("PATH", False),
+            ("HOME", False),
+            ("LD_LIBRARY_PATH", False),
+            ("PYTHONPATH", False),
+            ("bucket", False),  # case sensitive
+            ("aws_region", False),
+        ],
+    )
+    def test_allowlist_match(self, name, expected):
+        from mlpstorage_py.cluster_collector import _env_allowlist_match
+
+        assert _env_allowlist_match(name) is expected
+
+
+class TestEnvironmentCollector:
+    """`collect_environment()` returns sorted {name, value} dicts filtered by
+    the D-26 allowlist with credential dispatch through the two helpers."""
+
+    def test_empty_environ_returns_empty(self, monkeypatch):
+        """Clear every allowlist-prefixed var → output is empty.
+
+        Production environments may have other AWS_* / STORAGE_* / OMPI_*
+        / UCX_* / NCCL_* vars set that we can't enumerate; the universe
+        we control is _ENV_ALLOWLIST_VARS_FOR_CLEANUP. We still verify
+        the function returns a list and that NONE of our cleared anchor
+        vars surface."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        out = collect_environment()
+        assert isinstance(out, list)
+        cleared = {"BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                   "STORAGE_BACKEND", "OMPI_COMM_WORLD_RANK",
+                   "UCX_NET_DEVICES", "NCCL_DEBUG", "AWS_REGION"}
+        emitted = {e["name"] for e in out}
+        assert cleared.isdisjoint(emitted)
+
+    def test_bucket_literal_emitted(self, monkeypatch):
+        """BUCKET literal is in the allowlist (D-26)."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("BUCKET", "my-bucket")
+        out = collect_environment()
+        assert {"name": "BUCKET", "value": "my-bucket"} in out
+
+    def test_bucket_name_not_in_allowlist(self, monkeypatch):
+        """BUCKET_NAME has the `BUCKET` substring but is NOT a literal match
+        and `BUCKET_` is NOT in the prefix tuple → must be excluded."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("BUCKET_NAME", "should-not-appear")
+        out = collect_environment()
+        names = {e["name"] for e in out}
+        assert "BUCKET_NAME" not in names
+
+    def test_aws_access_key_id_masked(self, monkeypatch):
+        """AWS_ACCESS_KEY_ID flows through `_mask_credential_id` (D-23)."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+        out = collect_environment()
+        assert {"name": "AWS_ACCESS_KEY_ID", "value": "AKIA****MPLE"} in out
+
+    def test_aws_secret_access_key_length_only(self, monkeypatch):
+        """AWS_SECRET_ACCESS_KEY flows through `_redact_secret` (D-24)."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv(
+            "AWS_SECRET_ACCESS_KEY",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        out = collect_environment()
+        assert {
+            "name": "AWS_SECRET_ACCESS_KEY",
+            "value": "[SET — 40 chars]",
+        } in out
+
+    def test_other_aws_vars_verbatim(self, monkeypatch):
+        """Non-credential AWS_* vars are emitted verbatim (no redaction)."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
+        out = collect_environment()
+        assert {"name": "AWS_REGION", "value": "us-east-1"} in out
+        assert {"name": "AWS_DEFAULT_REGION", "value": "us-west-2"} in out
+
+    def test_storage_omp_ucx_nccl_prefixes(self, monkeypatch):
+        """One representative var from each non-AWS prefix is emitted verbatim."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("STORAGE_BACKEND", "s3dlio")
+        monkeypatch.setenv("OMPI_COMM_WORLD_RANK", "0")
+        monkeypatch.setenv("UCX_NET_DEVICES", "mlx5_0:1")
+        monkeypatch.setenv("NCCL_DEBUG", "INFO")
+        out = collect_environment()
+        assert {"name": "STORAGE_BACKEND", "value": "s3dlio"} in out
+        assert {"name": "OMPI_COMM_WORLD_RANK", "value": "0"} in out
+        assert {"name": "UCX_NET_DEVICES", "value": "mlx5_0:1"} in out
+        assert {"name": "NCCL_DEBUG", "value": "INFO"} in out
+
+    def test_non_allowlist_excluded(self, monkeypatch):
+        """PATH and random non-allowlist vars must not appear in output."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("MY_RANDOM_VAR", "x")
+        out = collect_environment()
+        names = {e["name"] for e in out}
+        assert "MY_RANDOM_VAR" not in names
+        assert "PATH" not in names
+        assert "HOME" not in names
+
+    def test_output_sorted_by_name(self, monkeypatch):
+        """D-34 fingerprint stability: output sorted by `name`."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        _clear_env_allowlist_vars(monkeypatch)
+        monkeypatch.setenv("NCCL_DEBUG", "INFO")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("BUCKET", "my-bucket")
+        monkeypatch.setenv("UCX_NET_DEVICES", "mlx5_0:1")
+        out = collect_environment()
+        # Filter to just the names we set, in case ambient env has others.
+        ours = [e for e in out if e["name"] in {
+            "NCCL_DEBUG", "AWS_REGION", "BUCKET", "UCX_NET_DEVICES",
+        }]
+        names = [e["name"] for e in ours]
+        assert names == sorted(names), (
+            f"collect_environment output not sorted by name: {names!r}"
+        )
+
+    def test_collect_environment_does_not_raise(self, monkeypatch):
+        """D-2 envelope: even on a hostile failure, collect_environment
+        returns [] rather than raising. Force the inner allowlist check to
+        explode and verify."""
+        import mlpstorage_py.cluster_collector as cc
+
+        _clear_env_allowlist_vars(monkeypatch)
+
+        def boom(name):
+            raise RuntimeError("hostile allowlist failure")
+
+        monkeypatch.setattr(cc, "_env_allowlist_match", boom)
+        out = cc.collect_environment()
+        assert out == []
+
+
+class TestEnvironmentMPIScriptParity:
+    """Pattern B (D-36): collect_environment + _env_allowlist_match +
+    _mask_credential_id + _redact_secret live inline in MPI_COLLECTOR_SCRIPT.
+    Drift between the script and the module copy is caught by exec'ing the
+    script in a controlled namespace and asserting behavioral equivalence
+    on a monkeypatched os.environ."""
+
+    def test_environment_functions_match_module(self, monkeypatch):
+        """exec the script body; verify the four symbols landed; assert
+        the script's collect_environment matches the module's on the same
+        os.environ snapshot."""
+        from mlpstorage_py.cluster_collector import collect_environment
+
+        ns = {}
+        try:
+            exec(MPI_COLLECTOR_SCRIPT, ns)
+        except BaseException:
+            # SystemExit / ImportError from the MPI-only top-level; DEFs
+            # landed before the raise.
+            pass
+        assert "collect_environment" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define collect_environment inline (D-36)."
+        )
+        assert "_mask_credential_id" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _mask_credential_id inline (D-36)."
+        )
+        assert "_redact_secret" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _redact_secret inline (D-36)."
+        )
+        assert "_env_allowlist_match" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _env_allowlist_match inline (D-36)."
+        )
+
+        _clear_env_allowlist_vars(monkeypatch)
+        # Cover one var from every allowlist prefix + both credential vars +
+        # the BUCKET literal so the parity test exercises every dispatch.
+        monkeypatch.setenv("BUCKET", "parity-bucket")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+        monkeypatch.setenv(
+            "AWS_SECRET_ACCESS_KEY",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("STORAGE_BACKEND", "s3dlio")
+        monkeypatch.setenv("OMPI_COMM_WORLD_RANK", "0")
+        monkeypatch.setenv("UCX_NET_DEVICES", "mlx5_0:1")
+        monkeypatch.setenv("NCCL_DEBUG", "INFO")
+
+        a = ns["collect_environment"]()
+        b = collect_environment()
+        # Both copies must produce the same emit for the same env snapshot.
+        assert a == b, (
+            f"MPI-script collect_environment diverged from module: "
+            f"script={a!r} module={b!r}"
+        )
+
+
+class TestEnvironmentWiring:
+    """collect_local_system_info wires `environment` into result via the
+    same try/except + default-list shape as chassis_model, networking,
+    and sysctl. D-2 universal-rule contract: the key is always present
+    and always a list."""
+
+    def test_collect_local_system_info_environment_present(self):
+        """Universal-rule contract: result['environment'] is always present
+        and is a list (possibly empty)."""
+        from mlpstorage_py import cluster_collector as cc
+
+        result = cc.collect_local_system_info()
+        assert "environment" in result
+        assert isinstance(result["environment"], list)
+
+    def test_collect_local_system_info_environment_uses_collect_environment(
+        self, monkeypatch
+    ):
+        """Wiring contract: result['environment'] is exactly what
+        collect_environment returns on the happy path."""
+        from mlpstorage_py import cluster_collector as cc
+
+        monkeypatch.setattr(
+            cc,
+            "collect_environment",
+            lambda *a, **kw: [{"name": "BUCKET", "value": "wired-bucket"}],
+        )
+        result = cc.collect_local_system_info()
+        assert result["environment"] == [
+            {"name": "BUCKET", "value": "wired-bucket"}
+        ]
+        assert "environment" not in result.get("errors", {})
+
+    def test_collect_local_system_info_environment_failure_isolated(
+        self, monkeypatch
+    ):
+        """Wiring contract: a raise inside collect_environment is caught at
+        the wiring layer; result['environment'] defaults to [] and
+        errors['environment'] captures the message."""
+        from mlpstorage_py import cluster_collector as cc
+
+        def boom(*a, **kw):
+            raise RuntimeError("env boom")
+
+        monkeypatch.setattr(cc, "collect_environment", boom)
+        result = cc.collect_local_system_info()
+        assert result["environment"] == []
+        assert result.get("errors", {}).get("environment") == "env boom"
