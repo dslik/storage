@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 import yaml
 import os
-
+ 
+ 
 def load_config(config_file=None):
     """
     Load configuration from a YAML file.
-    
+ 
     Args:
         config_file (str): Path to the YAML configuration file
-        
+ 
     Returns:
         dict: Configuration dictionary or empty dict if file not found
     """
     if not config_file:
         return {}
-
+ 
     path_exists = os.path.exists(config_file)
     configs_path_exists = os.path.exists(os.path.join("configs", config_file))
     if path_exists or configs_path_exists:
@@ -22,40 +23,109 @@ def load_config(config_file=None):
     else:
         print(f"ERROR: Configuration file not found: {config_file}")
         return {}
-        
+ 
     try:
         with open(config_file, 'r') as f:
             config = yaml.safe_load(f)
             print(f"Loaded vdbbench configuration from {config_file}")
             return config
     except Exception as e:
-        print("ERROR - Error loading configuration file: {str(e)}")
+        print(f"ERROR - Error loading configuration file: {str(e)}")
         return {}
-
-
+ 
+ 
+def _flatten_config(config):
+    """
+    Flatten a (possibly nested) configuration dict into a single-level
+    mapping of leaf parameter name -> value.
+ 
+    The vdbbench YAML configs group parameters into sections
+    (database, dataset, index, workflow, ...) and may additionally nest
+    index tuning parameters under an ``index_params:`` block, e.g.::
+ 
+        index:
+          index_type: HNSW
+          index_params:
+            M: 32
+            ef_construction: 100
+ 
+    Argparse, however, exposes those tuning parameters as top-level flags
+    (``--M``, ``--ef-construction``). Without flattening, the inner
+    ``index_params`` dict is seen as a single unknown key and silently
+    dropped, so the values never reach the parsed args. Flattening walks
+    every nested dict and lifts each leaf key to the top level.
+ 
+    Later (deeper) keys win on collision, which is harmless here because the
+    config files do not reuse leaf names across sections.
+ 
+    Args:
+        config (dict): Configuration dictionary loaded from YAML.
+ 
+    Returns:
+        dict: Flat mapping of parameter name -> value.
+    """
+    flat = {}
+ 
+    def _walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, dict):
+                    _walk(value)
+                else:
+                    flat[key] = value
+ 
+    _walk(config)
+    return flat
+ 
+ 
 def merge_config_with_args(config, args):
     """
-    Merge configuration from YAML with command line arguments.
-    Command line arguments take precedence over YAML configuration.
-    
+    Merge configuration from YAML into parsed command line arguments.
+ 
+    Precedence (highest first):
+        1. Arguments explicitly provided on the command line.
+        2. Values from the YAML configuration file.
+        3. Argparse defaults.
+ 
+    This means a value present in the config file is always applied unless
+    the user also passed that flag explicitly on the command line, even when
+    the config value happens to equal the argparse default.
+ 
+    Explicit-CLI detection relies on ``args.is_default`` when present (a dict
+    of ``{arg_name: True_if_still_default}`` maintained by the callers). When
+    that map is unavailable, config values fill only args that are currently
+    ``None``.
+ 
     Args:
-        config (dict): Configuration dictionary from YAML
-        args (Namespace): Parsed command line arguments
-        
+        config (dict): Configuration dictionary from YAML (may be nested).
+        args (Namespace): Parsed command line arguments.
+ 
     Returns:
-        Namespace: Updated arguments with values from config where not specified in args
+        Namespace: Updated arguments with values applied from config.
     """
-    # Convert args to a dictionary
+    if not config:
+        return args
+ 
     args_dict = vars(args)
-
-    # For each key in config, if the corresponding arg is None or has a default value,
-    # update it with the value from config
-    for section, params in config.items():
-        for key, value in params.items():
-            if key in args_dict and (args_dict[key] is None or
-                                     (hasattr(args, 'is_default') and
-                                      key in args.is_default and
-                                      args.is_default[key])):
+    is_default = getattr(args, 'is_default', None)
+    flat_config = _flatten_config(config)
+ 
+    for key, value in flat_config.items():
+        if key not in args_dict:
+            # Config keys that are not exposed as CLI args (e.g. database
+            # connection tuning like max_receive_message_length) are ignored
+            # here; callers consume those directly from the config dict.
+            continue
+ 
+        if is_default is not None:
+            # Apply config unless the user explicitly set this flag on the CLI.
+            # An arg is "explicitly set" when is_default reports False for it.
+            cli_explicit = (key in is_default) and (not is_default[key])
+            if not cli_explicit:
                 args_dict[key] = value
-    
+        else:
+            # No explicit-vs-default tracking available: only fill holes.
+            if args_dict[key] is None:
+                args_dict[key] = value
+ 
     return args
