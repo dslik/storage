@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Phase 04 Plan 05 complete — HostInfo.sysctl/.environment/.drives fields + HostInfo.from_collected_data extension + node_dict_from_host emit-shape extension (3 new top-level keys) + per-host group_by_fingerprint pass for drives + 9 end-to-end integration tests covering ROADMAP SC #1-5 + D-33 omit-key path live-confirmed on WSL2 (COLL-05/06/07 closure)"
-last_updated: "2026-06-23T23:00:00.000Z"
-last_activity: 2026-06-23 -- Phase 04 Plan 05 complete (HostInfo + node_dict_from_host wire-through end-to-end; COLL-05/06/07 closure; Phase 4 vertical end-to-end COMPLETE)
+status: verifying
+stopped_at: "Phase 04 Plan 05 complete — HostInfo.sysctl + HostInfo.environment + HostInfo.drives fields + HostInfo.from_collected_data extension + node_dict_from_host emit-shape extension (3 new top-level keys; per-host group_by_fingerprint pass for drives) + 25 new unit tests + 9 new integration tests (TestPhase4EndToEnd covering ROADMAP SC #1-5 + D-35 cross-host strict-split + homogeneous-collapse + Yamale schema validation) all green. Phase 4 vertical end-to-end COMPLETE. D-33 omit-key path LIVE-CONFIRMED on WSL2 dev shell."
+last_updated: "2026-06-23T23:30:37.907Z"
+last_activity: 2026-06-23 -- Phase 04 verified (8/8 after inline gap-closure)
 progress:
   total_phases: 5
   completed_phases: 4
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 
 Phase: 04 (sysctl-environment-and-drives-coverage) — COMPLETE (vertical end-to-end SHIPPED)
 Plan: 5 of 5 (complete)
-Status: Phase 04 vertical end-to-end COMPLETE; awaiting /gsd-verify-phase 04 to flip to `verified`, then /gsd-transition to advance to Phase 5
-Last activity: 2026-06-23 -- Phase 04 Plan 05 complete (HostInfo + node_dict_from_host wire-through end-to-end; COLL-05/06/07 closure; Phase 4 vertical end-to-end COMPLETE)
+Status: verified
+Last activity: 2026-06-23 -- Phase 04 verified (8/8 after inline gap-closure)
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
