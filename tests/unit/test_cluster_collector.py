@@ -2144,3 +2144,339 @@ class TestHostInfoNetworkingField:
         host = HostInfo.from_collected_data({"hostname": "h"})
         assert host.networking == []
 
+
+# =============================================================================
+# Phase 4 Plan 04-01 — Sysctl Collector (D-27 allowlist file, D-28 /proc/sys
+# walk semantics, D-29 multi-value verbatim emit, D-36 Pattern B parity).
+# RESEARCH Q2 (write-only leaves), Q3 (fnmatch deep-match gotcha), Q5
+# (3.8-safe stdlib for the script twin). COLL-05.
+# =============================================================================
+
+
+def _make_sysctl_leaf(proc_sys_root, dotted_name, content):
+    """Build a fake /proc/sys leaf at <proc_sys_root>/<slashed_name>.
+
+    `dotted_name` like 'net.ipv4.tcp_rmem' becomes
+    '<proc_sys_root>/net/ipv4/tcp_rmem'. Returns the Path of the leaf.
+    """
+    from pathlib import Path
+    parts = dotted_name.split(".")
+    p = Path(proc_sys_root)
+    for seg in parts[:-1]:
+        p = p / seg
+    p.mkdir(parents=True, exist_ok=True)
+    leaf = p / parts[-1]
+    leaf.write_text(content)
+    return leaf
+
+
+def _make_proc_sys_root(tmp_path):
+    """Build a tmp_path/proc/sys root directory and return it as a str."""
+    root = tmp_path / "proc" / "sys"
+    root.mkdir(parents=True, exist_ok=True)
+    return str(root)
+
+
+class TestSysctlAllowlistFile:
+    """The shipped allowlist file at
+    mlpstorage_py/system_description/sysctl_allowlist.txt is the load-bearing
+    artifact for COLL-05: editing it adds keys to the next run's output with
+    no code change. These tests pin its existence, structure, and the four
+    initial patterns locked by D-27."""
+
+    def test_allowlist_file_exists(self):
+        """D-27: the package ships sysctl_allowlist.txt as a data file."""
+        from pathlib import Path
+        import mlpstorage_py.system_description as sd_pkg
+        sd_dir = Path(sd_pkg.__file__).parent
+        path = sd_dir / "sysctl_allowlist.txt"
+        assert path.exists(), (
+            f"D-27: package must ship sysctl_allowlist.txt at {path}"
+        )
+
+    def test_allowlist_file_parses_to_four_patterns(self):
+        """D-27: the shipped file contains exactly four glob lines
+        (vm.dirty_*, net.core.*, net.ipv4.tcp_*, kernel.numa_balancing)."""
+        from mlpstorage_py.cluster_collector import _load_sysctl_allowlist
+        patterns = _load_sysctl_allowlist()
+        assert len(patterns) == 4, (
+            f"D-27: expected 4 initial globs, got {len(patterns)}: {patterns!r}"
+        )
+
+    def test_shipped_globs_match_canonical_keys(self):
+        """D-27: the four globs round-trip to regex objects matching
+        vm.dirty_ratio, net.core.rmem_max, net.ipv4.tcp_rmem, kernel.numa_balancing."""
+        from mlpstorage_py.cluster_collector import _load_sysctl_allowlist
+        patterns = _load_sysctl_allowlist()
+        # For each canonical key, at least one pattern must match it.
+        canonical_keys = [
+            "vm.dirty_ratio",
+            "net.core.rmem_max",
+            "net.ipv4.tcp_rmem",
+            "kernel.numa_balancing",
+        ]
+        for key in canonical_keys:
+            assert any(p.match(key) for p in patterns), (
+                f"D-27: no shipped glob matches canonical key {key!r}"
+            )
+
+
+class TestLoadSysctlAllowlist:
+    """The _load_sysctl_allowlist helper parses a glob-per-line text file
+    into a tuple of compiled regex objects. Comments and blank lines are
+    skipped; missing files yield an empty tuple (universal D-2 rule)."""
+
+    def test_skips_blank_lines_and_comments(self, tmp_path):
+        """D-27: lines starting with '#' (after lstrip) and empty/whitespace
+        lines are ignored. Returns a tuple of length == count of glob lines."""
+        from mlpstorage_py.cluster_collector import _load_sysctl_allowlist
+        p = tmp_path / "allowlist.txt"
+        p.write_text(
+            "# header comment\n"
+            "\n"
+            "vm.dirty_*\n"
+            "   # indented comment\n"
+            "net.core.*\n"
+            "\n"
+        )
+        patterns = _load_sysctl_allowlist(str(p))
+        assert len(patterns) == 2
+
+    def test_strips_trailing_whitespace_per_line(self, tmp_path):
+        """Whitespace around the glob is stripped before translate()."""
+        from mlpstorage_py.cluster_collector import _load_sysctl_allowlist
+        p = tmp_path / "allowlist.txt"
+        p.write_text("vm.dirty_*   \n  net.core.*\t\n")
+        patterns = _load_sysctl_allowlist(str(p))
+        assert len(patterns) == 2
+        # The first pattern must match a vm.dirty_* key.
+        assert any(pat.match("vm.dirty_ratio") for pat in patterns)
+        # The second pattern must match net.core.*.
+        assert any(pat.match("net.core.rmem_max") for pat in patterns)
+
+    def test_missing_file_returns_empty_tuple(self, tmp_path):
+        """D-2 universal failure rule: missing file → empty tuple, no
+        exception. Outer collect_sysctl will receive an empty tuple and emit []."""
+        from mlpstorage_py.cluster_collector import _load_sysctl_allowlist
+        nonexistent = tmp_path / "no_such_file.txt"
+        result = _load_sysctl_allowlist(str(nonexistent))
+        assert result == tuple()
+
+    def test_returned_patterns_have_match_method(self, tmp_path):
+        """Each returned object must be a compiled regex (exposes .match)."""
+        from mlpstorage_py.cluster_collector import _load_sysctl_allowlist
+        p = tmp_path / "allowlist.txt"
+        p.write_text("vm.dirty_*\n")
+        patterns = _load_sysctl_allowlist(str(p))
+        assert len(patterns) == 1
+        assert hasattr(patterns[0], "match")
+        assert patterns[0].match("vm.dirty_ratio") is not None
+        assert patterns[0].match("net.core.rmem_max") is None
+
+
+class TestSysctlCollector:
+    """The /proc/sys walk: per-leaf filter against the allowlist, per-leaf
+    try/except (universal D-2 / RESEARCH Q2), 8 KiB read cap (D-28),
+    multi-value verbatim emit (D-29). Synthetic /proc/sys via tmp_path so
+    no real sysctl access is needed."""
+
+    def test_emits_allowlisted_leaves(self, tmp_path):
+        """D-27/D-28: only leaves whose dotted form matches at least one
+        allowlist pattern are emitted, as {name, value} dicts."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        root = _make_proc_sys_root(tmp_path)
+        _make_sysctl_leaf(root, "vm.dirty_ratio", "20\n")
+        _make_sysctl_leaf(root, "vm.swappiness", "60\n")
+        _make_sysctl_leaf(root, "net.core.rmem_max", "212992\n")
+        allowlist = tuple(
+            re.compile(fnmatch.translate(g))
+            for g in ("vm.dirty_*", "net.core.*")
+        )
+        out = collect_sysctl(proc_sys_root=root, allowlist=allowlist)
+        sorted_out = sorted(out, key=lambda d: d["name"])
+        assert sorted_out == [
+            {"name": "net.core.rmem_max", "value": "212992"},
+            {"name": "vm.dirty_ratio", "value": "20"},
+        ]
+
+    def test_excludes_non_allowlisted(self, tmp_path):
+        """D-27: leaves matching no allowlist pattern are skipped."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        root = _make_proc_sys_root(tmp_path)
+        _make_sysctl_leaf(root, "vm.dirty_ratio", "20\n")
+        _make_sysctl_leaf(root, "vm.swappiness", "60\n")
+        _make_sysctl_leaf(root, "net.core.rmem_max", "212992\n")
+        allowlist = (re.compile(fnmatch.translate("vm.dirty_*")),)
+        out = collect_sysctl(proc_sys_root=root, allowlist=allowlist)
+        names = {e["name"] for e in out}
+        assert "vm.dirty_ratio" in names
+        assert "vm.swappiness" not in names
+        assert "net.core.rmem_max" not in names
+
+    def test_multi_value_verbatim_per_d29(self, tmp_path):
+        """D-29: multi-value leaves (e.g., tcp_rmem returning tab-separated
+        triplets) emit verbatim — only the trailing newline is stripped,
+        internal tabs preserved."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        root = _make_proc_sys_root(tmp_path)
+        _make_sysctl_leaf(root, "net.ipv4.tcp_rmem", "4096\t87380\t16777216\n")
+        allowlist = (re.compile(fnmatch.translate("net.ipv4.tcp_*")),)
+        out = collect_sysctl(proc_sys_root=root, allowlist=allowlist)
+        assert len(out) == 1
+        assert out[0]["name"] == "net.ipv4.tcp_rmem"
+        assert out[0]["value"] == "4096\t87380\t16777216"
+
+    def test_permission_error_on_leaf_isolates_per_d2(self, tmp_path, monkeypatch):
+        """D-2 / RESEARCH Q2: a single write-only or PermissionError leaf
+        (vm.drop_caches, sysrq, route/flush) skips itself but never aborts
+        the walk. The rest of the matching leaves still emit."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        root = _make_proc_sys_root(tmp_path)
+        _make_sysctl_leaf(root, "vm.dirty_ratio", "20\n")
+        drop_path = _make_sysctl_leaf(root, "vm.drop_caches", "0\n")
+
+        real_open = open
+
+        def fake_open(file, *args, **kwargs):
+            if str(file) == str(drop_path):
+                raise PermissionError("write-only")
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+        allowlist = (re.compile(fnmatch.translate("vm.*")),)
+        out = collect_sysctl(proc_sys_root=root, allowlist=allowlist)
+        names = {e["name"] for e in out}
+        assert "vm.dirty_ratio" in names
+        assert "vm.drop_caches" not in names
+
+    def test_missing_proc_sys_root_returns_empty(self, tmp_path):
+        """D-2: catastrophic failure (no /proc/sys) → empty list, no
+        exception. Outer collect_local_system_info wraps in another
+        try/except for defense-in-depth."""
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        nonexistent = tmp_path / "no_such" / "proc" / "sys"
+        out = collect_sysctl(proc_sys_root=str(nonexistent), allowlist=())
+        assert out == []
+
+    def test_8kib_read_cap_per_d28(self, tmp_path):
+        """D-28 / RESEARCH Q2: 8 KiB defense-in-depth cap on each leaf read.
+        Sysfs/procsys are PAGE_SIZE-buffered (~4 KiB) in practice; this
+        guards against any future kernel exposing an unbounded blob."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        root = _make_proc_sys_root(tmp_path)
+        # Write 16 KiB of "x" — twice the 8 KiB cap.
+        _make_sysctl_leaf(root, "vm.dirty_ratio", "x" * 16384)
+        allowlist = (re.compile(fnmatch.translate("vm.dirty_*")),)
+        out = collect_sysctl(proc_sys_root=root, allowlist=allowlist)
+        assert len(out) == 1
+        assert len(out[0]["value"]) <= 8192
+
+    def test_dotted_form_conversion(self, tmp_path):
+        """D-28: /proc/sys/net/ipv4/tcp_rmem reports as 'net.ipv4.tcp_rmem',
+        not 'net/ipv4/tcp_rmem'."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        root = _make_proc_sys_root(tmp_path)
+        _make_sysctl_leaf(root, "net.ipv4.tcp_rmem", "4096\t87380\t16777216\n")
+        allowlist = (re.compile(fnmatch.translate("net.ipv4.tcp_*")),)
+        out = collect_sysctl(proc_sys_root=root, allowlist=allowlist)
+        assert len(out) == 1
+        assert out[0]["name"] == "net.ipv4.tcp_rmem"
+        assert "/" not in out[0]["name"]
+
+
+class TestSysctlMPIScriptParity:
+    """Pattern B (D-36): collect_sysctl and _load_sysctl_allowlist live
+    inline in MPI_COLLECTOR_SCRIPT. Drift between the two copies produces
+    divergent per-host data shapes; this parity test catches drift on the
+    same tmp_path /proc/sys fixture used by TestSysctlCollector."""
+
+    def test_sysctl_functions_match_module(self, tmp_path):
+        """Script copy and module copy must agree on the same fixture."""
+        import re
+        import fnmatch
+        from mlpstorage_py.cluster_collector import collect_sysctl
+        ns = {}
+        try:
+            exec(MPI_COLLECTOR_SCRIPT, ns)
+        except BaseException:
+            # SystemExit / ImportError from the MPI-only top-level; DEFs
+            # landed before the raise.
+            pass
+        assert "collect_sysctl" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define collect_sysctl inline (D-36)."
+        )
+        assert "_load_sysctl_allowlist" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _load_sysctl_allowlist inline (D-36)."
+        )
+        # Build fixture identical to TestSysctlCollector.
+        root = _make_proc_sys_root(tmp_path)
+        _make_sysctl_leaf(root, "vm.dirty_ratio", "20\n")
+        _make_sysctl_leaf(root, "net.core.rmem_max", "212992\n")
+        _make_sysctl_leaf(root, "net.ipv4.tcp_rmem", "4096\t87380\t16777216\n")
+        allowlist = tuple(
+            re.compile(fnmatch.translate(g))
+            for g in ("vm.dirty_*", "net.core.*", "net.ipv4.tcp_*")
+        )
+        a = ns["collect_sysctl"](root, allowlist)
+        b = collect_sysctl(root, allowlist)
+        # Order-independent equality (os.walk order isn't promised).
+        assert sorted(a, key=lambda d: d["name"]) == sorted(
+            b, key=lambda d: d["name"]
+        ), (
+            f"MPI-script collect_sysctl diverged from module: "
+            f"script={a!r} module={b!r}"
+        )
+
+
+class TestSysctlWiring:
+    """collect_local_system_info wires sysctl into result via the same
+    try/except + default shape as chassis_model and networking."""
+
+    def test_collect_local_system_info_sysctl_wiring(self):
+        """Universal-rule contract: result['sysctl'] is always present and
+        is a list (possibly empty). The wiring mirrors the chassis_model /
+        networking blocks at cluster_collector.py:1145-1167."""
+        from mlpstorage_py import cluster_collector as cc
+        result = cc.collect_local_system_info()
+        assert "sysctl" in result
+        assert isinstance(result["sysctl"], list)
+
+    def test_collect_local_system_info_sysctl_uses_collect_sysctl(self, monkeypatch):
+        """Wiring contract: result['sysctl'] is exactly what collect_sysctl
+        returns on the happy path; no errors key set."""
+        from mlpstorage_py import cluster_collector as cc
+        monkeypatch.setattr(
+            cc, "collect_sysctl",
+            lambda *a, **kw: [{"name": "vm.dirty_ratio", "value": "10"}],
+        )
+        result = cc.collect_local_system_info()
+        assert result["sysctl"] == [{"name": "vm.dirty_ratio", "value": "10"}]
+        # Either no 'errors' key (deleted when empty) or no 'sysctl' subkey
+        # in it.
+        assert "sysctl" not in result.get("errors", {})
+
+    def test_collect_local_system_info_sysctl_failure_isolated(self, monkeypatch):
+        """Wiring contract: a raise inside collect_sysctl is caught at the
+        wiring layer; result['sysctl'] defaults to [] and errors['sysctl']
+        captures the message. Mirrors chassis_model/networking try/except."""
+        from mlpstorage_py import cluster_collector as cc
+
+        def boom(*a, **kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(cc, "collect_sysctl", boom)
+        result = cc.collect_local_system_info()
+        assert result["sysctl"] == []
+        assert result.get("errors", {}).get("sysctl") == "boom"
