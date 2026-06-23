@@ -40,6 +40,15 @@ from mlpstorage_py.system_description.auto_generator import (
     node_dict_from_host,
 )
 
+# Phase 03 / Plan 03-04 — transform-layer extensions (D-22, D-17).
+# These imports are NEW: _network_signature and _resolve_fingerprint_key
+# do not yet exist at module scope; this import block will ImportError at
+# collection time until Task 2 implements them, producing the RED gate.
+from mlpstorage_py.system_description.auto_generator import (  # noqa: E402
+    _network_signature,
+    _resolve_fingerprint_key,
+)
+
 
 # ---------------------------------------------------------------------------
 # Task 1 — _get_dotted
@@ -654,3 +663,314 @@ def test_outer_dict_with_spliced_stubs_yaml_roundtrip():
     # D-14: top-level forbidden blocks remain absent after YAML roundtrip.
     assert "solution" not in reloaded["system_under_test"]
     assert "deployment" not in reloaded["system_under_test"]
+
+
+# ===========================================================================
+# Phase 03 / Plan 03-04 — Transform-layer extensions (D-22, D-17)
+# ===========================================================================
+#
+# Four new test classes exercise the transform-layer extensions Plan 03-04
+# adds to auto_generator.py:
+#
+#   - TestNetworkSignature: the new _network_signature(networking) extractor.
+#   - TestResolveFingerprintKey: the new _resolve_fingerprint_key dispatch.
+#   - TestGroupByFingerprintExtended: end-to-end grouping with the extended
+#     _FINGERPRINT_KEYS (now includes chassis.model_name and the
+#     ("networking_sig", _network_signature) callable-extractor tuple).
+#   - TestSpliceUpNicTraffic: extended _splice_stub_lists which, when a
+#     client already has real networking data (from Plan 03-05), splices
+#     traffic=[] into each entry whose state == "up" (D-17 D-3-seam splice).
+#
+# Most tests RED pre-Task-2; two regression-lock tests are GREEN pre-Task-2
+# by construction and documented as such in their docstrings.
+# ===========================================================================
+
+
+class TestNetworkSignature:
+    """D-22 cross-host networking extractor.
+
+    `_network_signature(networking)` returns an order-independent multiset
+    of (type, speed, state, unit_count) tuples — two hosts with the same NICs
+    in different listdir order produce equal signatures. Uses .get(..., '')
+    for every key so pre-grouped (no unit_count) and post-grouped entries
+    both work, and so down entries (no `speed` key per Plan 03-03's emit
+    shape) participate as ('ethernet', '', 'down', ...) rather than crashing
+    with KeyError.
+    """
+
+    def test_empty_networking_returns_empty_tuple(self):
+        assert _network_signature([]) == ()
+
+    def test_single_up_entry_returns_one_element_tuple(self):
+        sig = _network_signature(
+            [{"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}]
+        )
+        assert sig == (("ethernet", 100, "up", 2),)
+
+    def test_order_independent(self):
+        """Same multiset of entries in different list order produce equal sigs."""
+        a = [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+            {"type": "infiniband", "speed": 200, "state": "up", "unit_count": 1},
+        ]
+        b = list(reversed(a))
+        assert _network_signature(a) == _network_signature(b)
+
+    def test_down_entry_without_speed_key_uses_empty_string(self):
+        """Plan 03-03's collector emits down entries with the `speed` key
+        OMITTED entirely (not None, not empty string). The .get(..., '')
+        defense must produce ('ethernet', '', 'down', '') without KeyError."""
+        sig = _network_signature([{"type": "ethernet", "state": "down"}])
+        assert sig == (("ethernet", "", "down", ""),)
+
+    def test_multiple_entries_sorted(self):
+        """Three entries in non-canonical order produce sorted output."""
+        nets = [
+            {"type": "infiniband", "speed": 200, "state": "up", "unit_count": 1},
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+            {"type": "ethernet", "speed": 100, "state": "down", "unit_count": 1},
+        ]
+        sig = _network_signature(nets)
+        # Sorted ascending by the tuple elements.
+        assert sig == (
+            ("ethernet", 100, "down", 1),
+            ("ethernet", 100, "up", 2),
+            ("infiniband", 200, "up", 1),
+        )
+
+
+class TestResolveFingerprintKey:
+    """D-22 dispatch: scalar dotted-string keys go through _get_dotted;
+    (name, extractor) tuples invoke extractor(item.get('networking', []))."""
+
+    def test_scalar_dotted_key_dispatch(self):
+        item = {"chassis": {"model_name": "X"}}
+        assert _resolve_fingerprint_key(item, "chassis.model_name") == "X"
+
+    def test_scalar_dotted_key_missing_returns_empty_string(self):
+        """Scalar dispatch preserves _get_dotted's D-5 empty-string-on-miss."""
+        assert _resolve_fingerprint_key({}, "chassis.model_name") == ""
+
+    def test_callable_extractor_dispatch(self):
+        item = {
+            "networking": [
+                {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}
+            ]
+        }
+        sig = _resolve_fingerprint_key(item, ("networking_sig", _network_signature))
+        assert sig == (("ethernet", 100, "up", 2),)
+
+    def test_callable_extractor_missing_networking_key_defaults_to_empty_list(self):
+        """item.get('networking', []) defends against items with no networking
+        key — the extractor sees [] and returns ()."""
+        item = {"chassis": {"model_name": "X"}}
+        sig = _resolve_fingerprint_key(item, ("networking_sig", _network_signature))
+        assert sig == ()
+
+
+# Helpers for TestGroupByFingerprintExtended — node-description-shaped dicts
+# that include the new chassis.model_name field and a networking list.
+
+
+def _extended_host_dict(
+    *,
+    cpu_model: str = "X",
+    chassis_model: str = "PowerEdge-R760",
+    networking=None,
+) -> dict:
+    """Build a node-description-shaped dict matching Plan 03-05's eventual
+    node_dict_from_host output shape: chassis.model_name populated, and a
+    flat list[dict] networking list."""
+    if networking is None:
+        networking = [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}
+        ]
+    return {
+        "friendly_description": "",
+        "chassis": {
+            "model_name": chassis_model,
+            "cpu_model": cpu_model,
+            "cpu_qty": 2,
+            "cpu_cores": 64,
+            "memory_capacity": 256,
+        },
+        "operating_system": {"name": "Rocky", "version": "9.5"},
+        "networking": networking,
+    }
+
+
+class TestGroupByFingerprintExtended:
+    """End-to-end group_by_fingerprint behavior with the extended
+    _FINGERPRINT_KEYS (chassis.model_name + ("networking_sig", _network_signature)).
+    """
+
+    def test_existing_dotted_only_behavior_unchanged(self):
+        """REGRESSION-LOCK (passes pre-Task-2): explicitly pass the Phase 2
+        scalar-only tuple of keys; group_by_fingerprint should behave exactly
+        as before for purely-dotted-key callers."""
+        phase2_keys = (
+            "chassis.cpu_model",
+            "chassis.cpu_qty",
+            "chassis.cpu_cores",
+            "chassis.memory_capacity",
+            "operating_system.name",
+            "operating_system.version",
+        )
+        items = [_extended_host_dict() for _ in range(3)]
+        result = group_by_fingerprint(items, phase2_keys, "quantity")
+        assert len(result) == 1
+        assert result[0]["quantity"] == 3
+
+    def test_extended_keys_collapse_homogeneous_fleet(self):
+        """Two hosts with identical chassis (incl. model_name) and identical
+        networking signature collapse to one stanza with quantity=2."""
+        items = [_extended_host_dict() for _ in range(2)]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 1
+        assert result[0]["quantity"] == 2
+        assert result[0]["chassis"]["model_name"] == "PowerEdge-R760"
+
+    def test_extended_keys_split_on_chassis_model_difference(self):
+        """Same CPU/memory/OS but different chassis.model_name → 2 stanzas."""
+        items = [
+            _extended_host_dict(chassis_model="PowerEdge-R760"),
+            _extended_host_dict(chassis_model="ProLiant-DL380"),
+        ]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 2
+        assert {r["chassis"]["model_name"] for r in result} == {
+            "PowerEdge-R760",
+            "ProLiant-DL380",
+        }
+        assert all(r["quantity"] == 1 for r in result)
+
+    def test_extended_keys_split_on_networking_signature_difference(self):
+        """Same chassis but one host has a degraded (down) NIC the other
+        doesn't → 2 stanzas. D-22: 'down NICs distinguish hosts at the
+        cross-host level too'."""
+        clean_net = [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}
+        ]
+        degraded_net = [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 1},
+            {"type": "ethernet", "state": "down", "unit_count": 1},
+        ]
+        items = [
+            _extended_host_dict(networking=clean_net),
+            _extended_host_dict(networking=degraded_net),
+        ]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 2
+
+    def test_extended_keys_order_independent_networking(self):
+        """Two hosts that enumerated identical NICs in different listdir
+        order STILL group together — _network_signature is order-independent."""
+        net_a = [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+            {"type": "infiniband", "speed": 200, "state": "up", "unit_count": 1},
+        ]
+        net_b = list(reversed(net_a))
+        items = [
+            _extended_host_dict(networking=net_a),
+            _extended_host_dict(networking=net_b),
+        ]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 1
+        assert result[0]["quantity"] == 2
+
+
+class TestSpliceUpNicTraffic:
+    """D-17 traffic-blank splice on collected up NICs.
+
+    When a client dict already has real networking (provided by Plan 03-05's
+    node_dict_from_host wiring), _splice_stub_lists must iterate the entries
+    and set entry['traffic'] = [] on each up entry (D-3 post-Pydantic seam).
+    When the client has no networking, the helper falls back to the Phase 2
+    behavior (splice in [dict(_NETWORKING_STUB)]).
+    """
+
+    @staticmethod
+    def _dump_with_networking(networking):
+        return {"system_under_test": {"clients": [{"networking": networking}]}}
+
+    def test_real_networking_up_entries_get_traffic_empty_list(self):
+        dump = self._dump_with_networking(
+            [{"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}]
+        )
+        _splice_stub_lists(dump)
+        entry = dump["system_under_test"]["clients"][0]["networking"][0]
+        assert entry["traffic"] == []
+        # Original fields preserved.
+        assert entry["type"] == "ethernet"
+        assert entry["speed"] == 100
+        assert entry["state"] == "up"
+        assert entry["unit_count"] == 2
+
+    def test_real_networking_down_entries_unchanged(self):
+        """Down entries (no speed, no traffic key by Plan 03-03 emit shape)
+        survive the splice with NO traffic key added."""
+        dump = self._dump_with_networking(
+            [{"type": "ethernet", "state": "down", "unit_count": 1}]
+        )
+        _splice_stub_lists(dump)
+        entry = dump["system_under_test"]["clients"][0]["networking"][0]
+        assert "traffic" not in entry
+
+    def test_mixed_up_and_down_only_up_get_traffic_splice(self):
+        dump = self._dump_with_networking(
+            [
+                {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+                {"type": "ethernet", "state": "down", "unit_count": 1},
+            ]
+        )
+        _splice_stub_lists(dump)
+        entries = dump["system_under_test"]["clients"][0]["networking"]
+        # Up entry: has traffic=[]
+        up = next(e for e in entries if e.get("state") == "up")
+        assert up["traffic"] == []
+        # Down entry: no traffic key.
+        down = next(e for e in entries if e.get("state") == "down")
+        assert "traffic" not in down
+
+    def test_no_networking_falls_back_to_stub(self):
+        """REGRESSION-LOCK (passes pre-Task-2): client with no networking
+        key → Phase 2 fallback to [dict(_NETWORKING_STUB)]."""
+        dump = {"system_under_test": {"clients": [{}]}}
+        _splice_stub_lists(dump)
+        assert (
+            dump["system_under_test"]["clients"][0]["networking"]
+            == [dict(_NETWORKING_STUB)]
+        )
+
+    def test_empty_networking_list_falls_back_to_stub(self):
+        """Empty list (falsy) is treated identically to missing key — fall back
+        to the Phase 2 stub."""
+        dump = self._dump_with_networking([])
+        _splice_stub_lists(dump)
+        assert (
+            dump["system_under_test"]["clients"][0]["networking"]
+            == [dict(_NETWORKING_STUB)]
+        )
+
+    def test_existing_phase2_drives_stub_unchanged(self):
+        """REGRESSION-LOCK (passes pre-Task-2): the drives branch always
+        splices _DRIVE_STUB regardless of networking content."""
+        dump = self._dump_with_networking(
+            [{"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}]
+        )
+        _splice_stub_lists(dump)
+        assert (
+            dump["system_under_test"]["clients"][0]["drives"]
+            == [dict(_DRIVE_STUB)]
+        )
+
+    def test_up_entry_traffic_splice_idempotent(self):
+        """Calling _splice_stub_lists twice on the same dump leaves traffic=[]
+        unchanged (idempotence carried forward from Phase 2 contract)."""
+        dump = self._dump_with_networking(
+            [{"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}]
+        )
+        _splice_stub_lists(dump)
+        _splice_stub_lists(dump)
+        entry = dump["system_under_test"]["clients"][0]["networking"][0]
+        assert entry["traffic"] == []
