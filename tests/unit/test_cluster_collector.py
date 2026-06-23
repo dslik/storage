@@ -2050,3 +2050,97 @@ class TestNetworkingMPIScriptParity:
             f"MPI-script collect_networking diverged from module: "
             f"script={a!r} module={b!r}"
         )
+
+
+# =============================================================================
+# Phase 3 Plan 05 — HostInfo dataclass extensions (COLL-03, COLL-04)
+# =============================================================================
+#
+# Plan 03-05 closes the Phase 3 vertical end-to-end by adding two new fields to
+# the HostInfo dataclass — chassis_model (str, populated from
+# data['chassis_model'] in from_collected_data) and networking
+# (List[Dict[str, Any]], populated from data['networking']).
+#
+# These tests are the data-model-side RED for Plan 03-05 Task 1. They mirror
+# the D-16 num_sockets precedent already exercised by
+# TestHostCPUInfoNumSockets (this file, ~line 1361). Defaults are "" and []
+# (the universal D-2 collection-failure blanks); missing keys flow through to
+# those defaults; populated keys flow through to the dataclass.
+# =============================================================================
+
+
+class TestHostInfoChassisField:
+    """Phase 3 / Plan 03-05 — HostInfo.chassis_model field (COLL-03).
+
+    Mirror of D-16 / TestHostCPUInfoNumSockets: dataclass field with a
+    sensible default exists; from_collected_data reads the corresponding
+    dict key and populates it; missing dict key flows to the default.
+    """
+
+    def test_default_empty_string(self):
+        """HostInfo(hostname='h').chassis_model defaults to ''."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo(hostname="h")
+        assert host.chassis_model == ""
+        assert isinstance(host.chassis_model, str)
+
+    def test_populated_via_from_collected_data(self):
+        """from_collected_data reads data['chassis_model'] and stores it
+        on the resulting HostInfo."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo.from_collected_data({
+            "hostname": "h",
+            "chassis_model": "PowerEdge R760",
+        })
+        assert host.chassis_model == "PowerEdge R760"
+
+    def test_missing_chassis_model_key_defaults_to_empty(self):
+        """from_collected_data with no 'chassis_model' key → '' default
+        (universal D-2 collection-failure blank)."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo.from_collected_data({"hostname": "h"})
+        assert host.chassis_model == ""
+
+
+class TestHostInfoNetworkingField:
+    """Phase 3 / Plan 03-05 — HostInfo.networking field (COLL-04).
+
+    Same shape as TestHostInfoChassisField but for the per-host networking
+    list. Default is [] (empty list); populated value flows through
+    verbatim; missing key flows to the default.
+    """
+
+    def test_default_empty_list(self):
+        """HostInfo(hostname='h').networking defaults to []."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo(hostname="h")
+        assert host.networking == []
+        assert isinstance(host.networking, list)
+
+    def test_populated_via_from_collected_data(self):
+        """from_collected_data reads data['networking'] (list of dicts)
+        verbatim onto the dataclass field."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        networking = [
+            {"type": "ethernet", "speed": 100, "state": "up"},
+            {"type": "infiniband", "speed": 200, "state": "up"},
+        ]
+        host = HostInfo.from_collected_data({
+            "hostname": "h",
+            "networking": networking,
+        })
+        assert host.networking == networking
+
+    def test_missing_networking_key_defaults_to_empty_list(self):
+        """from_collected_data with no 'networking' key → [] default
+        (universal D-2 collection-failure blank, list-shape)."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo.from_collected_data({"hostname": "h"})
+        assert host.networking == []
+

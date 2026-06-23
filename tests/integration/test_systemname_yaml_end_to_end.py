@@ -586,3 +586,208 @@ def test_run_does_not_raise_when_cluster_info_start_attribute_is_uninitialized_r
     assert isinstance(clients, list)
     assert len(clients) >= 1
     assert sum(c.get('quantity', 0) for c in clients) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 / Plan 03-05 — end-to-end chassis_model + networking emission
+#
+# These integration tests close the Phase 3 vertical: a HostInfo with
+# populated chassis_model + networking flows through
+# node_dict_from_host → group_by_fingerprint → _splice_stub_lists → yaml.safe_dump
+# and lands real values in the emitted systemname.yaml. They also cover the
+# cross-host fingerprint extensions from Plan 03-04 (chassis.model_name
+# scalar key + ('networking_sig', _network_signature) callable).
+#
+# The fixture style mirrors _make_host above; a new helper
+# _make_host_phase3 layers chassis_model + networking on top of the Phase 2
+# defaults so existing Phase 2 tests are NOT touched.
+# ---------------------------------------------------------------------------
+
+
+def _make_host_phase3(
+    *,
+    chassis_model: str = "PowerEdge R760",
+    networking=None,
+    cpu_model: str = "Intel(R) Xeon Platinum 8480+",
+    num_cores: int = 56,
+    num_sockets: int = 2,
+    mem_bytes: int = 274_877_906_944,
+    os_name: str = "Rocky Linux",
+    os_version: str = "9.5",
+    hostname: str = "h1",
+) -> HostInfo:
+    """Phase 3 extension of _make_host: layers chassis_model + networking on
+    top of the Phase 2 defaults so end-to-end emit can be exercised.
+
+    Default networking = one 100GbE up + one 200Gb IB up — exercises the
+    multi-type path in the per-host grouping pass and the IB-presence
+    path required by Phase 3 Success Criterion #4.
+    """
+    if networking is None:
+        networking = [
+            {"type": "ethernet", "speed": 100, "state": "up"},
+            {"type": "infiniband", "speed": 200, "state": "up"},
+        ]
+    host = _make_host(
+        cpu_model=cpu_model, num_cores=num_cores, num_sockets=num_sockets,
+        mem_bytes=mem_bytes, os_name=os_name, os_version=os_version,
+        hostname=hostname,
+    )
+    host.chassis_model = chassis_model
+    host.networking = networking
+    return host
+
+
+def test_full_run_emits_chassis_model_in_yaml(tmp_path):
+    """Phase 3 success criterion #1: a fully-populated chassis_model surfaces
+    in clients[0].chassis.model_name verbatim in the emitted YAML."""
+    hosts = [_make_host_phase3(chassis_model="PowerEdge R760")]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+
+    data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+    clients = data['system_under_test']['clients']
+    assert len(clients) == 1
+    assert clients[0]['chassis']['model_name'] == "PowerEdge R760"
+
+
+def test_full_run_emits_networking_in_yaml(tmp_path):
+    """Phase 3 success criterion #2 + #4: a host with 100GbE + 200Gb IB
+    emits two stanzas in clients[0].networking (one per type). The up
+    NICs receive the D-17 `traffic: []` splice at _splice_stub_lists time.
+    """
+    hosts = [_make_host_phase3()]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+
+    data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+    networking = data['system_under_test']['clients'][0]['networking']
+    # Two stanzas (one per type) — both up, unit_count=1 each, traffic=[]
+    # via the D-17 splice on up entries.
+    assert len(networking) == 2
+    by_type = {e['type']: e for e in networking}
+    # Ethernet entry — up, 100Gb, count=1, D-17 traffic=[] splice.
+    assert by_type['ethernet']['speed'] == 100
+    assert by_type['ethernet']['state'] == 'up'
+    assert by_type['ethernet']['unit_count'] == 1
+    assert by_type['ethernet']['traffic'] == []
+    # InfiniBand — phase 3 success criterion #4.
+    assert by_type['infiniband']['speed'] == 200
+    assert by_type['infiniband']['state'] == 'up'
+    assert by_type['infiniband']['unit_count'] == 1
+    assert by_type['infiniband']['traffic'] == []
+
+
+def test_full_run_chassis_model_empty_when_collection_failed(tmp_path):
+    """Phase 3 success criterion #1 (failure half): a host with chassis_model=''
+    (collector blind) emits clients[0].chassis.model_name == '' — the visible
+    SER-02 blank — without crashing the write."""
+    hosts = [_make_host_phase3(chassis_model="")]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+
+    data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+    clients = data['system_under_test']['clients']
+    assert len(clients) == 1
+    assert clients[0]['chassis']['model_name'] == ""
+
+
+def test_cross_host_fingerprint_splits_on_chassis_model(tmp_path):
+    """Phase 3 success criterion #5 (chassis differentiation): two hosts
+    identical on CPU/memory/OS/networking but DIFFERENT on chassis_model
+    produce TWO stanzas (one per chassis), not one collapsed stanza.
+    Exercises Plan 03-04's `chassis.model_name` scalar key in _FINGERPRINT_KEYS.
+    """
+    hosts = [
+        _make_host_phase3(hostname="h0", chassis_model="PowerEdge R760"),
+        _make_host_phase3(hostname="h1", chassis_model="ProLiant DL380"),
+    ]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+
+    data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+    clients = data['system_under_test']['clients']
+    assert len(clients) == 2
+    model_names = sorted(c['chassis']['model_name'] for c in clients)
+    assert model_names == ["PowerEdge R760", "ProLiant DL380"]
+    assert sum(c['quantity'] for c in clients) == 2
+
+
+def test_cross_host_fingerprint_splits_on_networking_signature(tmp_path):
+    """Phase 3 success criterion #5 (networking signature differentiation):
+    two hosts identical on chassis/CPU/memory/OS, one with a down NIC the
+    other does NOT have, produce two stanzas. Exercises Plan 03-04's
+    `('networking_sig', _network_signature)` callable extractor.
+    """
+    clean_nics = [
+        {"type": "ethernet", "speed": 100, "state": "up"},
+        {"type": "ethernet", "speed": 100, "state": "up"},
+    ]
+    degraded_nics = [
+        {"type": "ethernet", "speed": 100, "state": "up"},
+        {"type": "ethernet", "speed": 100, "state": "down"},
+    ]
+    hosts = [
+        _make_host_phase3(hostname="h0", networking=clean_nics),
+        _make_host_phase3(hostname="h1", networking=degraded_nics),
+    ]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+
+    data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+    clients = data['system_under_test']['clients']
+    # Two stanzas — degraded vs clean — even though every other field matches.
+    assert len(clients) == 2
+    assert sum(c['quantity'] for c in clients) == 2
+
+
+def test_full_run_emits_networking_blank_stub_when_no_collected_data(tmp_path):
+    """Phase 3 D-2 universal blank fallback: a host with networking=[]
+    (collector failed entirely) → clients[0].networking == [_NETWORKING_STUB]
+    via the _splice_stub_lists fallback branch (Plan 03-04 extended).
+    """
+    hosts = [_make_host_phase3(networking=[])]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+
+    data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+    networking = data['system_under_test']['clients'][0]['networking']
+    # _splice_stub_lists fell back to the _NETWORKING_STUB blank entry.
+    assert len(networking) == 1
+    stub_entry = networking[0]
+    assert stub_entry['unit_count'] == ""
+    assert stub_entry['type'] == ""
+    assert stub_entry['state'] == ""
+    assert stub_entry['speed'] == ""
+    assert stub_entry['traffic'] == []
+
+
+def test_validator_no_chassis_error_when_dmi_populated(tmp_path):
+    """SER-03 success criterion #4 (Phase 3 extension): with a populated
+    chassis_model from the collector, schema_validator.validate_file does
+    NOT report `chassis -> model_name` as an error.
+
+    Sibling test to test_validator_errors_only_on_blanks (which keeps
+    exercising the blank-chassis case with the Phase 2 fixture). Together
+    they verify the validator's SER-02 surface migrates from "always-blank"
+    to "blank-only-when-collection-failed" in Phase 3.
+    """
+    from mlpstorage_py.system_description import schema_validator
+
+    hosts = [_make_host_phase3(chassis_model="PowerEdge R760")]
+    bm = _make_benchmark(tmp_path, hosts)
+    bm.run()
+    target = _yaml_path(tmp_path)
+    assert target.exists()
+
+    errors = schema_validator.validate_file(str(target))
+    error_paths = {e.split(":", 1)[0].strip() for e in errors}
+
+    # The chassis -> model_name path MUST NOT appear in any error now that
+    # the collector supplied a real value.
+    for ep in error_paths:
+        assert "chassis -> model_name" not in ep, (
+            f"chassis.model_name unexpectedly errored in {ep!r} when "
+            f"DMI was populated; node_dict_from_host should have wired "
+            f"the real chassis_model through."
+        )

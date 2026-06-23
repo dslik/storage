@@ -223,8 +223,12 @@ def test_node_dict_cpu_fields():
     assert "rack_units" not in result["chassis"]
     assert "power" not in result["chassis"]
 
-    # Stub-splice / Phase 4 / quantity-injection territory — not here.
-    assert "networking" not in result
+    # Phase 3 / Plan 03-05: networking is now emitted directly by
+    # node_dict_from_host (from host.networking via per-host group_by_fingerprint
+    # or [] when host.networking is empty). The _make_host helper produces a
+    # HostInfo with the default empty `networking=[]`, so the emit here is [].
+    assert result["networking"] == []
+    # drives / environment / sysctl / quantity remain post-process territory.
     assert "drives" not in result
     assert "environment" not in result
     assert "sysctl" not in result
@@ -321,11 +325,20 @@ def test_os_field_mapping():
 
 
 def test_node_dict_no_extra_keys():
-    """Schema discipline: top-level keys are exactly the three Phase 2 emits."""
+    """Schema discipline: top-level keys are exactly the four Phase 3 emits.
+
+    Phase 3 / Plan 03-05 adds the "networking" key directly to the emit
+    (previously spliced post-process by _splice_stub_lists). For a host
+    with empty networking, the emitted "networking" value is []; downstream
+    _splice_stub_lists then falls back to the _NETWORKING_STUB blank entry
+    per D-3 / D-17.
+    """
     host = _make_host(cpu=HostCPUInfo(model="X", num_cores=4, num_sockets=1))
     result = node_dict_from_host(host)
 
-    assert set(result.keys()) == {"friendly_description", "chassis", "operating_system"}
+    assert set(result.keys()) == {
+        "friendly_description", "chassis", "operating_system", "networking",
+    }
     assert set(result["chassis"].keys()) == {
         "model_name",
         "cpu_model",
@@ -333,6 +346,9 @@ def test_node_dict_no_extra_keys():
         "cpu_cores",
         "memory_capacity",
     }
+    # Empty networking on the host → empty list emitted directly (D-3 fallback
+    # then converts this to the blank stub at _splice_stub_lists time).
+    assert result["networking"] == []
 
 
 def test_node_dict_field_names_match_pydantic_reflection():
@@ -974,3 +990,149 @@ class TestSpliceUpNicTraffic:
         _splice_stub_lists(dump)
         entry = dump["system_under_test"]["clients"][0]["networking"][0]
         assert entry["traffic"] == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Plan 05 — node_dict_from_host wires chassis_model + networking
+# (COLL-03 + COLL-04 end-to-end closure)
+#
+# Plan 03-05 Task 1 RED: these test classes exercise the new
+# node_dict_from_host emit shape that pulls chassis.model_name from
+# host.chassis_model (Pattern F defensive blank-on-falsy) and emits a
+# top-level "networking" key from group_by_fingerprint(host.networking,
+# ("type","speed","state"), "unit_count") when host.networking is
+# truthy, else [].
+# ---------------------------------------------------------------------------
+
+
+def _phase3_host(
+    *,
+    chassis_model: str = "",
+    networking=None,
+    cpu_model: str = "X",
+    num_cores: int = 4,
+    num_sockets: int = 1,
+):
+    """Build a HostInfo seeded with optional chassis_model + networking
+    fields. Reuses the Phase 2 _make_host helper for cpu/memory/system."""
+    host = _make_host(cpu=HostCPUInfo(
+        model=cpu_model, num_cores=num_cores, num_sockets=num_sockets,
+    ))
+    # Plan 03-05 will add the two attributes to HostInfo; assigning to a
+    # frozen-default field reuses the dataclass surface produced by
+    # from_collected_data. Pre-Task-2 these assignments succeed (dataclass
+    # is non-frozen) but the production code does not yet consume them; the
+    # tests below assert on the emitted dict, which is what fails RED.
+    host.chassis_model = chassis_model
+    host.networking = networking if networking is not None else []
+    return host
+
+
+class TestNodeDictChassisModel:
+    """node_dict_from_host wires host.chassis_model → chassis.model_name.
+
+    Pattern F defensive guard: (host.chassis_model or "") coerces a falsy
+    value (None included) to the blank-string emit per universal D-2.
+    """
+
+    def test_real_chassis_model_passes_through(self):
+        """A populated chassis_model surfaces verbatim in chassis.model_name."""
+        host = _phase3_host(chassis_model="PowerEdge R760")
+        result = node_dict_from_host(host)
+        assert result["chassis"]["model_name"] == "PowerEdge R760"
+
+    def test_empty_chassis_model_emits_blank(self):
+        """An empty chassis_model produces the SER-02 blank in chassis.model_name."""
+        host = _phase3_host(chassis_model="")
+        result = node_dict_from_host(host)
+        assert result["chassis"]["model_name"] == ""
+
+    def test_none_chassis_model_emits_blank(self):
+        """Pattern F defense: a host whose chassis_model is None (e.g. from
+        a malicious worker / future refactor) still emits "" not None or a
+        crash. `(host.chassis_model or "")` does the coercion."""
+        host = _phase3_host()
+        host.chassis_model = None  # defeat dataclass default for the test
+        result = node_dict_from_host(host)
+        assert result["chassis"]["model_name"] == ""
+
+
+class TestNodeDictNetworking:
+    """node_dict_from_host wires host.networking → top-level "networking" key.
+
+    Per-host grouping pass: identical (type, speed, state) NICs collapse
+    into a single stanza with unit_count=N. Empty/missing host.networking
+    produces an empty list (the _splice_stub_lists D-3 fallback then
+    substitutes the _NETWORKING_STUB blank stanza downstream).
+    """
+
+    def test_real_networking_grouped_per_host(self):
+        """Two identical up-NIC dicts collapse to one stanza with unit_count=2."""
+        host = _phase3_host(networking=[
+            {"type": "ethernet", "speed": 100, "state": "up"},
+            {"type": "ethernet", "speed": 100, "state": "up"},
+        ])
+        result = node_dict_from_host(host)
+        assert result["networking"] == [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+        ]
+
+    def test_empty_networking_emits_empty_list(self):
+        """Host with no networking → "networking": [] (D-3 stub-splice fallback
+        is downstream's responsibility)."""
+        host = _phase3_host(networking=[])
+        result = node_dict_from_host(host)
+        assert result["networking"] == []
+
+    def test_mixed_up_and_down_grouped_separately(self):
+        """D-22 per-host grouping: 2 up + 1 down 100GbE → two stanzas
+        (state differs across the per-host fingerprint)."""
+        host = _phase3_host(networking=[
+            {"type": "ethernet", "speed": 100, "state": "up"},
+            {"type": "ethernet", "speed": 100, "state": "up"},
+            {"type": "ethernet", "speed": 100, "state": "down"},
+        ])
+        result = node_dict_from_host(host)
+        # Two stanzas, total NICs counted correctly across both.
+        assert len(result["networking"]) == 2
+        unit_counts = sorted(e["unit_count"] for e in result["networking"])
+        assert unit_counts == [1, 2]
+        states = sorted(e["state"] for e in result["networking"])
+        assert states == ["down", "up"]
+
+
+class TestNodeDictReflection:
+    """Phase 3 reflection: chassis still issubset of Chassis fields; the
+    new top-level "networking" key joins the emitted dict by direct
+    construction (not by _splice_stub_lists splice as in Phase 2)."""
+
+    def test_node_dict_field_names_match_pydantic_reflection_after_phase3(self):
+        """Top-level emit now includes "networking" directly; chassis still
+        issubset of Chassis schema (model_name now populated)."""
+        from mlpstorage_py.system_description.schema_validator import (
+            Chassis,
+            OperatingSystem,
+        )
+
+        host = _phase3_host(
+            chassis_model="PowerEdge R760",
+            networking=[{"type": "ethernet", "speed": 100, "state": "up"}],
+        )
+        result = node_dict_from_host(host)
+
+        # Top-level keys now include the directly-emitted "networking" key.
+        assert set(result.keys()) == {
+            "friendly_description", "chassis", "operating_system", "networking",
+        }
+
+        chassis_keys = set(result["chassis"].keys())
+        chassis_schema_keys = set(Chassis.model_fields.keys())
+        assert chassis_keys.issubset(chassis_schema_keys), (
+            f"chassis dict has fields Chassis Pydantic does not: "
+            f"{chassis_keys - chassis_schema_keys}"
+        )
+
+        os_keys = set(result["operating_system"].keys())
+        os_schema_keys = set(OperatingSystem.model_fields.keys())
+        assert os_keys == os_schema_keys
+
