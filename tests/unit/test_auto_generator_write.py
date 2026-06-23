@@ -372,16 +372,24 @@ def test_yaml_formatting_integers_tagged_not_string(args, cluster_info, target_p
 
 
 def test_yaml_block_style(args, cluster_info, target_path):
-    """D-10: no `{` flow markers. `[` only appears in legitimate empty-list cases."""
+    """D-10: no `{` flow markers. `[` only appears in legitimate empty-list cases.
+
+    Allowed empty-list keys (kept as explicit `key: []` for self-documenting output
+    so readers see "nothing here" rather than a silent omission):
+      - traffic        (Phase 2 D-10 precedent)
+      - sysctl         (Phase 4 — allowlist-driven, empty is meaningful)
+      - environment    (Phase 4 — allowlist-driven, empty is meaningful)
+    Drives is omitted entirely when empty per D-33 (client nodes commonly have none).
+    """
     write_systemname_yaml(args, cluster_info, MagicMock())
     text = target_path.read_text()
     assert "{" not in text, f"flow-style {{ leaked in:\n{text}"
-    # `[` only legitimately appears in `traffic: []` (empty list, allowed).
-    # Strip those occurrences and ensure no other `[` remains.
-    stripped = re.sub(r'"traffic":\s*\[\]', "", text)
-    stripped = re.sub(r"traffic:\s*\[\]", "", stripped)
+    stripped = text
+    for key in ("traffic", "sysctl", "environment"):
+        stripped = re.sub(rf'"{key}":\s*\[\]', "", stripped)
+        stripped = re.sub(rf"{key}:\s*\[\]", "", stripped)
     assert "[" not in stripped, (
-        f"flow-style [ leaked outside empty traffic list in:\n{stripped}"
+        f"flow-style [ leaked outside allowed empty-list keys in:\n{stripped}"
     )
 
 
