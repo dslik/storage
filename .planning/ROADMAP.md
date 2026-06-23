@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Canonical Layout & Init** — Add `mlpstorage init <orgname> <path>` plus the `mlperf-results.yaml` sentinel; refactor `generate_output_location()` to emit the Rules.md §2.1-shaped tree; add `--systemname` CLI flag + `MLPERF_SYSTEMNAME` env-var default; update affected tests. (Completed 2026-06-19 — LAY-01..LAY-08 all green.)
 - [x] **Phase 2: First-Run Write of Partial systemname.yaml** — On first `run`, write a quantity-grouped `systemname.yaml` containing CPU, memory, and OS for every client; leave non-derivable fields blank; no-op if the file already exists. (Plans 02-01..05 complete 2026-06-19; CR-01 closed by 02-06 gap-closure 2026-06-20; re-verification 2026-06-20 passed 7/7; UAT 4/4 passed end-to-end on real-system smoke 2026-06-22.) (completed 2026-06-22)
 - [ ] **Phase 3: Chassis Model + Networking Coverage** — Extend the auto-filled YAML with DMI chassis `model_name` and a `networking[]` block sourced from sysfs.
-- [ ] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
+- [x] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
 - [ ] **Phase 5: Logical Diff Lifecycle + Capacity Gate** — On re-runs, diff the in-memory image against the on-disk YAML for collector-owned fields and fail on drift; preserve user-filled blanks when unchanged; refuse to start `datagen` if the dataset destination directory lacks free space.
 
 ## Phase Details
@@ -143,7 +143,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The generated drive entries do NOT contain `media_type`, `form_factor`, or `performance` (those remain blank for the submitter to fill from spec sheets per SER-02).
   5. On a host where `lsblk` is not installed or returns no devices, `clients[].drives` is omitted from the YAML and `run` still completes without error.
 
-**Plans:** 4/5 plans complete
+**Plans:** 5/5 plans complete
 **Wave 1**
 
 - [x] 04-01-PLAN.md — Slice 1: sysctl collector + allowlist file + MPI script duplication (COLL-05; D-27/28/29/36)
@@ -154,9 +154,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] 04-04-PLAN.md — Slice 4: 3 fingerprint signature extractors + generalized _resolve_fingerprint_key dispatch + extended _FINGERPRINT_KEYS + D-33 _splice_stub_lists drives-omit branch (COLL-05/06/07 transform-side; D-33/34/35)
 
-**Wave 3** *(blocked on Wave 2)*
+**Wave 3** *(complete)*
 
-- [ ] 04-05-PLAN.md — Slice 5: HostInfo.sysctl + HostInfo.environment + HostInfo.drives + node_dict_from_host emit-shape extension + end-to-end integration tests (COLL-05/06/07 closure)
+- [x] 04-05-PLAN.md — Slice 5: HostInfo.sysctl + HostInfo.environment + HostInfo.drives + node_dict_from_host emit-shape extension + end-to-end integration tests (COLL-05/06/07 closure)
 
 ### Phase 5: Logical Diff Lifecycle + Capacity Gate
 

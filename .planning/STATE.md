@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 04 Plan 04 complete — 3 fingerprint signature extractors + generalized _resolve_fingerprint_key dispatch + extended _FINGERPRINT_KEYS (8→11) + D-33 _splice_stub_lists drives-omit branch (COLL-05/06/07 transform-side; D-33/34/35)"
-last_updated: "2026-06-23T22:30:00.000Z"
-last_activity: 2026-06-23 -- Phase 04 Plan 04 complete (transform-layer extensions + D-33 splice; COLL-05/06/07 transform-side)
+stopped_at: "Phase 04 Plan 05 complete — HostInfo.sysctl/.environment/.drives fields + HostInfo.from_collected_data extension + node_dict_from_host emit-shape extension (3 new top-level keys) + per-host group_by_fingerprint pass for drives + 9 end-to-end integration tests covering ROADMAP SC #1-5 + D-33 omit-key path live-confirmed on WSL2 (COLL-05/06/07 closure)"
+last_updated: "2026-06-23T23:00:00.000Z"
+last_activity: 2026-06-23 -- Phase 04 Plan 05 complete (HostInfo + node_dict_from_host wire-through end-to-end; COLL-05/06/07 closure; Phase 4 vertical end-to-end COMPLETE)
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 21
-  completed_plans: 20
-  percent: 75
+  completed_plans: 21
+  percent: 80
 ---
 
 # Project State
@@ -25,23 +25,23 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 
 ## Current Position
 
-Phase: 04 (sysctl-environment-and-drives-coverage) — EXECUTING
-Plan: 5 of 5
-Status: Executing Phase 04
-Last activity: 2026-06-23 -- Phase 04 Plan 04 complete (3 fingerprint signatures + generalized dispatch + D-33 splice; COLL-05/06/07 transform-side)
+Phase: 04 (sysctl-environment-and-drives-coverage) — COMPLETE (vertical end-to-end SHIPPED)
+Plan: 5 of 5 (complete)
+Status: Phase 04 vertical end-to-end COMPLETE; awaiting /gsd-verify-phase 04 to flip to `verified`, then /gsd-transition to advance to Phase 5
+Last activity: 2026-06-23 -- Phase 04 Plan 05 complete (HostInfo + node_dict_from_host wire-through end-to-end; COLL-05/06/07 closure; Phase 4 vertical end-to-end COMPLETE)
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
 Progress (Phase 3): [██████████] 100% (5/5 plans complete; Plan 03-01 schema extension + Plan 03-02 chassis collector + Plan 03-03 networking collector + Plan 03-04 transform-layer extensions + Plan 03-05 HostInfo + node_dict_from_host wire-through end-to-end all green)
-Progress (Phase 4): [████████░░] 80% (4/5 plans complete; Plan 04-01 sysctl collector + Plan 04-02 environment collector + unified redactors + Plan 04-03 drives collector via lsblk -J -b + Plan 04-04 transform-layer 3 signatures + generalized dispatch + D-33 splice all green)
+Progress (Phase 4): [██████████] 100% (5/5 plans complete; Plan 04-01 sysctl collector + Plan 04-02 environment collector + unified redactors + Plan 04-03 drives collector via lsblk -J -b + Plan 04-04 transform-layer 3 signatures + generalized dispatch + D-33 splice + Plan 04-05 HostInfo + node_dict_from_host wire-through end-to-end all green; Phase 4 vertical end-to-end COMPLETE)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 32
+- Total plans completed: 33
 - Average duration: ~25 min
-- Total execution time: ~353 min
+- Total execution time: ~375 min
 
 **By Phase:**
 
@@ -50,6 +50,7 @@ Progress (Phase 4): [████████░░] 80% (4/5 plans complete; Pl
 | 01 | 5 | - | - |
 | 02 | 6 | - | - |
 | 03 | 5 | ~112min | ~22.4min |
+| 04 | 5 | ~110min | ~22min |
 
 **Recent Trend:**
 
@@ -149,11 +150,16 @@ Recent decisions affecting current work:
 - Execute 04-04 deviation (Rule 3): tests/integration/test_systemname_yaml_end_to_end.py::test_validator_errors_only_on_blanks asserted the schema validator surfaces errors under clients[].drives[*] (Phase-2 stub-blank behavior). Per D-33, drives key is OMITTED entirely; `drives` is Optional on NodeDescription, so the validator does NOT surface a drives[*] error path. Test updated to assert (a) drives key absent from on-disk YAML via yaml.safe_load, and (b) no drives error in validator output. Folded into the GREEN commit (same convention as Plan 04-02's redactor contract-test updates and Plan 04-03's RM-bool Rule 1 fix). Rule 3 (not Rule 1 or 4) because the production code is correct — the test simply needs to assert on the new D-33 contract instead of the old Phase-2 stub-blank contract.
 - Execute 04-04 surprise: NONE in production code. `key=repr` was shipped from first GREEN diff per PATTERNS.md guidance (NOT discovered during GREEN as in Plan 03-04). The mixed-type sort safety contract for `_drive_signature` was explicitly tested as load-bearing in `TestDriveSignature::test_mixed_type_sort_safety_per_d22_key_repr` (int 500 vs str '' collision); the test would fail without `key=repr` but the GREEN code shipped it from the start. The only "surprise" was the planner not flagging the integration-test-impact zone in the PLAN.md test-impact list (scoped to test_auto_generator.py only); this is logged as a Rule 3 finding rather than a surprise because PATTERNS.md DID flag the D-33 splice change as test-impacting, just not in the integration file specifically.
 - Execute 04-04 process: NO `git stash` used. Read-only inspection only via the Read tool against committed files. Test contract updates folded into the same commit as the production change that requires them (RED for unit tests, GREEN for the integration test — the integration test wasn't in the planner's test-impact zone so it surfaced during GREEN broader-suite verification, which is exactly when Rule 3 fires).
+- Execute 04-05: Phase 4 vertical end-to-end COMPLETE. HostInfo dataclass extension shipped verbatim per D-16 / Phase-3 chassis_model / networking precedent — three new fields appended after the Phase-3 `networking` field and before `collection_timestamp`: `sysctl: List[Dict[str, Any]] = field(default_factory=list)`, `environment: List[Dict[str, Any]] = field(default_factory=list)`, `drives: List[Dict[str, Any]] = field(default_factory=list)`. HostInfo.from_collected_data reads `data.get('sysctl' / 'environment' / 'drives', [])` and passes them as kwargs to cls(...). HostInfo.from_dict left untouched (consistent with the Phase 3 precedent — the schema-validator reconstruction path doesn't consume the Phase-4 fields). node_dict_from_host extended with three new top-level emit keys inserted between Phase-3 `networking` and `operating_system`: `"sysctl": list(host.sysctl)` (shallow-copy pass-through), `"environment": list(host.environment)` (shallow-copy pass-through), `"drives": per_host_drives` (per-host group_by_fingerprint over `(vendor_name, model_name, interface, capacity_in_GB)` with `unit_count` — mirrors Phase 3 networking grouping pattern verbatim). Three existing tests updated in the RED commit for the Phase-4 7-key emit set: test_node_dict_cpu_fields, test_node_dict_no_extra_keys, TestNodeDictReflection (the last renamed `...after_phase3` → `...after_phase4`). 25 new unit tests (12 in test_cluster_collector.py for HostInfo extension; 13 in test_auto_generator.py for node_dict_from_host extension + Phase 4 reflection) + 9 new integration tests in TestPhase4EndToEnd (covering ROADMAP SC #1-5 + D-35 cross-host strict-split + homogeneous-collapse + Yamale schema validation) all green; no regressions in the 1849-passing unit suite.
+- Execute 04-05: Phase 4 Success Criteria 1-5 all addressed end-to-end. (1) sysctl populated from /proc/sys allowlist surfaces in `clients[].sysctl[]` (Plan 04-01 + Plan 04-05; live WSL2 smoke: 134 entries). (2) environment populated with D-23 first-4/last-4 mask on AWS_ACCESS_KEY_ID + D-24 length-only sentinel on AWS_SECRET_ACCESS_KEY surfaces in `clients[].environment[]` already-redacted (Plan 04-02 + Plan 04-05). (3) drives populated with `(vendor, model, interface, capacity_in_GB)` group + unit_count surfaces in `clients[].drives[]` (Plan 04-03 + Plan 04-05). (4) drives entries do NOT contain `media_type`, `form_factor`, or `performance` (the collector emits only the four COLL-07 fields; verified by `TestPhase4EndToEnd::test_yamale_schema_validation_passes_on_phase_4_emit_shape`). (5) lsblk absent / no devices / all-filtered → drives key OMITTED from emitted YAML at the client-stanza level (D-33; Plan 04-04 splice + Plan 04-05 emit; verified by `TestPhase4EndToEnd::test_drives_absent_omits_drives_key_d33` AND live-confirmed on WSL2 dev shell where every TRAN is null and `collect_drives()` returns [] end-to-end). D-35 strict cross-host split policy verified by three sibling tests (`test_two_hosts_differ_on_{sysctl,drives,environment}_split_to_two_stanzas`). Manual-only verifications (real bare-metal lsblk with NVMe + SATA + SAS mix, real AWS_SECRET_ACCESS_KEY in environment with confirmed redaction, multi-host sysctl divergence) remain submitter-side smoke checks per VALIDATION.md §"Manual-Only Verifications".
+- Execute 04-05: zero auto-fixed deviations and zero process deviations. RED → GREEN was clean on first run; no Rule 1/2/3 fixes needed. The mixed-type sort issue Plan 04-05's planner flagged as a possible Plan-03-04-style surprise for the per-host drives group_by_fingerprint pass did NOT materialize — `group_by_fingerprint` uses `_resolve_fingerprint_key` which for scalar dotted keys (the per-host drives fingerprint is 4 scalar string-keyed dotted strings, NOT a callable extractor tuple) calls `_get_dotted` which returns the value or `""` on miss. Mixed types only arise in the cross-host `_drive_signature` callable extractor (which uses `key=repr` since Plan 04-04), not in the per-host pass. NO `git stash` used. Suite runtime ~28s for 1849 tests (full unit suite). Same 8 pre-existing failures (out-of-scope per Rule 3 scope boundary; documented in STATE.md Deferred Items).
+- Execute 04-05 surprise: live WSL2 dev-shell end-to-end smoke confirmed the D-33 omit-key path on real `collect_local_system_info()` → `HostInfo.from_collected_data` → `node_dict_from_host` → `_splice_stub_lists` → on-disk YAML chain. `data['sysctl']` returns 134 entries (Plan 04-01 allowlist matches flow through), `data['environment']` returns 0 entries (no AWS_*/MLPERF_*/NCCL_* set in dev shell — universal D-2 empty-list path), `data['drives']` returns 0 entries (Plan 04-03 collector returns [] on WSL2 because every TRAN is null and D-31 filter drops all rows). The on-disk YAML at `/tmp/.../sys-v1.yaml` has client0 keys = {chassis, environment, friendly_description, networking, operating_system, quantity, sysctl} — NO drives key. ROADMAP SC #5 contract live-confirmed at the YAML level, not just via mocked integration tests.
+- Execute 04-05 process: NO `git stash` used. Read-only inspection only via the Read tool against committed files. Two-commit RED/GREEN cadence preserved cleanly (dc3ab89 RED + 840cbfe GREEN). Test contract updates for the Phase-4 7-key emit set folded into RED so GREEN remained purely additive on production code (same convention as Plan 03-05 + Plan 04-04). Phase 4 vertical end-to-end COMPLETE — Phase 4 status now `100% (5/5 plans)` and awaiting `/gsd-verify-phase 04` then `/gsd-transition` to advance to Phase 5.
 
 ### Pending Todos
 
-- Phase 3 vertical end-to-end COMPLETE. Awaiting /gsd-verify-phase 03 to flip Phase 3 status from `executing` to `verified`, then /gsd-transition to advance to Phase 4 (drives[] population — COLL-05, COLL-06, COLL-07 per ROADMAP.md).
-- Phase 4 forward note from 03-CONTEXT.md remains valid: drives[] will likely follow the same patterns established in Phase 3 — schema extension (DriveInstance.state? — discuss in Phase 4 plan), per-host drive grouping key `(vendor_name, model_name, interface, media_type, capacity_in_GB)`, cross-host inclusion via `_drive_signature` extractor following the same pattern as `_network_signature`, HostInfo gains `drives` field appended after the Phase 3 `networking` field.
+- **Phase 4 vertical end-to-end COMPLETE.** Awaiting `/gsd-verify-phase 04` to flip Phase 4 status from `executing` to `verified`, then `/gsd-transition` to advance to Phase 5 (LIFE-02 logical-diff lifecycle + CAP-01 capacity gate + CAP-02 shared-filesystem verification per ROADMAP.md).
+- Phase 3 vertical end-to-end COMPLETE. Awaiting /gsd-verify-phase 03 to flip Phase 3 status from `executing` to `verified` (still pending — can be batched with Phase 4 verification).
 - Phase 5 planning input: CAP-02 (shared-filesystem verification) added to scope on 2026-06-22. Pre-flight check that all hosts in a multi-host datagen / run see the same shared filesystem at `--data-dir`. Implementation choice deferred to Phase 5 discuss/plan — candidates: `stat -f -c '%i' <data-dir>` (shell), `os.statvfs(<data-dir>).f_fsid` (Python stdlib), or write-sentinel-and-read-on-peer (most robust but heavier). The fsid-comparison approach is simpler but has known edge cases with bind mounts / FUSE; planner should weigh tradeoffs and may want a sentinel-file fallback for high-confidence operations.
 - /gsd-secure-phase 02 — security review skipped via explicit Path-B override during transition; backfill when convenient.
 - Phase 2 UAT surfaced 3 out-of-Phase-2 follow-ups (recorded in `02-UAT.md` Gaps): (a) docs cleanup for CLAUDE.md / 02-VERIFICATION.md test instructions (init step omitted, h100 vs b200, root-only `/databases/...` path); (b) Phase 1 Slice 4 runtime gate gap — `mlpstorage init` doesn't satisfy `MLPSTORAGE_ORGNAME` env-var requirement; (c) VectorDB+KVCache preview-OPEN-bump regression — **fix shipped as PR #488** (https://github.com/mlcommons/storage/pull/488, awaiting review/merge).
@@ -174,15 +180,16 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-23T22:30:00.000Z
-Stopped at: Phase 04 Plan 04 complete — 3 fingerprint signature extractors (`_sysctl_signature`, `_environment_signature`, `_drive_signature`) + `_EXTRACTOR_SOURCE_KEYS` dispatch map + generalized `_resolve_fingerprint_key` + extended `_FINGERPRINT_KEYS` (8 → 11-tuple) + D-33 `_splice_stub_lists` drives-omit branch + 1 Rule 3 integration-test contract update (COLL-05/06/07 transform-side; D-33/34/35)
-Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-04-SUMMARY.md
+Last session: 2026-06-23T23:00:00.000Z
+Stopped at: Phase 04 Plan 05 complete — HostInfo.sysctl + HostInfo.environment + HostInfo.drives fields + HostInfo.from_collected_data extension + node_dict_from_host emit-shape extension (3 new top-level keys; per-host group_by_fingerprint pass for drives) + 25 new unit tests + 9 new integration tests (TestPhase4EndToEnd covering ROADMAP SC #1-5 + D-35 cross-host strict-split + homogeneous-collapse + Yamale schema validation) all green. Phase 4 vertical end-to-end COMPLETE. D-33 omit-key path LIVE-CONFIRMED on WSL2 dev shell.
+Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-05-SUMMARY.md
 Next-session options:
-  (a) Continue Phase 4: `/gsd-execute-phase 4` — Plan 04-05 is the final integration layer (HostInfo.sysctl + HostInfo.environment + HostInfo.drives fields + node_dict_from_host emit-shape extension + end-to-end integration tests; COLL-05/06/07 closure). This is what realizes the end-to-end value of Plans 04-01/02/03/04: the new collectors + the new transform layer get wired into the data path so a real `mlpstorage run` produces YAML where sysctl + environment + drives blocks reflect actual collected data.
-  (b) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately.
-  (c) Cheap hygiene: `/gsd-secure-phase 02` (Path-B skipped during transition) or REQUIREMENTS.md traceability sync for SCH-01/BUN-01/ADP-01.
-Open follow-ups carried forward (all from prior phases, not blocking Phase 3):
+  (a) Verify Phase 4: `/gsd-verify-phase 04` — flip Phase 4 status from `executing` to `verified`. Standard Phase 2/3-style verification: re-run the full Phase 4 target slice (`tests/unit/test_cluster_collector.py tests/unit/test_auto_generator.py tests/integration/test_systemname_yaml_end_to_end.py`), check ROADMAP SC #1-5 coverage, generate 04-VERIFICATION.md.
+  (b) Transition Phase 4 → Phase 5: `/gsd-transition` — advance to Phase 5 (LIFE-02 logical-diff lifecycle + CAP-01 capacity gate + CAP-02 shared-filesystem verification per ROADMAP.md).
+  (c) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately. Can be batched alongside Phase 4 verification on the same hardware.
+  (d) Cheap hygiene: `/gsd-secure-phase 02` (Path-B skipped during transition) or REQUIREMENTS.md traceability sync for SCH-01/BUN-01/ADP-01.
+Open follow-ups carried forward (all from prior phases, not blocking Phase 4 close):
 
-  - Phase 5 LIFE-02 scope expanded to include Phase 3 CR-01 (`HostInfo.to_dict()` drift on chassis_model + networking) in addition to Phase 2 WR-03 (`num_sockets`).
+  - Phase 5 LIFE-02 scope expanded to include Phase 3 CR-01 (`HostInfo.to_dict()` drift on chassis_model + networking) AND now Phase 4 (`HostInfo.to_dict()` also missing sysctl + environment + drives — 5 fields total). Documented in 04-05-SUMMARY.md Forward Notes.
   - Phase 2 PR #488 (preview-OPEN-bump fix) merged via dca0ace upstream sync 2026-06-22.
-  - 03-REVIEW.md WR-01..WR-05 + IN-01..IN-06: hardening items for Phase 4/5 backlog (mostly Phase 5 LIFE-02 lifecycle territory).
+  - 03-REVIEW.md WR-01..WR-05 + IN-01..IN-06: hardening items for Phase 5 backlog (mostly Phase 5 LIFE-02 lifecycle territory).
