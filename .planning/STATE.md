@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: "Phase 04 context gathered (D-23..D-36 locked: env redaction policy, sysctl allowlist file, drive filters, no schema change, strict cross-host fingerprint)"
-last_updated: "2026-06-23T19:16:55.778Z"
-last_activity: 2026-06-22 -- Phase 03 Plan 05 complete (Phase 3 vertical end-to-end closed)
+status: executing
+stopped_at: "Phase 04 Plan 01 complete — sysctl collector + shipped allowlist file + MPI script twin (COLL-05)"
+last_updated: "2026-06-23T21:00:00.000Z"
+last_activity: 2026-06-23 -- Phase 04 Plan 01 complete (sysctl collector COLL-05)
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 16
-  completed_plans: 16
-  percent: 60
+  total_plans: 21
+  completed_plans: 17
+  percent: 65
 ---
 
 # Project State
@@ -21,18 +21,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-18)
 
 **Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
-**Current focus:** Phase 03 — chassis-model-networking-coverage
+**Current focus:** Phase 04 — sysctl-environment-and-drives-coverage
 
 ## Current Position
 
-Phase: 03 (chassis-model-networking-coverage) — EXECUTING (final plan complete; awaiting verify+transition)
-Plan: 5 of 5 (complete)
-Status: Phase 03 plans complete; awaiting /gsd-verify-phase 03
-Last activity: 2026-06-22 -- Phase 03 Plan 05 complete (Phase 3 vertical end-to-end closed)
+Phase: 04 (sysctl-environment-and-drives-coverage) — EXECUTING
+Plan: 2 of 5
+Status: Executing Phase 04
+Last activity: 2026-06-23 -- Phase 04 Plan 01 complete (sysctl collector COLL-05)
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
 Progress (Phase 3): [██████████] 100% (5/5 plans complete; Plan 03-01 schema extension + Plan 03-02 chassis collector + Plan 03-03 networking collector + Plan 03-04 transform-layer extensions + Plan 03-05 HostInfo + node_dict_from_host wire-through end-to-end all green)
+Progress (Phase 4): [██░░░░░░░░] 20% (1/5 plans complete; Plan 04-01 sysctl collector + allowlist file + Pattern B twin green)
 
 ## Performance Metrics
 
@@ -133,6 +134,8 @@ Recent decisions affecting current work:
 - Execute 03-05: zero auto-fixed deviations and zero process deviations. RED → GREEN was clean on first run; no Rule 1/2/3 fixes needed. Suite runtime ~29.3s for 1711 tests (full unit + systemname.yaml integration). The same 7 pre-existing `_check_safe_path_component` MagicMock fixture failures (test_datagen_command_generation + test_rules_calculations) persist out-of-scope per Rule 3 scope boundary; the same 3 pre-existing dev-env collection-error files (`test_benchmarks_base.py`, `test_parquet_reader.py`, `test_vdb_modular_fake_backend.py`) still need `--ignore=` flags.
 - Execute 03-05 surprise: two existing tests required additive updates (not new tests). test_node_dict_cpu_fields and test_node_dict_no_extra_keys both assert exact set equality on the top-level emitted dict keys; Phase 3 adds "networking" to that set. The updates are additive (one new expected key in each set) and add a positive `result["networking"] == []` assertion. Lesson: when adding new top-level emit keys, audit the test suite for exact-set-equality assertions and update them in the RED commit so GREEN is purely additive on the production side.
 - Execute 03-05 process: NO `git stash` used. Read-only inspection only via the Read tool against committed files.
+- Execute 04-01: sysctl collector shipped as 4 new module symbols (`_PROC_SYS_ROOT`, `_SYSCTL_ALLOWLIST_PATH`, `_load_sysctl_allowlist`, `collect_sysctl`) + new shipped data file `mlpstorage_py/system_description/sysctl_allowlist.txt` (the load-bearing artifact for COLL-05's "no code change required to add a sysctl key" success criterion). Two-scope D-2 envelope: outer `try` around `os.walk` → `[]` on catastrophic failure; per-leaf `try` around `open(leaf).read()` → `continue` on PermissionError / OSError (RESEARCH Q2: write-only leaves like `vm.drop_caches`, `kernel.sysrq`, `route/flush` are mode 0200 and `open()` raises EACCES on read, not on stat). D-29 multi-value verbatim emit: `rstrip('\n')` only — internal tabs preserved so `net.ipv4.tcp_rmem` returns `"4096\t87380\t16777216"` cleanly. 8 KiB read cap mirrors the chassis_model defense-in-depth pattern even though /proc/sys is PAGE_SIZE-buffered to ~4 KiB. Pattern B (D-36): twin `_load_sysctl_allowlist` + `collect_sysctl` inline in `MPI_COLLECTOR_SCRIPT` with allowlist baked as `_SYSCTL_ALLOWLIST_LINES` tuple literal (script forbids file I/O for package-data lookups; sync between shipped file and tuple is manual discipline documented in the script comment). Module-side imports added: `fnmatch`, `pathlib.Path`, `typing.Pattern`. 18 new tests across 5 classes (TestSysctlAllowlistFile, TestLoadSysctlAllowlist, TestSysctlCollector, TestSysctlMPIScriptParity, TestSysctlWiring) all green; 197 tests pass in test_cluster_collector.py with no new regressions. The 7 pre-existing `_check_safe_path_component` MagicMock failures persist out-of-scope per Rule 3.
+- Execute 04-01: zero auto-fixed deviations and zero process deviations. RED → GREEN was clean on first run; no Rule 1/2/3 fixes needed. The `proc_sys_root` parameter default made every `TestSysctlCollector` test trivial — each test builds a `tmp_path/proc/sys/...` tree and passes it directly with no monkeypatch-of-globals; only the PermissionError-isolation test patches `builtins.open` (and only for the specific leaf path being tested). NO `git stash` used. Read-only inspection only.
 
 ### Pending Todos
 
@@ -158,9 +161,9 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-23T16:46:31.477Z
-Stopped at: Phase 04 context gathered (D-23..D-36 locked: env redaction policy, sysctl allowlist file, drive filters, no schema change, strict cross-host fingerprint)
-Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-CONTEXT.md
+Last session: 2026-06-23T21:00:00.000Z
+Stopped at: Phase 04 Plan 01 complete — sysctl collector + shipped allowlist file + MPI script twin (COLL-05)
+Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-01-SUMMARY.md
 Next-session options:
   (a) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately.
   (b) Start Phase 4 in parallel (recommended — UAT is independent of code progression): `/gsd-discuss-phase 4` — Sysctl + Environment + Drives, MVP mode, COLL-05/06/07. Drives pattern mirrors Phase 3 (schema → collector → transform extractor → HostInfo wire-through); per-host drive grouping key `(vendor_name, model_name, interface, media_type, capacity_in_GB)`, cross-host inclusion via `_drive_signature` extractor following `_network_signature` pattern from Plan 03-04.

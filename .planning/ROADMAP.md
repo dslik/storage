@@ -146,7 +146,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 5 plans
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Slice 1: sysctl collector + allowlist file + MPI script duplication (COLL-05; D-27/28/29/36)
+- [x] 04-01-PLAN.md — Slice 1: sysctl collector + allowlist file + MPI script duplication (COLL-05; D-27/28/29/36)
 - [ ] 04-02-PLAN.md — Slice 2: environment collector + redactor unification in storage_config.py + MPI script duplication + ROADMAP SC #2 reconciliation (COLL-06; D-23/24/25/26/36)
 - [ ] 04-03-PLAN.md — Slice 3: drives collector via lsblk -J -b subprocess + D-31 filter + MPI script duplication (COLL-07; D-30/31/33/36)
 
