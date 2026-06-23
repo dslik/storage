@@ -44,11 +44,16 @@ def _clear_all_endpoint_vars(monkeypatch):
 
 class TestCredentialRedaction:
     def test_access_key_redacted_when_set(self, monkeypatch):
+        # Phase 4 / Plan 04-02 (D-23 / D-25) — KEY_ID now flows through
+        # `_mask_credential_id` rather than the legacy length-only `_redact`.
+        # The deliberate UX change is called out in 04-CONTEXT.md D-25.
+        # Contract preserved: the raw value MUST NOT appear; the redacted
+        # form is the first-4 / **** / last-4 mask.
         raw = 'AKIAIOSFODNN7EXAMPLE'
         monkeypatch.setenv('AWS_ACCESS_KEY_ID', raw)
         config = resolve_object_storage_config()
         assert raw not in str(config), "Raw access key must not appear in resolved config"
-        assert '[SET —' in config['aws_access_key_id_redacted']
+        assert config['aws_access_key_id_redacted'] == 'AKIA****MPLE'
 
     def test_access_key_not_set(self, monkeypatch):
         monkeypatch.delenv('AWS_ACCESS_KEY_ID', raising=False)

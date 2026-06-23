@@ -192,10 +192,20 @@ class TestCredentialDisplay:
 
     @patch('mlpstorage_py.run_summary.logger')
     def test_credentials_never_plain_text(self, mock_logger, monkeypatch):
-        """Raw AWS_ACCESS_KEY_ID value must not appear in any logger.status call."""
+        """Raw credential values must not appear in any logger.status call.
+
+        Phase 4 / Plan 04-02 (D-23 / D-25) — KEY_ID flows through the new
+        `_mask_credential_id` helper (first-4 / **** / last-4 mask) instead
+        of the legacy length-only `_redact`. SECRET still flows through the
+        new length-only `_redact_secret` (D-24). The test sets BOTH credentials
+        and asserts (a) neither raw value appears in output and (b) both
+        redacted forms appear — the masked form for KEY_ID, the length-only
+        sentinel for SECRET.
+        """
         from mlpstorage_py.run_summary import print_run_summary
 
         monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'secret123')
+        monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'mysecretvalue')
         monkeypatch.setenv('BUCKET', 'test-bucket')
 
         args = _make_args(data_access_protocol='object')
@@ -203,10 +213,18 @@ class TestCredentialDisplay:
 
         output = _joined_status_calls(mock_logger)
         assert 'secret123' not in output, (
-            f"Raw credential 'secret123' must not appear in output, got: {output!r}"
+            f"Raw KEY_ID 'secret123' must not appear in output, got: {output!r}"
         )
+        assert 'mysecretvalue' not in output, (
+            f"Raw SECRET 'mysecretvalue' must not appear in output, got: {output!r}"
+        )
+        # D-23: KEY_ID 'secret123' (9 chars) → 'secr****t123' (first-4 + **** + last-4).
+        assert 'secr****t123' in output, (
+            f"Expected D-23 masked KEY_ID 'secr****t123' in output, got: {output!r}"
+        )
+        # D-24: SECRET 'mysecretvalue' (13 chars) → '[SET — 13 chars]'.
         assert '[SET —' in output, (
-            f"Expected redacted '[SET —' marker in output, got: {output!r}"
+            f"Expected D-24 length-only SECRET sentinel '[SET —' in output, got: {output!r}"
         )
 
 

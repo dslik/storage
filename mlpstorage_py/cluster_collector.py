@@ -23,6 +23,7 @@ from typing import Any, Dict, Final, List, Optional, Pattern, Tuple
 
 from mlpstorage_py.config import MPIRUN, MPIEXEC, MPI_RUN_BIN, MPI_EXEC_BIN
 from mlpstorage_py.interfaces.collector import ClusterCollectorInterface, CollectionResult
+from mlpstorage_py.storage_config import _mask_credential_id, _redact_secret
 
 
 # =============================================================================
@@ -1165,6 +1166,79 @@ def collect_sysctl(
 
 
 # =============================================================================
+# Phase 4 Plan 04-02 — Environment collector (D-23, D-24, D-25, D-26, COLL-06)
+# =============================================================================
+#
+# `collect_environment()` filters `os.environ` to a prefix-or-literal allowlist
+# (D-26: BUCKET literal + AWS_*, STORAGE_*, OMPI_*, UCX_*, NCCL_* prefixes) and
+# dispatches AWS credential vars through the unified storage_config redactors
+# (D-23 `_mask_credential_id` for KEY_ID; D-24 `_redact_secret` for SECRET).
+# All other matching vars are emitted verbatim.
+#
+# The returned list is sorted by `name` for deterministic emit (D-34 fingerprint
+# stability — different host environments must produce the same byte order
+# when the var set is identical).
+#
+# Pattern B duplicate (D-36): the four symbols (_ENV_LITERALS, _ENV_PREFIXES,
+# _env_allowlist_match, collect_environment) plus the two redactors (untyped
+# form) live inline in MPI_COLLECTOR_SCRIPT below. The parity test exec's the
+# script in a controlled namespace and asserts behavioral equivalence on a
+# monkeypatched os.environ snapshot.
+# =============================================================================
+
+_ENV_LITERALS: Final[frozenset] = frozenset({"BUCKET"})
+
+_ENV_PREFIXES: Final[Tuple[str, ...]] = (
+    "AWS_",
+    "STORAGE_",
+    "OMPI_",
+    "UCX_",
+    "NCCL_",
+)
+
+
+def _env_allowlist_match(name: str) -> bool:
+    """Return True iff `name` is in `_ENV_LITERALS` or starts with any
+    element of `_ENV_PREFIXES` (D-26).
+
+    Case-sensitive (matches POSIX env-var convention; `bucket` is NOT a
+    BUCKET match).
+    """
+    return name in _ENV_LITERALS or name.startswith(_ENV_PREFIXES)
+
+
+def collect_environment() -> List[Dict[str, str]]:
+    """Return allowlisted environment variables, with AWS credentials redacted.
+
+    Per D-26: only vars whose name matches `_env_allowlist_match` are emitted.
+    Per D-23: AWS_ACCESS_KEY_ID flows through `_mask_credential_id`.
+    Per D-24: AWS_SECRET_ACCESS_KEY flows through `_redact_secret`.
+    All other matching vars are emitted verbatim.
+    Per D-34: output is sorted by `name` for deterministic fingerprinting.
+
+    D-2 envelope: any exception (e.g., the allowlist match function blowing
+    up, a hostile os.environ surface) yields `[]` rather than raising. The
+    collector never fails the benchmark.
+
+    Returns:
+        Sorted list of ``{"name": str, "value": str}`` dicts.
+    """
+    try:
+        out: List[Dict[str, str]] = []
+        for name, value in sorted(os.environ.items()):
+            if not _env_allowlist_match(name):
+                continue
+            if name == "AWS_ACCESS_KEY_ID":
+                value = _mask_credential_id(value)
+            elif name == "AWS_SECRET_ACCESS_KEY":
+                value = _redact_secret(value)
+            out.append({"name": name, "value": value})
+        return out
+    except Exception:
+        return []
+
+
+# =============================================================================
 # Local System Information Collection
 # =============================================================================
 
@@ -1305,6 +1379,17 @@ def collect_local_system_info() -> Dict[str, Any]:
     except Exception as e:
         result['errors']['sysctl'] = str(e)
         result['sysctl'] = []
+
+    # Collect os.environ → environment[] (D-23 KEY_ID mask, D-24 SECRET length-only,
+    # D-25 unified redactors, D-26 prefix-or-literal allowlist, COLL-06).
+    # collect_environment applies the D-2 envelope internally and never raises;
+    # the outer try/except mirrors the chassis_model / networking / sysctl shape
+    # as defense-in-depth.
+    try:
+        result['environment'] = collect_environment()
+    except Exception as e:
+        result['errors']['environment'] = str(e)
+        result['environment'] = []
 
     # Collect /proc/vmstat
     try:
@@ -1906,6 +1991,66 @@ def collect_sysctl(proc_sys_root=_PROC_SYS_ROOT, allowlist=None):
     return out
 
 
+# Phase 4 Plan 04-02 (D-23, D-24, D-25, D-26, COLL-06) — Pattern B (RESEARCH
+# 675-679) duplication of the environment collector + the two unified
+# redactors. Must stay in behavioral parity with the module-level versions in
+# storage_config.py and the module copy in this file; the parity test in
+# tests/unit/test_cluster_collector.py::TestEnvironmentMPIScriptParity fails
+# on any drift. Untyped form so the script survives on Python 3.8 hosts in
+# heterogeneous SSH-fan-out fleets.
+#
+# The script cannot import storage_config (it runs as a generated string
+# over SSH on hosts that may not have the mlpstorage_py package installed),
+# so both redactors are inlined here.
+_ENV_LITERALS = ("BUCKET",)
+
+_ENV_PREFIXES = ("AWS_", "STORAGE_", "OMPI_", "UCX_", "NCCL_")
+
+
+def _redact_secret(val):
+    """Length-only credential redactor (mirror of storage_config copy, D-24)."""
+    if val is None:
+        return "[not set]"
+    if val == "":
+        return "[SET — empty]"
+    return "[SET — " + str(len(val)) + " chars]"
+
+
+def _mask_credential_id(val):
+    """First-4/last-4 mask (mirror of storage_config copy, D-23)."""
+    if val is None:
+        return "[not set]"
+    if val == "":
+        return "[SET — empty]"
+    if len(val) < 8:
+        return "****"
+    return val[:4] + "****" + val[-4:]
+
+
+def _env_allowlist_match(name):
+    """Prefix-or-literal allowlist match (mirror of module copy, D-26)."""
+    return name in _ENV_LITERALS or name.startswith(_ENV_PREFIXES)
+
+
+def collect_environment():
+    """Filter os.environ to allowlist with credential dispatch (mirror of
+    module copy, D-23 / D-24 / D-26). Sorted by name for D-34 stability.
+    D-2 envelope: any exception yields []."""
+    try:
+        out = []
+        for name, value in sorted(os.environ.items()):
+            if not _env_allowlist_match(name):
+                continue
+            if name == "AWS_ACCESS_KEY_ID":
+                value = _mask_credential_id(value)
+            elif name == "AWS_SECRET_ACCESS_KEY":
+                value = _redact_secret(value)
+            out.append({"name": name, "value": value})
+        return out
+    except Exception:
+        return []
+
+
 def collect_local_info():
     """Collect system information from the local node."""
     result = {
@@ -2018,6 +2163,16 @@ def collect_local_info():
     except Exception as e:
         result['errors']['sysctl'] = str(e)
         result['sysctl'] = []
+
+    # Collect os.environ → environment[] (D-23 / D-24 / D-26, COLL-06) —
+    # Pattern B parallel to the module-side wiring in collect_local_system_info.
+    # collect_environment applies D-2 internally; this outer try/except is
+    # defense-in-depth.
+    try:
+        result['environment'] = collect_environment()
+    except Exception as e:
+        result['errors']['environment'] = str(e)
+        result['environment'] = []
 
     if not result['errors']:
         del result['errors']
