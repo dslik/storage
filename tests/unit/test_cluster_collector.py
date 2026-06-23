@@ -1601,3 +1601,449 @@ class TestMPIScriptParity:
             assert ns['_normalize_dmi'](sample) == _normalize_dmi(sample), (
                 f"MPI-script _normalize_dmi diverged from module on {sample!r}"
             )
+
+
+# =============================================================================
+# Phase 3 Plan 03 — Networking Collector (D-18 filter scope, D-19 IB-first,
+# D-20 operstate mapping + effective-state demotion). RESEARCH 484-519 decision
+# tree; RESEARCH 763-851 tmp_path fixture patterns (Pattern D — NOT mock_open).
+# =============================================================================
+
+
+def _make_iface(net_dir, name, *, type_val="1", operstate="up", speed="10000",
+                bonding_slaves=None, master_target=None, bridge=False):
+    """Build a fake /sys/class/net/<name>/ directory tree.
+
+    - type_val: contents of <iface>/type (default "1" == ARPHRD_ETHER).
+    - operstate: contents of <iface>/operstate.
+    - speed: contents of <iface>/speed; pass None to OMIT the file entirely
+      (simulates drivers that don't expose the speed file at all, where read
+      raises FileNotFoundError and the helper returns the default -1).
+    - bonding_slaves: when not None, makes the iface a bond master by creating
+      <iface>/bonding/slaves with the given content.
+    - master_target: when set, creates <iface>/master symlink pointing at
+      net_dir/<master_target> (matches the D-18 bond-slave detection branch).
+    - bridge: when True, creates <iface>/bridge/ subdir → bridge-master skip.
+
+    Returns the iface directory Path (caller may add iflink/ifindex etc.).
+    """
+    from pathlib import Path
+    d = Path(net_dir) / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "type").write_text(type_val)
+    (d / "operstate").write_text(operstate)
+    if speed is not None:
+        (d / "speed").write_text(speed)
+    if bonding_slaves is not None:
+        (d / "bonding").mkdir(exist_ok=True)
+        (d / "bonding" / "slaves").write_text(bonding_slaves)
+    if master_target is not None:
+        # Permissive (Linux allows dangling symlinks); os.readlink reads the
+        # raw target string without dereferencing.
+        try:
+            (d / "master").symlink_to(Path(net_dir) / master_target)
+        except (OSError, NotImplementedError):
+            # macOS / locked-down envs may refuse; we don't run there in CI
+            # but be defensive so the fixture still constructs.
+            pass
+    return d
+
+
+def _make_ib_port(ib_dir, dev, port, *, state="4: ACTIVE\n",
+                  rate="100 Gb/sec (4X EDR)\n"):
+    """Build a fake /sys/class/infiniband/<dev>/ports/<port>/{state,rate}."""
+    from pathlib import Path
+    p = Path(ib_dir) / dev / "ports" / port
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "state").write_text(state)
+    (p / "rate").write_text(rate)
+    return p
+
+
+class TestNetworkingFilters:
+    """D-18 interface filtering: lo, docker*, virbr*, veth*, tun*, tap*, gre*,
+    wg*, ib*, iboeth*, ib_eth*, bridge masters, VLAN sub-interfaces, MACVLAN/
+    IPVLAN sub-interfaces, bond slaves. All cases include a real eth0 to lock
+    that the filter excludes ONLY the offender, not the whole walk."""
+
+    @pytest.mark.parametrize("excluded_name", [
+        "lo",
+        "docker0",
+        "docker123",
+        "virbr0",
+        "veth123abc",
+        "veth9d8e3f",
+        "tun0",
+        "tap0",
+        "gre0",
+        "wg0",
+    ])
+    def test_excluded_iface_by_name_prefix(self, tmp_path, excluded_name):
+        """D-18 name-prefix shortcut: each excluded prefix variant is filtered
+        from the net walk; eth0 (always included) confirms the walk did not
+        early-exit on the offender."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        _make_iface(net, excluded_name, operstate="up", speed="10000")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        types = [e["type"] for e in result]
+        assert types == ["ethernet"], (
+            f"Expected only eth0 to survive; got {result!r}"
+        )
+
+    def test_bridge_master_filtered(self, tmp_path):
+        """D-18: a bridge master (br0 with /bridge/ subdir) is skipped because
+        its speed is meaningless (kernel reports 10 regardless of real ports)."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        _make_iface(net, "br0", operstate="up", speed="10", bridge=True)
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        types_and_speeds = [(e["type"], e.get("speed")) for e in result]
+        assert types_and_speeds == [("ethernet", 10)], (
+            f"Bridge master br0 must be filtered; got {result!r}"
+        )
+
+    def test_vlan_subif_filtered_via_iflink_mismatch(self, tmp_path):
+        """D-18: VLAN sub-interface eth0.100 has iflink != ifindex pointing
+        at the parent. Filter detects the mismatch and skips the sub-iface."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        # Parent eth0: iflink == ifindex
+        eth0 = _make_iface(net, "eth0", operstate="up", speed="10000")
+        (eth0 / "iflink").write_text("2")
+        (eth0 / "ifindex").write_text("2")
+        # VLAN child: iflink points back at eth0 (2), ifindex is its own (5)
+        vlan = _make_iface(net, "eth0.100", operstate="up", speed="10000")
+        (vlan / "iflink").write_text("2")
+        (vlan / "ifindex").write_text("5")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert len(result) == 1, f"VLAN sub-iface must be filtered; got {result!r}"
+        assert result[0]["type"] == "ethernet"
+        assert result[0]["speed"] == 10
+
+    def test_bond_slave_filtered(self, tmp_path):
+        """D-18: a NIC whose <iface>/master symlink target basename starts
+        with 'bond' is a bond slave and must be filtered. Bond aggregation
+        is exercised separately (TestNetworkingBond)."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        # Make a bond master so the master target exists in this fixture
+        _make_iface(net, "bond0", operstate="up", speed="10000",
+                    bonding_slaves="eth_slave\n")
+        # Slave: master symlinks to bond0
+        _make_iface(net, "eth_slave", operstate="up", speed="10000",
+                    master_target="bond0")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        # eth0 (1) + bond0 (1, aggregated) = 2 entries; eth_slave filtered.
+        assert len(result) == 2, (
+            f"Bond slave must be filtered; got {result!r}"
+        )
+
+    def test_ib_prefix_filtered_from_net_walk(self, tmp_path):
+        """D-19 belt-and-suspenders: ib0 (IPoIB shadow) under /sys/class/net
+        is skipped because the IB walk is the authoritative source. iboeth*
+        and ib_eth* are also skipped per D-18 forward-compat."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        _make_iface(net, "ib0", operstate="up", speed="100000")
+        _make_iface(net, "iboeth0", operstate="up", speed="100000")
+        _make_iface(net, "ib_eth0", operstate="up", speed="100000")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        types_and_speeds = [(e["type"], e.get("speed")) for e in result]
+        assert types_and_speeds == [("ethernet", 10)], (
+            f"ib* prefixes must be filtered from net walk; got {result!r}"
+        )
+
+
+class TestNetworkingBond:
+    """D-18 bond master aggregation: emit one entry per LAG with speed = sum
+    of active slave speeds (Mbps) // 1000. Bond's own speed file is ignored
+    per Pitfall 4 (unreliable on many drivers)."""
+
+    def test_bond_master_aggregate_speed(self, tmp_path):
+        """Two-slave 10G LAG: bond0 emits ONE entry with speed=20 (Gbps)."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth1", operstate="up", speed="10000",
+                    master_target="bond0")
+        _make_iface(net, "eth2", operstate="up", speed="10000",
+                    master_target="bond0")
+        _make_iface(net, "bond0", operstate="up", speed="10000",
+                    bonding_slaves="eth1 eth2\n")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert len(result) == 1, f"Bond aggregate should be ONE entry; got {result!r}"
+        assert result[0] == {"type": "ethernet", "speed": 20, "state": "up"}
+
+    def test_bond_master_with_all_slaves_down(self, tmp_path):
+        """All slaves report speed=-1; aggregate=0 → bond emits as down with
+        no speed key. Submitter sees a visible degraded LAG."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth1", operstate="down", speed="-1",
+                    master_target="bond0")
+        _make_iface(net, "eth2", operstate="down", speed="-1",
+                    master_target="bond0")
+        _make_iface(net, "bond0", operstate="up", speed="-1",
+                    bonding_slaves="eth1 eth2\n")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert len(result) == 1
+        assert result[0] == {"type": "ethernet", "state": "down"}, (
+            f"Down bond must emit no speed key; got {result[0]!r}"
+        )
+
+    def test_bond_master_single_active_slave(self, tmp_path):
+        """Active-backup: one slave up @10G, one down. Aggregate = 10 Gbps."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth1", operstate="up", speed="10000",
+                    master_target="bond0")
+        _make_iface(net, "eth2", operstate="down", speed="-1",
+                    master_target="bond0")
+        _make_iface(net, "bond0", operstate="up", speed="10000",
+                    bonding_slaves="eth1 eth2\n")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert len(result) == 1
+        assert result[0] == {"type": "ethernet", "speed": 10, "state": "up"}
+
+
+class TestNetworkingOperstate:
+    """D-20 operstate mapping: up | unknown → up; everything else → down."""
+
+    def test_operstate_up_passes_through(self, tmp_path):
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert result == [{"type": "ethernet", "speed": 10, "state": "up"}]
+
+    def test_operstate_unknown_treated_as_up(self, tmp_path):
+        """D-20 permissive mapping: 'unknown' → up (virtio drivers don't
+        update operstate reliably; ignoring this would systematically
+        misreport VM NICs as down)."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="unknown", speed="10000")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert result == [{"type": "ethernet", "speed": 10, "state": "up"}]
+
+    def test_operstate_down_emits_down(self, tmp_path):
+        """D-20: operstate=down → state=down with no speed key emitted.
+        Same shape for dormant/notpresent/lowerlayerdown/testing (everything
+        not in {up,unknown}); we exercise the canonical 'down' value here."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="down", speed="-1")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert result == [{"type": "ethernet", "state": "down"}]
+
+
+class TestNetworkingEffectiveState:
+    """D-20 effective-state demotion: operstate=up AND speed in {-1, 0}
+    means state=down. Pitfall 2 (virtio speed=-1) lock."""
+
+    def test_virtio_speed_minus_one_demotes_to_down(self, tmp_path):
+        """The Pitfall 2 lock: a virtio NIC reports operstate=up + speed=-1.
+        Without demotion, the emit would be (speed: -1, state: up) which is
+        Pydantic-invalid (speed has ge=1). D-20 fixes this at the collector
+        layer so downstream never sees the invalid combination."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="-1")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert result == [{"type": "ethernet", "state": "down"}], (
+            f"virtio speed=-1 must demote to down; got {result!r}"
+        )
+
+    def test_speed_zero_demotes_to_down(self, tmp_path):
+        """D-20: speed=0 with operstate=up is operationally equivalent to
+        down — an interface that negotiated nothing is not passing traffic."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="0")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "no_ib"))
+        assert result == [{"type": "ethernet", "state": "down"}]
+
+
+class TestNetworkingInfiniband:
+    """D-19 IB-first: walk /sys/class/infiniband/<dev>/ports/<port>/. One
+    entry per port (a dual-port HCA produces two entries). State parses
+    '4:' prefix → up; everything else → down. Rate parses int(rate.split()[0])."""
+
+    def test_active_ib_port_emits_up(self, tmp_path):
+        from mlpstorage_py.cluster_collector import collect_networking
+        ib = tmp_path / "ib"
+        ib.mkdir()
+        _make_ib_port(ib, "mlx5_0", "1",
+                      state="4: ACTIVE\n", rate="100 Gb/sec (4X EDR)\n")
+        result = collect_networking(net_root=str(tmp_path / "no_net"),
+                                    ib_root=str(ib))
+        assert result == [{"type": "infiniband", "speed": 100, "state": "up"}]
+
+    def test_down_ib_port_emits_down_no_speed(self, tmp_path):
+        """D-19: state != '4:' → down; emit no speed key (consistent with
+        ethernet down emission so the splice path handles both identically)."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        ib = tmp_path / "ib"
+        ib.mkdir()
+        _make_ib_port(ib, "mlx5_0", "1",
+                      state="1: DOWN\n", rate="0 Gb/sec\n")
+        result = collect_networking(net_root=str(tmp_path / "no_net"),
+                                    ib_root=str(ib))
+        assert result == [{"type": "infiniband", "state": "down"}]
+
+    def test_dual_port_hca_emits_two_entries(self, tmp_path):
+        """D-19 port-per-entry: a single device with two ports produces
+        two networking entries. Plan 03-04's group_by_fingerprint then
+        collapses identical (type,speed,state) tuples to unit_count=2."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        ib = tmp_path / "ib"
+        ib.mkdir()
+        _make_ib_port(ib, "mlx5_0", "1")
+        _make_ib_port(ib, "mlx5_0", "2")
+        result = collect_networking(net_root=str(tmp_path / "no_net"),
+                                    ib_root=str(ib))
+        assert len(result) == 2
+        for entry in result:
+            assert entry == {"type": "infiniband", "speed": 100, "state": "up"}
+
+    def test_no_ib_root_returns_empty_ib_section(self, tmp_path):
+        """The os.path.isdir(ib_root) guard makes a missing /sys/class/
+        infiniband (the common case on hosts without IB hardware) a clean
+        no-op rather than an exception."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        result = collect_networking(net_root=str(net),
+                                    ib_root=str(tmp_path / "definitely_no_ib"))
+        # Just the ethernet entry; no IB-derived entries.
+        assert result == [{"type": "ethernet", "speed": 10, "state": "up"}]
+
+    def test_unparseable_rate_demotes_to_down(self, tmp_path):
+        """D-19 blank-splice for unparseable rate: state says ACTIVE but the
+        rate file is empty / garbled — without a parseable speed the entry
+        cannot truthfully claim 'up' (Pydantic NetworkPort.state=='up'
+        requires speed). Emit as down with no speed key."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        ib = tmp_path / "ib"
+        ib.mkdir()
+        _make_ib_port(ib, "mlx5_0", "1",
+                      state="4: ACTIVE\n", rate="")
+        result = collect_networking(net_root=str(tmp_path / "no_net"),
+                                    ib_root=str(ib))
+        assert result == [{"type": "infiniband", "state": "down"}]
+
+
+class TestNetworkingHotUnplug:
+    """Per-iface defense (D-2 universal rule applied at iface scope): a NIC
+    that disappears between os.listdir and the per-iface reads must be
+    silently skipped; no exception escapes collect_networking."""
+
+    def test_iface_disappears_between_listdir_and_read_skipped(self, tmp_path):
+        """Simulate hot-unplug: os.listdir returns eth0, but open(eth0/type)
+        raises FileNotFoundError because the kernel removed the iface dir
+        between enumeration and read. Function must return [], not raise."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        net = tmp_path / "net"
+        net.mkdir()
+        # Pretend eth0 was there at listdir time but its files are absent
+        # by the time we try to read. Use os.listdir patching to inject
+        # the name, then the natural FileNotFoundError on open(net/eth0/type)
+        # exercises the per-iface try/except.
+        real_listdir = os.listdir
+
+        def fake_listdir(path):
+            if path == str(net):
+                return ["eth0"]
+            return real_listdir(path)
+
+        with patch("mlpstorage_py.cluster_collector.os.listdir",
+                   side_effect=fake_listdir):
+            result = collect_networking(net_root=str(net),
+                                        ib_root=str(tmp_path / "no_ib"))
+        assert result == [], (
+            f"Hot-unplug must skip the iface, not raise; got {result!r}"
+        )
+
+
+class TestNetworkingIntegration:
+    """The top-level collect_local_system_info orchestrator wires networking
+    into its result dict per the same Pattern A try/except as the rest of
+    the per-field reads."""
+
+    def test_local_system_info_includes_networking_key(self):
+        """Universal-rule contract: the networking key is always present and
+        is always a list (possibly empty on a host with no real NICs to
+        report, e.g. dev shell with only virtuals)."""
+        result = collect_local_system_info()
+        assert "networking" in result
+        assert isinstance(result["networking"], list)
+
+
+class TestNetworkingMPIScriptParity:
+    """Pattern B (RESEARCH 675-679) extension to networking: every new
+    module-scope symbol added to the collector also lives inside the
+    MPI worker script string. Drift between the two copies produces
+    divergent per-host data shapes; this parity test catches drift on
+    the canonical sysfs fixture from RESEARCH 763-822."""
+
+    def test_networking_functions_match_module(self, tmp_path):
+        """exec MPI_COLLECTOR_SCRIPT in a controlled namespace; build a
+        small ethernet+IB fixture; assert the script's collect_networking
+        produces the same output as the module's on that fixture."""
+        from mlpstorage_py.cluster_collector import collect_networking
+        ns = {}
+        try:
+            exec(MPI_COLLECTOR_SCRIPT, ns)
+        except BaseException:
+            # SystemExit / ImportError / etc from the MPI-only top-level;
+            # function DEFs already landed before the raise.
+            pass
+        assert "collect_networking" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define collect_networking inline "
+            "(Pattern B duplication)."
+        )
+        # Ethernet fixture
+        net = tmp_path / "net"
+        net.mkdir()
+        _make_iface(net, "eth0", operstate="up", speed="10000")
+        # IB fixture
+        ib = tmp_path / "ib"
+        ib.mkdir()
+        _make_ib_port(ib, "mlx5_0", "1")
+        a = ns["collect_networking"](str(net), str(ib))
+        b = collect_networking(str(net), str(ib))
+        assert a == b, (
+            f"MPI-script collect_networking diverged from module: "
+            f"script={a!r} module={b!r}"
+        )
