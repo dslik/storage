@@ -366,12 +366,31 @@ def test_validator_errors_only_on_blanks(tmp_path):
             + "\n".join(sorted(error_paths))
         )
 
-    # Stub list fields (D-3) — at least one error under networking[*] and drives[*].
+    # Stub list fields (D-3) — at least one error under networking[*].
     assert any("networking" in p for p in error_paths), (
         "expected at least one error under clients[].networking[*]"
     )
-    assert any("drives" in p for p in error_paths), (
-        "expected at least one error under clients[].drives[*]"
+
+    # Phase 4 / D-33: drives key is OMITTED entirely from the YAML when no
+    # drives data was collected. `drives` is an Optional field on
+    # NodeDescription, so the Pydantic validator does NOT surface an error
+    # path under drives[*] — the SER-02 signal is "no drives: block at all,
+    # submitter must hand-fill if applicable". Verify the omission against
+    # the on-disk YAML directly.
+    import yaml as _yaml
+    with open(target) as fh:
+        loaded = _yaml.safe_load(fh)
+    client0 = loaded["system_under_test"]["clients"][0]
+    assert "drives" not in client0, (
+        f"Phase 4 / D-33 violation: drives key present in emitted YAML "
+        f"client[0]; expected key OMITTED. client[0]={client0!r}"
+    )
+    # And the validator must NOT surface a drives[*] error (Optional field
+    # absent is legal at the schema layer).
+    assert not any("drives" in p for p in error_paths), (
+        f"Phase 4 / D-33 violation: expected NO error path under drives "
+        f"(Optional field, key omitted per D-33), but got: "
+        f"{[p for p in error_paths if 'drives' in p]}"
     )
 
     # Filled fields — these MUST NOT appear in any error path.

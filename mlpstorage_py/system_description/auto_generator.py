@@ -100,17 +100,74 @@ def _network_signature(networking: list) -> tuple:
     ))
 
 
+def _sysctl_signature(sysctl: list) -> tuple:
+    """D-34 cross-host sysctl extractor (Phase 4 / COLL-05): order-independent
+    multiset of (name, value) tuples.
+
+    Mixed-type safety via `key=repr` is uniformly applied for shape parity
+    with `_network_signature` even though sysctl emit values are str on the
+    happy path (multi-value tab-separated leaves like net.ipv4.tcp_rmem are
+    emitted as single strings per Plan 04-01 / D-29). Empty list input
+    returns the stable sentinel `()` so hosts that collected zero sysctl
+    entries group together rather than crashing the sorted() call.
+    """
+    return tuple(sorted(
+        ((e.get("name", ""), e.get("value", "")) for e in sysctl),
+        key=repr,
+    ))
+
+
+def _environment_signature(environment: list) -> tuple:
+    """D-34 cross-host environment extractor (Phase 4 / COLL-06):
+    order-independent multiset of (name, value) tuples.
+
+    The signature uses the already-redacted value present in the emit block
+    (Plan 04-02 / D-23 / D-24: AWS_ACCESS_KEY_ID is first-4/last-4 masked;
+    AWS_SECRET_ACCESS_KEY is length-only). No separate raw form, no separate
+    re-redacted form — the cross-host fingerprint runs against exactly what
+    the YAML emits.
+    """
+    return tuple(sorted(
+        ((e.get("name", ""), e.get("value", "")) for e in environment),
+        key=repr,
+    ))
+
+
+def _drive_signature(drives: list) -> tuple:
+    """D-34 cross-host drives extractor (Phase 4 / COLL-07): order-independent
+    multiset of (vendor, model, interface, capacity_in_GB, unit_count)
+    tuples.
+
+    `key=repr` is LOAD-BEARING here: drives shipped from `collect_drives()`
+    carry int `capacity_in_GB` and int `unit_count`, but the .get(..., '')
+    defense produces `''` for hosts where the field is missing. The collision
+    of int 500 with str '' would crash `sorted()` without `key=repr` — the
+    Plan 03-04 surprise from `_network_signature` re-applies verbatim here.
+    """
+    return tuple(sorted(
+        (
+            (e.get("vendor_name", ""), e.get("model_name", ""),
+             e.get("interface", ""), e.get("capacity_in_GB", ""),
+             e.get("unit_count", ""))
+            for e in drives
+        ),
+        key=repr,
+    ))
+
+
 # ---------------------------------------------------------------------------
-# D-4 + D-22: locked fingerprint key set for quantity-grouping homogeneous
-# client stanzas. Each entry is either:
+# D-4 + D-22 + D-34: locked fingerprint key set for quantity-grouping
+# homogeneous client stanzas. Each entry is either:
 #   - a dotted-path string (resolved via _get_dotted), OR
 #   - a (name, callable_extractor) tuple (D-22) where the extractor is
-#     invoked on item.get('networking', []) at dispatch time.
+#     invoked on `item.get(_EXTRACTOR_SOURCE_KEYS[name], [])` at dispatch
+#     time (D-34 generalization; see `_EXTRACTOR_SOURCE_KEYS` below).
 # The string-only Phase 2 form is preserved at the head of the tuple;
 # chassis.model_name + the ('networking_sig', _network_signature) callable
-# join in Phase 3 per D-22. Order matters only for human readability of the
-# resulting fp tuples; group_by_fingerprint hashes them as a tuple so any
-# consistent order works.
+# join in Phase 3 per D-22; the three Phase 4 (D-34) extractors join at the
+# tail (sysctl, environment, drives) in slice-completion order. Order
+# matters only for human readability of the resulting fp tuples;
+# group_by_fingerprint hashes them as a tuple so any consistent order works.
 # ---------------------------------------------------------------------------
 _FINGERPRINT_KEYS: tuple = (
     "chassis.cpu_model",
@@ -121,7 +178,25 @@ _FINGERPRINT_KEYS: tuple = (
     "operating_system.name",
     "operating_system.version",
     ("networking_sig", _network_signature),      # NEW (Phase 3 / COLL-04; D-22 callable extractor)
+    ("sysctl_sig",      _sysctl_signature),      # NEW (Phase 4 / COLL-05; D-34)
+    ("environment_sig", _environment_signature), # NEW (Phase 4 / COLL-06; D-34)
+    ("drives_sig",      _drive_signature),       # NEW (Phase 4 / COLL-07; D-34)
 )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 / D-34: map extractor name → host-data source key the extractor
+# consumes. Generalizes the Phase-3 hardcoded `item.get('networking', [])`
+# callsite in `_resolve_fingerprint_key`. PATTERNS.md §"Caveat for planner"
+# locks this shape: a single source-of-truth dict so the dispatch function
+# stays a four-liner regardless of how many extractors join later.
+# ---------------------------------------------------------------------------
+_EXTRACTOR_SOURCE_KEYS: dict = {
+    "networking_sig":  "networking",
+    "sysctl_sig":      "sysctl",
+    "environment_sig": "environment",
+    "drives_sig":      "drives",
+}
 
 
 def _get_dotted(d: dict, dotted_key: str) -> Any:
@@ -149,11 +224,20 @@ def _get_dotted(d: dict, dotted_key: str) -> Any:
 
 
 def _resolve_fingerprint_key(item: dict, key: Any) -> Any:
-    """D-22 dispatch: scalar dotted-string keys resolve via _get_dotted;
-    (name, extractor) callable tuples invoke extractor(item.get('networking', []))."""
+    """D-22 / D-34 dispatch: scalar dotted-string keys resolve via _get_dotted;
+    (name, extractor) callable tuples invoke
+    `extractor(item.get(_EXTRACTOR_SOURCE_KEYS[name], []))`.
+
+    Phase 4 generalization: the source key the extractor consumes is looked
+    up in `_EXTRACTOR_SOURCE_KEYS` rather than hardcoded to 'networking'.
+    Currently four extractors are wired: networking_sig→networking,
+    sysctl_sig→sysctl, environment_sig→environment, drives_sig→drives.
+    Adding a new extractor is two lines: append to `_FINGERPRINT_KEYS` and
+    add the source-key mapping here.
+    """
     if isinstance(key, tuple):
-        _name, extractor = key
-        return extractor(item.get("networking", []))
+        name, extractor = key
+        return extractor(item.get(_EXTRACTOR_SOURCE_KEYS[name], []))
     return _get_dotted(item, key)
 
 
@@ -176,12 +260,13 @@ def group_by_fingerprint(
     - The input list and its dicts are NOT mutated: each accepted item is
       deep-copied before being annotated with the count field. Callers can
       safely pass the same list to repeated calls.
-    - Keys are resolved by `_resolve_fingerprint_key` per D-22: scalar dotted
-      strings (`chassis.cpu_model`) go through `_get_dotted` (missing keys →
-      `""`, preserving determinism for partial collections); `(name, extractor)`
-      callable tuples invoke the extractor on `item.get('networking', [])`
-      (used by `('networking_sig', _network_signature)` for the cross-host
-      networking multiset).
+    - Keys are resolved by `_resolve_fingerprint_key` per D-22 / D-34: scalar
+      dotted strings (`chassis.cpu_model`) go through `_get_dotted` (missing
+      keys → `""`, preserving determinism for partial collections);
+      `(name, extractor)` callable tuples invoke the extractor on
+      `item.get(_EXTRACTOR_SOURCE_KEYS[name], [])` — see `_EXTRACTOR_SOURCE_KEYS`
+      for the name→source-key map (currently: networking, sysctl, environment,
+      drives).
 
     Args:
         items: list of dicts (e.g. node_description-shaped dicts from
@@ -346,6 +431,13 @@ _NETWORKING_STUB: Final[dict] = {
     "traffic":    [],   # NetworkPort.traffic: Optional[List[TrafficType]] — [] rejected by _require_speed_and_traffic_when_up when state would be "up"
 }
 
+# Phase 2 legacy stub. Retained for legacy test paths; the splicer no longer
+# emits it (D-33). Phase 4 / Plan 04-04 replaced the unconditional
+# `client['drives'] = [dict(_DRIVE_STUB)]` line in `_splice_stub_lists`
+# with a conditional that OMITS the drives key entirely when no drives
+# were collected. The constant stays importable so any downstream consumer
+# (or test) that wants to construct the historical blank drives stanza can
+# still do so explicitly via `dict(_DRIVE_STUB)`.
 _DRIVE_STUB: Final[dict] = {
     "unit_count":     "",   # DriveInstance.unit_count: int(ge=1)
     "vendor_name":    "",
@@ -358,7 +450,8 @@ _DRIVE_STUB: Final[dict] = {
 
 
 def _splice_stub_lists(dump: dict) -> dict:
-    """Splice stub networking[] and drives[] entries into every client.
+    """Splice stub networking[] entries and conditionally manage drives[]
+    keys across every client.
 
     D-3 (CONTEXT.md): stub entries intentionally bypass the StrictModel
     Pydantic classes — empty-string fields fail enum / min=1 / list-non-empty
@@ -367,31 +460,42 @@ def _splice_stub_lists(dump: dict) -> dict:
     (`dict(_NETWORKING_STUB)`) so callers can safely mutate without
     aliasing the module-level constant.
 
-    D-17 (Phase 3): when the client already has real networking entries
-    (provided by Plan 03-05's `node_dict_from_host` wiring), the helper
-    iterates the entries and sets `entry['traffic'] = []` on every entry
-    whose `state == 'up'`. This is the post-Pydantic splice seam: the
-    schema validator at submission time then surfaces the empty-list
-    `traffic` field as the SER-02 "submitter must fill the traffic role"
-    UX. `NetworkPort` is never constructed with `traffic=[]` (the
-    `_require_speed_and_traffic_when_up` validator would crash); the
-    splice mutates the dumped dict directly.
+    D-17 (Phase 3) — networking branch: when the client already has real
+    networking entries (provided by Plan 03-05's `node_dict_from_host`
+    wiring), the helper iterates the entries and sets `entry['traffic']
+    = []` on every entry whose `state == 'up'`. This is the post-Pydantic
+    splice seam: the schema validator at submission time then surfaces the
+    empty-list `traffic` field as the SER-02 "submitter must fill the
+    traffic role" UX. `NetworkPort` is never constructed with
+    `traffic=[]` (the `_require_speed_and_traffic_when_up` validator would
+    crash); the splice mutates the dumped dict directly. Down entries are
+    NOT mutated — Plan 03-03's emit shape for down NICs omits both `speed`
+    and `traffic` keys, and `model_dump(exclude_none=True)` drops the
+    optional fields on the Pydantic round-trip, so down entries serialize
+    cleanly without a splice. When the client has NO networking entries
+    (or an empty list), the helper falls back to the Phase 2 behavior:
+    splice in a single `[dict(_NETWORKING_STUB)]`. This is the "we
+    collected nothing" path — the universal-rule blank stub.
 
-    Down entries are NOT mutated — Plan 03-03's emit shape for down NICs
-    omits both `speed` and `traffic` keys, and `model_dump(exclude_none=True)`
-    drops the optional fields on the Pydantic round-trip, so down entries
-    serialize cleanly without a splice.
-
-    When the client has NO networking entries (or an empty list), the
-    helper falls back to the Phase 2 behavior: splice in a single
-    `[dict(_NETWORKING_STUB)]`. This is the "we collected nothing" path —
-    the universal-rule blank stub.
+    D-33 (Phase 4) — drives branch: the Phase-2 unconditional
+    `client['drives'] = [dict(_DRIVE_STUB)]` line is replaced with a
+    conditional. When the client has real drives data (truthy list from
+    `collect_drives()` + `node_dict_from_host`'s Phase-4-extended emit),
+    leave it as-is. When the client has an empty drives list OR no drives
+    key at all (lsblk absent / no devices / all filtered), POP the drives
+    key entirely so the emitted YAML carries NO `drives:` block. This is
+    asymmetric with the networking fallback: per the explicit user
+    decision in CONTEXT.md / ROADMAP SC #5, an absent drives block is the
+    intended SER-02 signal (instead of a blank stub) — the submitter sees
+    "the collector couldn't determine this; submitter must hand-fill if
+    applicable."
 
     Idempotent: re-running on the same dict REPLACES the spliced entries
-    in the fallback branch and re-sets `traffic = []` on up entries in
-    the real-data branch (no append). Plan 02-04 relies on this so callers
-    can chain `_splice_stub_lists(_build_outer_dict(stanzas))` even after
-    re-grouping.
+    in the networking fallback branch, re-sets `traffic = []` on up
+    entries in the networking real-data branch, and re-pops the drives
+    key (no-op the second time) in the drives-omit branch. Plan 02-04
+    relies on this so callers can chain
+    `_splice_stub_lists(_build_outer_dict(stanzas))` even after re-grouping.
 
     Defensive on shape: if `dump` has no `system_under_test` or no
     `clients`, the function returns the dump unchanged (no `KeyError`).
@@ -402,6 +506,7 @@ def _splice_stub_lists(dump: dict) -> dict:
     """
     clients = dump.get("system_under_test", {}).get("clients", [])
     for client in clients:
+        # --- networking branch (D-3, D-17) -------------------------------
         existing_net = client.get("networking")
         if existing_net:
             # D-17: real networking from node_dict_from_host (Plan 03-05).
@@ -416,7 +521,20 @@ def _splice_stub_lists(dump: dict) -> dict:
             # blank stub so schema validation surfaces the universal-rule
             # blanks.
             client["networking"] = [dict(_NETWORKING_STUB)]
-        client["drives"] = [dict(_DRIVE_STUB)]
+
+        # --- drives branch (Phase 4 / COLL-07 / D-33) --------------------
+        existing_drives = client.get("drives")
+        if existing_drives:
+            # Real drives present (collect_drives() + node_dict_from_host
+            # per-host group_by_fingerprint pass in Plan 04-05). Leave the
+            # list as-is — Pydantic / Yamale will validate the entries at
+            # submission time.
+            pass
+        else:
+            # D-33: lsblk absent / no devices / all filtered → OMIT the
+            # drives key entirely (NOT a blank stub). The SER-02 signal
+            # here is "no drives:; submitter, hand-fill if applicable."
+            client.pop("drives", None)
     return dump
 
 
