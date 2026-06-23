@@ -6,6 +6,7 @@ in a distributed cluster using MPI. It collects data from /proc filesystem
 including meminfo, cpuinfo, diskstats, and network statistics.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -17,7 +18,8 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, Final, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, Final, List, Optional, Pattern, Tuple
 
 from mlpstorage_py.config import MPIRUN, MPIEXEC, MPI_RUN_BIN, MPI_EXEC_BIN
 from mlpstorage_py.interfaces.collector import ClusterCollectorInterface, CollectionResult
@@ -1036,6 +1038,133 @@ def collect_networking(net_root: str = _SYSFS_NET_ROOT,
 
 
 # =============================================================================
+# Sysctl Collection (/proc/sys walk + shipped allowlist file) — Phase 4 Plan
+#                     04-01 (D-27 allowlist file, D-28 walk semantics,
+#                      D-29 multi-value verbatim emit, COLL-05)
+# =============================================================================
+#
+# Data-driven allowlist: editing
+# mlpstorage_py/system_description/sysctl_allowlist.txt adds keys to the next
+# run's output with no code change. The walk reads each leaf with an 8 KiB
+# cap (defense-in-depth; /proc/sys is PAGE_SIZE-buffered to ~4 KiB) and emits
+# {name, value} dicts in dotted form. Per-leaf failures (write-only leaves
+# like vm.drop_caches, PermissionError on hardened kernels, OSError on
+# disappearing dynamic entries) are isolated per the universal D-2 rule —
+# the offending key is skipped, the walk continues. RESEARCH Q2 documents
+# the write-only-leaf set.
+_PROC_SYS_ROOT: str = '/proc/sys'
+
+# Shipped allowlist file lives alongside the schema in system_description/.
+# Submitters edit it in-place in their editable install; no CLI override is
+# offered in Phase 4 (deferred to a later phase per CONTEXT.md).
+_SYSCTL_ALLOWLIST_PATH: str = str(
+    Path(__file__).parent / 'system_description' / 'sysctl_allowlist.txt'
+)
+
+
+def _load_sysctl_allowlist(
+    path: str = _SYSCTL_ALLOWLIST_PATH,
+) -> Tuple[Pattern, ...]:
+    """Load the on-disk allowlist and return a tuple of compiled regex objects.
+
+    One regex per glob line, via ``re.compile(fnmatch.translate(glob))``.
+    Blank lines and lines whose ``lstrip()`` starts with ``#`` are skipped;
+    each glob is ``.strip()``-ed before translation. On any read failure
+    (FileNotFoundError, OSError, PermissionError) returns ``tuple()`` per
+    the universal D-2 collection-failure rule — ``collect_sysctl`` then
+    matches nothing and emits ``[]``.
+
+    RESEARCH Q3 "deep-match" gotcha: ``fnmatch`` is NOT path-separator aware.
+    A glob ``net.core.*`` matches ``net.core.rmem_max`` AND
+    ``net.core.bpf_jit_harden`` AND any future deeper-nested key the kernel
+    might introduce (``net.core.foo.bar``). The current shipped patterns
+    intentionally use narrow prefixes that sidestep this; a future editor
+    adding ``net.ipv4.*`` would also pick up ``net.ipv4.conf.eth0.forwarding``
+    (interface-parameterized leaves do appear in the /proc/sys walk per
+    RESEARCH Q2). If shallow-only matching is ever desired, use
+    ``re.compile(r'^net\\.ipv4\\.[^.]+$')`` directly instead of fnmatch.
+    """
+    try:
+        with open(path, 'r') as f:
+            lines = f.readlines()
+    except OSError:
+        return tuple()
+    patterns: List[Pattern] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if line.lstrip().startswith('#'):
+            continue
+        patterns.append(re.compile(fnmatch.translate(line)))
+    return tuple(patterns)
+
+
+def collect_sysctl(
+    proc_sys_root: str = _PROC_SYS_ROOT,
+    allowlist: Optional[Tuple[Pattern, ...]] = None,
+) -> List[Dict[str, str]]:
+    """Walk /proc/sys, emit one {name, value} dict per matching leaf.
+
+    Per D-27 / D-28: each leaf path is converted to its dotted form (e.g.,
+    ``/proc/sys/vm/dirty_ratio`` → ``vm.dirty_ratio``) and matched against
+    every pattern in ``allowlist``. Leaves matching at least one pattern
+    are read (8 KiB cap per D-28 / RESEARCH Q2), trailing newline stripped
+    (D-29: internal whitespace preserved verbatim so multi-value leaves
+    like ``net.ipv4.tcp_rmem`` round-trip cleanly), and emitted.
+
+    Universal D-2 rule applies at two scopes:
+      - Outer ``os.walk`` envelope: any exception (missing root, OSError)
+        yields the empty list. The collector never raises.
+      - Per-leaf inner try/except: a single PermissionError / OSError /
+        UnicodeDecodeError on a write-only leaf (RESEARCH Q2: drop_caches,
+        compact_memory, route/flush, sysrq) skips that leaf; the walk
+        continues. The reduces P(one weird key kills the whole walk) → 0.
+
+    Args:
+        proc_sys_root: path to the /proc/sys walk root. Production callers
+            use the module default; tests pass a tmp_path fixture.
+        allowlist: tuple of compiled regex objects. ``None`` triggers a
+            fresh ``_load_sysctl_allowlist()`` read (the production path);
+            tests pass a constructed tuple.
+
+    Returns:
+        List of ``{"name": "<dotted>", "value": "<verbatim>"}`` dicts.
+        Empty list on any catastrophic failure.
+    """
+    if allowlist is None:
+        allowlist = _load_sysctl_allowlist()
+    out: List[Dict[str, str]] = []
+    try:
+        walker = os.walk(proc_sys_root)
+        for dirpath, _dirnames, filenames in walker:
+            for filename in filenames:
+                leaf = os.path.join(dirpath, filename)
+                rel = os.path.relpath(leaf, proc_sys_root)
+                # Dotted form: '/proc/sys/net/ipv4/tcp_rmem' →
+                # 'net.ipv4.tcp_rmem'. os.sep is '/' on Linux but this
+                # generalizes via os.sep.
+                name = rel.replace(os.sep, '.')
+                if not any(p.match(name) for p in allowlist):
+                    continue
+                try:
+                    with open(leaf, 'r') as f:
+                        raw = f.read(8192)
+                except Exception:
+                    # D-2 / RESEARCH Q2: write-only or protected leaf;
+                    # skip and continue, never abort the walk.
+                    continue
+                # D-29: strip only the trailing newline; preserve internal
+                # tabs / whitespace so multi-value emit is verbatim.
+                out.append({"name": name, "value": raw.rstrip('\n')})
+    except Exception:
+        # D-2 outer envelope: catastrophic failure (no /proc/sys, exotic
+        # kernel surfacing OSError EINVAL on os.walk) → empty list.
+        return []
+    return out
+
+
+# =============================================================================
 # Local System Information Collection
 # =============================================================================
 
@@ -1166,6 +1295,17 @@ def collect_local_system_info() -> Dict[str, Any]:
         result['errors']['networking'] = str(e)
         result['networking'] = []
 
+    # Collect /proc/sys walk → sysctl[] (D-27 allowlist, D-28 walk semantics,
+    # D-29 multi-value verbatim emit, COLL-05). collect_sysctl applies per-leaf
+    # D-2 internally so individual write-only leaves (vm.drop_caches, sysrq)
+    # don't surface here; the outer try/except mirrors the chassis_model /
+    # networking shape as defense-in-depth.
+    try:
+        result['sysctl'] = collect_sysctl()
+    except Exception as e:
+        result['errors']['sysctl'] = str(e)
+        result['sysctl'] = []
+
     # Collect /proc/vmstat
     try:
         with open('/proc/vmstat', 'r') as f:
@@ -1286,6 +1426,7 @@ This script is executed via MPI on all nodes to collect system information.
 It gathers data from /proc files and aggregates results on rank 0.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -1704,6 +1845,67 @@ def collect_networking(net_root=_SYSFS_NET_ROOT, ib_root=_SYSFS_INFINIBAND_ROOT)
     return out
 
 
+# Phase 4 Plan 04-01 (D-27, D-28, D-29, COLL-05) — Pattern B (RESEARCH 675-679)
+# duplication of the sysctl collector. Must stay in behavioral parity with the
+# module-level versions; the parity test in
+# tests/unit/test_cluster_collector.py::TestSysctlMPIScriptParity fails on any
+# drift. Untyped form so the script survives on Python 3.8 hosts in
+# heterogeneous SSH-fan-out fleets.
+#
+# Pattern B forbids file I/O for package-data lookups inside the script (the
+# script ships as a string and is exec'd over SSH; there's no installed
+# package on every host). The allowlist is therefore baked in as a tuple
+# literal here. SOURCE OF TRUTH for the four globs is
+# mlpstorage_py/system_description/sysctl_allowlist.txt; keep this tuple in
+# sync with that file — the parity test asserts behavioral equivalence, not
+# allowlist-content equivalence, so a manual sync between the two copies is
+# the load-bearing discipline. (Future editor: if you add a glob to the
+# shipped file, also add it here.)
+_PROC_SYS_ROOT = '/proc/sys'
+
+_SYSCTL_ALLOWLIST_LINES = (
+    'vm.dirty_*',
+    'net.core.*',
+    'net.ipv4.tcp_*',
+    'kernel.numa_balancing',
+)
+
+
+def _load_sysctl_allowlist():
+    """Compile the baked-in allowlist tuple into a tuple of regex objects
+    via fnmatch.translate (mirror of module copy)."""
+    return tuple(re.compile(fnmatch.translate(g)) for g in _SYSCTL_ALLOWLIST_LINES)
+
+
+def collect_sysctl(proc_sys_root=_PROC_SYS_ROOT, allowlist=None):
+    """Walk /proc/sys with per-leaf D-2 isolation (mirror of module copy).
+
+    D-29: trailing newline stripped only; internal tabs preserved verbatim
+    so multi-value leaves like net.ipv4.tcp_rmem round-trip cleanly.
+    D-28: 8 KiB read cap on each leaf.
+    """
+    if allowlist is None:
+        allowlist = _load_sysctl_allowlist()
+    out = []
+    try:
+        for dirpath, _dirnames, filenames in os.walk(proc_sys_root):
+            for filename in filenames:
+                leaf = os.path.join(dirpath, filename)
+                rel = os.path.relpath(leaf, proc_sys_root)
+                name = rel.replace(os.sep, '.')
+                if not any(p.match(name) for p in allowlist):
+                    continue
+                try:
+                    with open(leaf, 'r') as f:
+                        raw = f.read(8192)
+                except Exception:
+                    continue
+                out.append({"name": name, "value": raw.rstrip('\\n')})
+    except Exception:
+        return []
+    return out
+
+
 def collect_local_info():
     """Collect system information from the local node."""
     result = {
@@ -1806,6 +2008,16 @@ def collect_local_info():
     except Exception as e:
         result['errors']['networking'] = str(e)
         result['networking'] = []
+
+    # Collect /proc/sys walk → sysctl[] (D-27, D-28, D-29, COLL-05) — Pattern B
+    # parallel to the module-side wiring in collect_local_system_info. The
+    # collect_sysctl function applies per-leaf D-2 internally; this outer
+    # try/except is defense-in-depth.
+    try:
+        result['sysctl'] = collect_sysctl()
+    except Exception as e:
+        result['errors']['sysctl'] = str(e)
+        result['sysctl'] = []
 
     if not result['errors']:
         del result['errors']
