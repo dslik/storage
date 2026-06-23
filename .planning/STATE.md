@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 04 Plan 01 complete — sysctl collector + shipped allowlist file + MPI script twin (COLL-05)"
-last_updated: "2026-06-23T21:00:00.000Z"
-last_activity: 2026-06-23 -- Phase 04 Plan 01 complete (sysctl collector COLL-05)
+stopped_at: "Phase 04 Plan 02 complete — environment collector + unified redactors in storage_config + ROADMAP SC #2 reconciled (COLL-06)"
+last_updated: "2026-06-23T22:00:00.000Z"
+last_activity: 2026-06-23 -- Phase 04 Plan 02 complete (environment collector + D-25 redactor unification, COLL-06)
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 17
-  percent: 65
+  completed_plans: 18
+  percent: 67
 ---
 
 # Project State
@@ -26,22 +26,22 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 ## Current Position
 
 Phase: 04 (sysctl-environment-and-drives-coverage) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Executing Phase 04
-Last activity: 2026-06-23 -- Phase 04 Plan 01 complete (sysctl collector COLL-05)
+Last activity: 2026-06-23 -- Phase 04 Plan 02 complete (environment collector + D-25 redactor unification, COLL-06)
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
 Progress (Phase 3): [██████████] 100% (5/5 plans complete; Plan 03-01 schema extension + Plan 03-02 chassis collector + Plan 03-03 networking collector + Plan 03-04 transform-layer extensions + Plan 03-05 HostInfo + node_dict_from_host wire-through end-to-end all green)
-Progress (Phase 4): [██░░░░░░░░] 20% (1/5 plans complete; Plan 04-01 sysctl collector + allowlist file + Pattern B twin green)
+Progress (Phase 4): [████░░░░░░] 40% (2/5 plans complete; Plan 04-01 sysctl collector + Plan 04-02 environment collector + unified redactors all green)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 31
+- Total plans completed: 32
 - Average duration: ~25 min
-- Total execution time: ~328 min
+- Total execution time: ~353 min
 
 **By Phase:**
 
@@ -136,6 +136,10 @@ Recent decisions affecting current work:
 - Execute 03-05 process: NO `git stash` used. Read-only inspection only via the Read tool against committed files.
 - Execute 04-01: sysctl collector shipped as 4 new module symbols (`_PROC_SYS_ROOT`, `_SYSCTL_ALLOWLIST_PATH`, `_load_sysctl_allowlist`, `collect_sysctl`) + new shipped data file `mlpstorage_py/system_description/sysctl_allowlist.txt` (the load-bearing artifact for COLL-05's "no code change required to add a sysctl key" success criterion). Two-scope D-2 envelope: outer `try` around `os.walk` → `[]` on catastrophic failure; per-leaf `try` around `open(leaf).read()` → `continue` on PermissionError / OSError (RESEARCH Q2: write-only leaves like `vm.drop_caches`, `kernel.sysrq`, `route/flush` are mode 0200 and `open()` raises EACCES on read, not on stat). D-29 multi-value verbatim emit: `rstrip('\n')` only — internal tabs preserved so `net.ipv4.tcp_rmem` returns `"4096\t87380\t16777216"` cleanly. 8 KiB read cap mirrors the chassis_model defense-in-depth pattern even though /proc/sys is PAGE_SIZE-buffered to ~4 KiB. Pattern B (D-36): twin `_load_sysctl_allowlist` + `collect_sysctl` inline in `MPI_COLLECTOR_SCRIPT` with allowlist baked as `_SYSCTL_ALLOWLIST_LINES` tuple literal (script forbids file I/O for package-data lookups; sync between shipped file and tuple is manual discipline documented in the script comment). Module-side imports added: `fnmatch`, `pathlib.Path`, `typing.Pattern`. 18 new tests across 5 classes (TestSysctlAllowlistFile, TestLoadSysctlAllowlist, TestSysctlCollector, TestSysctlMPIScriptParity, TestSysctlWiring) all green; 197 tests pass in test_cluster_collector.py with no new regressions. The 7 pre-existing `_check_safe_path_component` MagicMock failures persist out-of-scope per Rule 3.
 - Execute 04-01: zero auto-fixed deviations and zero process deviations. RED → GREEN was clean on first run; no Rule 1/2/3 fixes needed. The `proc_sys_root` parameter default made every `TestSysctlCollector` test trivial — each test builds a `tmp_path/proc/sys/...` tree and passes it directly with no monkeypatch-of-globals; only the PermissionError-isolation test patches `builtins.open` (and only for the specific leaf path being tested). NO `git stash` used. Read-only inspection only.
+- Execute 04-02: environment collector shipped as 4 new module symbols (`_ENV_LITERALS`, `_ENV_PREFIXES`, `_env_allowlist_match`, `collect_environment`) + two unified credential redactors in `storage_config.py` (`_redact_secret`, `_mask_credential_id`) per D-25. Option B chosen over Option A — the grep `_redact\b mlpstorage_py/` returned three self-references and zero external consumers, so deleting the legacy `_redact` and updating `resolve_object_storage_config()` to call the new helper names directly was the cleanest path. D-23 / D-24 branch shapes locked: `_mask_credential_id` collapses to `****` for <8 chars, `_redact_secret` returns `[SET — empty]` for `""` (Phase 4 deliberate UX improvement vs. legacy `[not set]` for both None and empty). MPI script Pattern B (D-36) duplicates SIX symbols inline (both redactors + both constants + match + collect) because the script body cannot import storage_config — string-concatenation `"[SET — " + str(len(val)) + " chars]"` used in the script's `_redact_secret` to avoid f-string parsing surprises inside the triple-quoted body. Output sorted by `name` for D-34 fingerprint stability. 31 new tests + 1 updated contract test all green; 1771 tests pass full suite, 7 pre-existing MagicMock failures persist out-of-scope.
+- Execute 04-02 deviation (Rule 3): two pre-existing tests asserted the legacy `[SET —` marker on the `aws_access_key_id_redacted` shape — `tests/unit/test_storage_config.py::TestCredentialRedaction::test_access_key_redacted_when_set` and `tests/unit/test_run_summary.py::TestCredentialDisplay::test_credentials_never_plain_text`. Both updated in the GREEN commit (4f310cd) to assert the new D-23 masked form (`AKIA****MPLE` / `secr****t123`); the run_summary test extended to set BOTH credentials and validate (a) no raw values, (b) masked KEY_ID, (c) length-only SECRET. Rule 3 (not Rule 1 or 4) because these are blocking-task-completion issues caused directly by the D-25 contract change this plan ships — the contract test updates are structurally part of the refactor and belong in the GREEN commit alongside the production change.
+- Execute 04-02 surprise: ROADMAP.md SC #2 line uses an em-dash sentence structure ("with X redacted as Y and Z rendered as W matching the policy in `storage_config.py`") that required preserving the exact text shape during the D-24 reconciliation. New wording ("length-only sentinel (per D-24) ... first-4/last-4 mask (per D-23) using the unified policy in `storage_config.py`") keeps the same em-dash + adjacent-text structure so a future verifier diff sees a focused content change, not a cosmetic rewrite. The `grep -n 'length-only sentinel' .planning/ROADMAP.md` gate from PLAN acceptance criteria returns line 141.
+- Execute 04-02 process: NO `git stash` used. Read-only inspection only via the Read tool against committed files. Test contract updates kept in the same commit as the production change they validate (rather than a separate "test fix" commit) so the GREEN commit is self-contained: if a future bisect points at 4f310cd, the entire D-25 contract change AND its test contract validation land together.
 
 ### Pending Todos
 
@@ -161,12 +165,12 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-23T21:00:00.000Z
-Stopped at: Phase 04 Plan 01 complete — sysctl collector + shipped allowlist file + MPI script twin (COLL-05)
-Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-01-SUMMARY.md
+Last session: 2026-06-23T22:00:00.000Z
+Stopped at: Phase 04 Plan 02 complete — environment collector + unified redactors in storage_config + ROADMAP SC #2 reconciled (COLL-06)
+Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-02-SUMMARY.md
 Next-session options:
-  (a) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately.
-  (b) Start Phase 4 in parallel (recommended — UAT is independent of code progression): `/gsd-discuss-phase 4` — Sysctl + Environment + Drives, MVP mode, COLL-05/06/07. Drives pattern mirrors Phase 3 (schema → collector → transform extractor → HostInfo wire-through); per-host drive grouping key `(vendor_name, model_name, interface, media_type, capacity_in_GB)`, cross-host inclusion via `_drive_signature` extractor following `_network_signature` pattern from Plan 03-04.
+  (a) Continue Phase 4: `/gsd-execute-phase 4` — Plan 04-03 is the drives collector via `lsblk -J -d -o NAME,MODEL,VENDOR,SIZE,ROTA,TRAN,RM` (COLL-07; D-30/31/32/33/36). Pattern A/B discipline established in 04-01 / 04-02 carries forward; D-2 envelope at outer subprocess.run + per-row filter, D-33 omit-key-when-empty behavior at the transform layer (Plan 04-04), NOT at the collector.
+  (b) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately.
   (c) Cheap hygiene: `/gsd-secure-phase 02` (Path-B skipped during transition) or REQUIREMENTS.md traceability sync for SCH-01/BUN-01/ADP-01.
 Open follow-ups carried forward (all from prior phases, not blocking Phase 3):
 

@@ -138,7 +138,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Success Criteria** (what must be TRUE):
 
   1. The generated `clients[].sysctl[]` contains one `{name, value}` entry per `/proc/sys` key that matches the data-driven allowlist (`vm.dirty_*`, `net.core.*`, `net.ipv4.tcp_*`, `kernel.numa_balancing`); adding a new pattern to the allowlist file causes that key to appear in the next run's output without code changes.
-  2. The generated `clients[].environment[]` contains the `AWS_*`, `BUCKET`, `STORAGE_*`, `OMPI_*`, `UCX_*`, and `NCCL_*` variables that are set at run time, with `AWS_SECRET_ACCESS_KEY` redacted as a length+sha256 fingerprint and `AWS_ACCESS_KEY_ID` rendered as a first-4/last-4 mask matching the policy in `storage_config.py`.
+  2. The generated `clients[].environment[]` contains the `AWS_*`, `BUCKET`, `STORAGE_*`, `OMPI_*`, `UCX_*`, and `NCCL_*` variables that are set at run time, with `AWS_SECRET_ACCESS_KEY` redacted as a length-only sentinel (per D-24) and `AWS_ACCESS_KEY_ID` rendered as a first-4/last-4 mask (per D-23) using the unified policy in `storage_config.py`.
   3. On a host where `lsblk` is installed and reports at least one device, the generated `clients[].drives[]` contains one entry per `(vendor_name, model_name, interface, capacity_in_GB)` group with `unit_count` set to the group size, `capacity_in_GB` in base 10, and `interface` set to `nvme`/`sata`/`sas`/`other`.
   4. The generated drive entries do NOT contain `media_type`, `form_factor`, or `performance` (those remain blank for the submitter to fill from spec sheets per SER-02).
   5. On a host where `lsblk` is not installed or returns no devices, `clients[].drives` is omitted from the YAML and `run` still completes without error.
@@ -147,7 +147,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 1**
 
 - [x] 04-01-PLAN.md — Slice 1: sysctl collector + allowlist file + MPI script duplication (COLL-05; D-27/28/29/36)
-- [ ] 04-02-PLAN.md — Slice 2: environment collector + redactor unification in storage_config.py + MPI script duplication + ROADMAP SC #2 reconciliation (COLL-06; D-23/24/25/26/36)
+- [x] 04-02-PLAN.md — Slice 2: environment collector + redactor unification in storage_config.py + MPI script duplication + ROADMAP SC #2 reconciliation (COLL-06; D-23/24/25/26/36)
 - [ ] 04-03-PLAN.md — Slice 3: drives collector via lsblk -J -b subprocess + D-31 filter + MPI script duplication (COLL-07; D-30/31/33/36)
 
 **Wave 2** *(blocked on Wave 1)*
