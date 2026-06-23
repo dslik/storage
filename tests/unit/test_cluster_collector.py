@@ -2797,3 +2797,430 @@ class TestEnvironmentWiring:
         result = cc.collect_local_system_info()
         assert result["environment"] == []
         assert result.get("errors", {}).get("environment") == "env boom"
+
+
+# =============================================================================
+# Phase 4 / Plan 04-03 — Drives collector (COLL-07, D-30/31/32/33/36)
+# =============================================================================
+#
+# The drives collector invokes `lsblk -J -b -d -o NAME,MODEL,VENDOR,SIZE,ROTA,
+# TRAN,RM` via subprocess.run, JSON-parses the output, applies the D-31 four-
+# rule filter chain (RM=1 skip, virtual-prefix/TRAN skip, unknown-TRAN drop
+# with empty-TRAN-nvme-name rescue per RESEARCH Q1), and emits one
+# {vendor_name, model_name, interface, capacity_in_GB} dict per surviving row
+# per D-30.
+#
+# D-33 universal-failure rule: lsblk absent / timeout / non-JSON / non-zero
+# returncode / empty blockdevices / all-filtered → []. The collector never
+# raises.
+#
+# Pattern B (D-36): collect_drives + _LSBLK_ARGS + the three filter constants
+# are all duplicated inline in MPI_COLLECTOR_SCRIPT; TestDrivesMPIScriptParity
+# asserts behavioral equivalence under the same monkeypatched subprocess.run.
+# =============================================================================
+
+
+def _lsblk_cp(payload_dict):
+    """Build a subprocess.CompletedProcess-shaped mock returning a JSON
+    payload as stdout. Matches the production call shape:
+    subprocess.run(..., capture_output=True, text=True) → .stdout / .returncode.
+    """
+    cp = MagicMock()
+    cp.stdout = json.dumps(payload_dict)
+    cp.returncode = 0
+    return cp
+
+
+def _raises_filenotfound(*args, **kwargs):
+    raise FileNotFoundError("lsblk not found")
+
+
+def _raises_timeout(*args, **kwargs):
+    raise subprocess.TimeoutExpired(cmd="lsblk", timeout=10)
+
+
+class TestDrivesCollector:
+    """collect_drives — lsblk -J -b parse + D-31 filter chain.
+
+    Each test monkeypatches mlpstorage_py.cluster_collector.subprocess.run with
+    a lambda returning a canned `_lsblk_cp(payload)`. The production code is:
+        cp = subprocess.run([...], capture_output=True, text=True, timeout=10)
+        if cp.returncode != 0: return []
+        payload = json.loads(cp.stdout)
+        ... per-row filter ...
+    """
+
+    def test_pure_nvme_array_emits_all(self, monkeypatch):
+        """Happy path: two NVMe drives, both pass every filter, both emit."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "nvme0n1", "model": "INTEL SSDPF2NV307TZ",
+                 "vendor": "INTEL", "size": "3072000000000",
+                 "rota": "0", "tran": "nvme", "rm": "0"},
+                {"name": "nvme1n1", "model": "INTEL SSDPF2NV307TZ",
+                 "vendor": "INTEL", "size": "3072000000000",
+                 "rota": "0", "tran": "nvme", "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert out == [
+            {"vendor_name": "INTEL", "model_name": "INTEL SSDPF2NV307TZ",
+             "interface": "nvme", "capacity_in_GB": 3072},
+            {"vendor_name": "INTEL", "model_name": "INTEL SSDPF2NV307TZ",
+             "interface": "nvme", "capacity_in_GB": 3072},
+        ]
+
+    def test_removable_rm_string_skipped(self, monkeypatch):
+        """D-31 rule 1 — util-linux <2.37 emits RM as string ('1'); skip."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sda", "model": "WDC", "vendor": "WD",
+                 "size": "500000000000", "rota": "1", "tran": "sata",
+                 "rm": "0"},
+                {"name": "sdb", "model": "Cruzer", "vendor": "SanDisk",
+                 "size": "32000000000", "rota": "0", "tran": "usb",
+                 "rm": "1"},   # USB stick, RM as string
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        names = [d["model_name"] for d in out]
+        assert "Cruzer" not in names
+        assert "WDC" in names
+
+    def test_removable_rm_int_skipped(self, monkeypatch):
+        """D-31 rule 1 — util-linux >=2.37 emits RM as int (1); skip.
+        Tests the str() coercion handles both string and int variants
+        per RESEARCH Q1."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sdb", "model": "USB", "vendor": "Generic",
+                 "size": "8000000000", "rota": "0", "tran": "usb",
+                 "rm": 1},   # int (≥2.37)
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert out == []
+
+    def test_loop_zram_dm_prefixes_skipped(self, monkeypatch):
+        """D-31 rule 2 — virtual NAME prefixes {loop, dm-, zram, ram, sr, fd}
+        all dropped. One real nvme0n1 interleaved must survive."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "loop0", "model": "", "vendor": "",
+                 "size": "100000000", "rota": "0", "tran": "loop",
+                 "rm": "0"},
+                {"name": "dm-0", "model": "", "vendor": "",
+                 "size": "500000000000", "rota": "0", "tran": "",
+                 "rm": "0"},
+                {"name": "zram0", "model": "", "vendor": "",
+                 "size": "1000000000", "rota": "0", "tran": "zram",
+                 "rm": "0"},
+                {"name": "ram0", "model": "", "vendor": "",
+                 "size": "1000000", "rota": "0", "tran": "",
+                 "rm": "0"},
+                {"name": "sr0", "model": "DVD-RW", "vendor": "ATAPI",
+                 "size": "1000000000", "rota": "1", "tran": "ata",
+                 "rm": "0"},
+                {"name": "fd0", "model": "", "vendor": "",
+                 "size": "1474560", "rota": "1", "tran": "",
+                 "rm": "0"},
+                {"name": "nvme0n1", "model": "INTEL SSDPF2NV307TZ",
+                 "vendor": "INTEL", "size": "3072000000000",
+                 "rota": "0", "tran": "nvme", "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert len(out) == 1
+        assert out[0]["interface"] == "nvme"
+        assert out[0]["model_name"] == "INTEL SSDPF2NV307TZ"
+
+    def test_unknown_tran_dropped_not_other(self, monkeypatch):
+        """D-31 rule 3 — TRAN not in {nvme, sata, sas} is DROPPED, not mapped
+        to 'other'. Diverges from REQUIREMENTS.md COLL-07 wording per
+        04-CONTEXT.md §specifics; the DriveInterface.other enum value remains
+        in the schema for submitter hand-fills but the collector never emits
+        it."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sda", "model": "USB-Stick", "vendor": "SanDisk",
+                 "size": "32000000000", "rota": "0", "tran": "usb",
+                 "rm": "0"},
+                {"name": "vda", "model": "Virtio", "vendor": "Red Hat",
+                 "size": "500000000000", "rota": "0", "tran": "virtio",
+                 "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert out == []
+
+    def test_empty_tran_with_nvme_name_rescued(self, monkeypatch):
+        """RESEARCH Q1 quirk (a) — older kernels emit TRAN='' for NVMe drives.
+        When NAME starts with 'nvme', TRAN is rescued to 'nvme'."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "nvme0n1", "model": "X", "vendor": "Y",
+                 "size": "500000000000", "rota": "0", "tran": "",
+                 "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert len(out) == 1
+        assert out[0]["interface"] == "nvme"
+
+    def test_empty_tran_with_non_nvme_name_dropped(self, monkeypatch):
+        """Empty TRAN with non-nvme NAME is dropped (rescue only fires for
+        NVMe NAME prefix per D-31 rule 3 + RESEARCH Q1 quirk a)."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sda", "model": "X", "vendor": "Y",
+                 "size": "500000000000", "rota": "1", "tran": "",
+                 "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert out == []
+
+    def test_size_decimal_gb_floor(self, monkeypatch):
+        """RESEARCH Q1 — capacity_in_GB = int(size) // 10**9 (decimal GB,
+        nameplate convention). A 1 TB drive (1_000_204_886_016 bytes) emits
+        as 1000, not 1024 binary GiB."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sda", "model": "WD",
+                 "vendor": "WD", "size": "1000204886016",
+                 "rota": "1", "tran": "sata", "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert len(out) == 1
+        assert out[0]["capacity_in_GB"] == 1000
+
+    def test_vendor_model_stripped(self, monkeypatch):
+        """D-30 emit — vendor and model strings are .strip()'d to drop
+        lsblk's left/right padding."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sda", "model": "  WDC WD5003ABYX-01WERA1  ",
+                 "vendor": "  ATA  ", "size": "500000000000",
+                 "rota": "1", "tran": "sata", "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert len(out) == 1
+        assert out[0]["vendor_name"] == "ATA"
+        assert out[0]["model_name"] == "WDC WD5003ABYX-01WERA1"
+
+    def test_missing_vendor_emits_empty(self, monkeypatch):
+        """D-30 + D-2 — missing 'vendor' key in row emits vendor_name=''
+        (defensive .get('vendor') or '' shape)."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {
+            "blockdevices": [
+                {"name": "sda", "model": "X", "size": "500000000000",
+                 "rota": "1", "tran": "sata", "rm": "0"},
+            ]
+        }
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        out = cc.collect_drives()
+        assert len(out) == 1
+        assert out[0]["vendor_name"] == ""
+        assert out[0]["model_name"] == "X"
+
+    def test_lsblk_absent_returns_empty(self, monkeypatch):
+        """D-33 — lsblk binary absent (busybox/Alpine, container without
+        util-linux). FileNotFoundError from subprocess.run → []."""
+        from mlpstorage_py import cluster_collector as cc
+        monkeypatch.setattr(cc.subprocess, "run", _raises_filenotfound)
+        assert cc.collect_drives() == []
+
+    def test_lsblk_timeout_returns_empty(self, monkeypatch):
+        """D-33 — lsblk hangs (stuck I/O, dying disk). TimeoutExpired
+        from subprocess.run → []."""
+        from mlpstorage_py import cluster_collector as cc
+        monkeypatch.setattr(cc.subprocess, "run", _raises_timeout)
+        assert cc.collect_drives() == []
+
+    def test_lsblk_returns_invalid_json_returns_empty(self, monkeypatch):
+        """D-33 — JSON parse failure (lsblk too old to support -J, or
+        stdout corruption) → []."""
+        from mlpstorage_py import cluster_collector as cc
+        cp = MagicMock()
+        cp.stdout = "not json"
+        cp.returncode = 0
+        monkeypatch.setattr(cc.subprocess, "run", lambda *a, **k: cp)
+        assert cc.collect_drives() == []
+
+    def test_lsblk_returns_empty_blockdevices(self, monkeypatch):
+        """D-33 — lsblk runs cleanly but reports no devices (heavily
+        restricted container, all-removable host). Empty blockdevices → []."""
+        from mlpstorage_py import cluster_collector as cc
+        payload = {"blockdevices": []}
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+        assert cc.collect_drives() == []
+
+    def test_lsblk_returns_nonzero_exit_returns_empty(self, monkeypatch):
+        """D-33 — lsblk exits non-zero (permission, OOM, kernel error).
+        returncode != 0 → []."""
+        from mlpstorage_py import cluster_collector as cc
+        cp = MagicMock()
+        cp.stdout = ""
+        cp.returncode = 1
+        monkeypatch.setattr(cc.subprocess, "run", lambda *a, **k: cp)
+        assert cc.collect_drives() == []
+
+
+class TestDrivesMPIScriptParity:
+    """Pattern B (D-36): collect_drives + _LSBLK_ARGS + filter constants are
+    duplicated inline in MPI_COLLECTOR_SCRIPT. Drift between the script and
+    the module copy produces divergent per-host data shapes; this parity test
+    catches drift on the same monkeypatched subprocess.run."""
+
+    def test_drives_functions_match_module(self, monkeypatch):
+        """exec the script body; assert collect_drives landed; inject a
+        mock subprocess into the script namespace so the script's
+        collect_drives sees the same canned payload as the module copy."""
+        from mlpstorage_py.cluster_collector import collect_drives
+        from mlpstorage_py import cluster_collector as cc
+
+        ns = {}
+        try:
+            exec(MPI_COLLECTOR_SCRIPT, ns)
+        except BaseException:
+            # SystemExit / ImportError from the MPI-only top-level; DEFs
+            # landed before the raise.
+            pass
+        assert "collect_drives" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define collect_drives inline (D-36)."
+        )
+        assert "_LSBLK_ARGS" in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _LSBLK_ARGS inline (D-36)."
+        )
+
+        payload = {
+            "blockdevices": [
+                {"name": "nvme0n1", "model": "Samsung SSD 980 PRO",
+                 "vendor": "Samsung", "size": "1000204886016",
+                 "rota": "0", "tran": "nvme", "rm": "0"},
+                {"name": "sda", "model": "WDC WD5003ABYX-01WERA1",
+                 "vendor": "ATA", "size": "500107862016",
+                 "rota": "1", "tran": "sata", "rm": "0"},
+                # Skipped: removable
+                {"name": "sdb", "model": "Cruzer", "vendor": "SanDisk",
+                 "size": "32000000000", "rota": "0", "tran": "usb",
+                 "rm": "1"},
+                # Skipped: virtual prefix
+                {"name": "loop0", "model": "", "vendor": "",
+                 "size": "1000000", "rota": "0", "tran": "loop",
+                 "rm": "0"},
+            ]
+        }
+
+        # Inject a mock subprocess module into the script namespace AND
+        # patch the module-side subprocess.run. The script's collect_drives
+        # body references the bare `subprocess` name (Pattern B duplicates
+        # the import inside the script body), so we replace the symbol the
+        # script body resolves at call time.
+        mock_subprocess = MagicMock()
+        mock_subprocess.run = lambda *a, **k: _lsblk_cp(payload)
+        # Preserve real TimeoutExpired/SubprocessError so script-side except
+        # tuples that reference these still type-check (the script can't
+        # import subprocess if we replaced the whole module without keeping
+        # the exception types).
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        mock_subprocess.SubprocessError = subprocess.SubprocessError
+        ns["subprocess"] = mock_subprocess
+
+        monkeypatch.setattr(cc.subprocess, "run",
+                            lambda *a, **k: _lsblk_cp(payload))
+
+        a = ns["collect_drives"]()
+        b = collect_drives()
+        assert a == b, (
+            f"MPI-script collect_drives diverged from module: "
+            f"script={a!r} module={b!r}"
+        )
+
+
+class TestDrivesWiring:
+    """collect_local_system_info wires `drives` into result via the same
+    try/except + default-list shape as chassis_model, networking, sysctl, and
+    environment. D-2 universal-rule contract: the key is always present and
+    always a list (the D-33 omit-when-empty behavior fires at the
+    auto_generator transform layer, not at the collector wiring)."""
+
+    def test_collect_local_system_info_drives_present(self):
+        """Universal-rule contract: result['drives'] is always present and
+        is a list (possibly empty). Smokes the WSL2 dev shell where lsblk
+        may or may not be installed."""
+        from mlpstorage_py import cluster_collector as cc
+
+        result = cc.collect_local_system_info()
+        assert "drives" in result
+        assert isinstance(result["drives"], list)
+
+    def test_collect_local_system_info_drives_uses_collect_drives(
+        self, monkeypatch
+    ):
+        """Wiring contract: result['drives'] is exactly what collect_drives
+        returns on the happy path."""
+        from mlpstorage_py import cluster_collector as cc
+
+        monkeypatch.setattr(
+            cc,
+            "collect_drives",
+            lambda *a, **kw: [
+                {"vendor_name": "INTEL", "model_name": "X",
+                 "interface": "nvme", "capacity_in_GB": 3072}
+            ],
+        )
+        result = cc.collect_local_system_info()
+        assert result["drives"] == [
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 3072}
+        ]
+        assert "drives" not in result.get("errors", {})
+
+    def test_collect_local_system_info_drives_failure_isolated(
+        self, monkeypatch
+    ):
+        """Wiring contract: a raise inside collect_drives is caught at the
+        wiring layer; result['drives'] defaults to [] and errors['drives']
+        captures the message."""
+        from mlpstorage_py import cluster_collector as cc
+
+        def boom(*a, **kw):
+            raise RuntimeError("drives boom")
+
+        monkeypatch.setattr(cc, "collect_drives", boom)
+        result = cc.collect_local_system_info()
+        assert result["drives"] == []
+        assert result.get("errors", {}).get("drives") == "drives boom"
