@@ -295,10 +295,11 @@ def group_by_fingerprint(
 def node_dict_from_host(host: HostInfo) -> dict:
     """Map a `HostInfo` into a `NodeDescription`-shaped dict.
 
-    Output shape (Phase 3 / Plan 03-05 deliverable — `drives` is spliced by
-    Plan 02-03's `_splice_stub_lists`; `quantity` is injected by
-    `group_by_fingerprint`; `networking` is now emitted directly here from
-    `host.networking` via a per-host `group_by_fingerprint` pass):
+    Output shape (Phase 4 / Plan 04-05 final emit — `quantity` is injected by
+    `group_by_fingerprint`; `networking` + `sysctl` + `environment` + `drives`
+    are all emitted directly here from the corresponding HostInfo fields;
+    downstream `_splice_stub_lists` handles networking traffic-splice (D-17),
+    networking blank-stub fallback (D-3), and drives key-omission (D-33)):
 
         {
           "friendly_description": "",
@@ -309,10 +310,6 @@ def node_dict_from_host(host: HostInfo) -> dict:
             "cpu_cores": <int | "">,     # COLL-01 via host.cpu.num_cores
             "memory_capacity": <int | "">,  # COLL-01, GiB (D-6)
           },
-          "operating_system": {
-            "name": <str | "">,          # COLL-02 via os_release NAME
-            "version": <str | "">,       # COLL-02 via os_release VERSION_ID
-          },
           "networking": [<grouped stanzas> | []],  # COLL-04: per-host
               # group_by_fingerprint(host.networking, ("type","speed","state"),
               # "unit_count") collapses identical NICs into stanzas with
@@ -320,6 +317,24 @@ def node_dict_from_host(host: HostInfo) -> dict:
               # `_splice_stub_lists` then either splices D-17 traffic=[] onto
               # up entries (real-data branch) or falls back to the Phase 2
               # _NETWORKING_STUB blank entry (fallback branch).
+          "sysctl": [<shallow-copy pass-through> | []],  # COLL-05: each entry
+              # in host.sysctl appears once per host (no per-host collapse).
+              # `list(host.sysctl)` is a shallow copy so caller mutations do
+              # not alias back into HostInfo state.
+          "environment": [<shallow-copy pass-through> | []],  # COLL-06: same
+              # shape as sysctl. Values are already-redacted per the
+              # Plan-04-02 collector contract (D-23 first-4/last-4 mask on
+              # AWS_ACCESS_KEY_ID; D-24 length-only on AWS_SECRET_ACCESS_KEY).
+          "drives": [<grouped stanzas> | []],  # COLL-07: per-host
+              # group_by_fingerprint(host.drives,
+              # ("vendor_name","model_name","interface","capacity_in_GB"),
+              # "unit_count") collapses identical drive rows into stanzas.
+              # Empty host.drives → []; downstream `_splice_stub_lists`
+              # then POPS the key entirely per D-33 (NOT a blank stub).
+          "operating_system": {
+            "name": <str | "">,          # COLL-02 via os_release NAME
+            "version": <str | "">,       # COLL-02 via os_release VERSION_ID
+          },
         }
 
     Defensive on every field per the universal collection-failure rule
@@ -387,6 +402,24 @@ def node_dict_from_host(host: HostInfo) -> dict:
     else:
         per_host_networking = []
 
+    # COLL-07 (Plan 04-05): per-host drives grouping. group_by_fingerprint
+    # over (vendor_name, model_name, interface, capacity_in_GB) collapses
+    # identical drive rows into stanzas with unit_count=N (e.g. eight
+    # identical 500GB NVMe drives → one stanza with unit_count=8). Empty
+    # host.drives → []; downstream _splice_stub_lists D-33 branch then
+    # POPS the empty list entirely (NOT a blank stub) so the YAML carries
+    # no `drives:` block — the SER-02 signal for "submitter must hand-fill
+    # if applicable." Mirrors the Phase 3 per-host networking grouping
+    # pattern verbatim.
+    if host.drives:
+        per_host_drives = group_by_fingerprint(
+            host.drives,
+            ("vendor_name", "model_name", "interface", "capacity_in_GB"),
+            "unit_count",
+        )
+    else:
+        per_host_drives = []
+
     return {
         "friendly_description": "",  # SER-02 blank — human declaration
         "chassis": {
@@ -398,13 +431,20 @@ def node_dict_from_host(host: HostInfo) -> dict:
             "memory_capacity": memory_capacity,
             # power OMITTED per D-2 row 4 (optional + non-derivable)
         },
-        "networking": per_host_networking,  # Phase 3 / COLL-04 — directly emitted; drives still spliced by Plan 02-03's _splice_stub_lists
+        "networking": per_host_networking,  # Phase 3 / COLL-04 — directly emitted
+        # Phase 4 / Plan 04-05 — sysctl/environment/drives all emitted directly
+        # from the corresponding HostInfo list fields. `list(host.sysctl)` and
+        # `list(host.environment)` produce shallow copies so caller mutations of
+        # the result list do not alias back into HostInfo state. `drives` uses
+        # a per-host group_by_fingerprint pass (above) to collapse identical
+        # drive rows into stanzas with unit_count=N.
+        "sysctl":      list(host.sysctl),       # COLL-05
+        "environment": list(host.environment),  # COLL-06
+        "drives":      per_host_drives,         # COLL-07 — D-33 splice-layer omit handled by _splice_stub_lists
         "operating_system": {
             "name": os_name,
             "version": os_version,
         },
-        # drives: spliced by Plan 02-03's _splice_stub_lists
-        # environment / sysctl: Phase 4 territory — not emitted here
         # quantity: injected by group_by_fingerprint downstream
     }
 

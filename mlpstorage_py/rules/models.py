@@ -178,6 +178,9 @@ class HostInfo:
     system: Optional[HostSystemInfo] = None
     chassis_model: str = ""                                              # Phase 3 (COLL-03)
     networking: List[Dict[str, Any]] = field(default_factory=list)       # Phase 3 (COLL-04)
+    sysctl: List[Dict[str, Any]] = field(default_factory=list)           # Phase 4 (COLL-05)
+    environment: List[Dict[str, Any]] = field(default_factory=list)      # Phase 4 (COLL-06)
+    drives: List[Dict[str, Any]] = field(default_factory=list)           # Phase 4 (COLL-07)
     collection_timestamp: Optional[str] = None
 
     @classmethod
@@ -249,6 +252,16 @@ class HostInfo:
         chassis_model = data.get('chassis_model', '')
         networking = data.get('networking', [])
 
+        # Phase 4 / Plan 04-05: COLL-05 + COLL-06 + COLL-07 — flow the three
+        # new collector outputs onto the dataclass. Plan 04-01 (sysctl), Plan
+        # 04-02 (environment — already redacted per D-23/D-24), Plan 04-03
+        # (drives — D-31 filtered). Universal D-2 rule: missing keys default
+        # to []. `from_dict` left untouched (consistent with the Phase 3
+        # chassis_model/networking precedent).
+        sysctl = data.get('sysctl', [])
+        environment = data.get('environment', [])
+        drives = data.get('drives', [])
+
         return cls(
             hostname=hostname,
             memory=memory,
@@ -258,6 +271,9 @@ class HostInfo:
             system=system,
             chassis_model=chassis_model,
             networking=networking,
+            sysctl=sysctl,
+            environment=environment,
+            drives=drives,
             collection_timestamp=data.get('collection_timestamp'),
         )
 
