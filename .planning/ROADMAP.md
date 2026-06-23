@@ -143,7 +143,20 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The generated drive entries do NOT contain `media_type`, `form_factor`, or `performance` (those remain blank for the submitter to fill from spec sheets per SER-02).
   5. On a host where `lsblk` is not installed or returns no devices, `clients[].drives` is omitted from the YAML and `run` still completes without error.
 
-**Plans:** TBD
+**Plans:** 5 plans
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Slice 1: sysctl collector + allowlist file + MPI script duplication (COLL-05; D-27/28/29/36)
+- [ ] 04-02-PLAN.md — Slice 2: environment collector + redactor unification in storage_config.py + MPI script duplication + ROADMAP SC #2 reconciliation (COLL-06; D-23/24/25/26/36)
+- [ ] 04-03-PLAN.md — Slice 3: drives collector via lsblk -J -b subprocess + D-31 filter + MPI script duplication (COLL-07; D-30/31/33/36)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 04-04-PLAN.md — Slice 4: 3 fingerprint signature extractors + generalized _resolve_fingerprint_key dispatch + extended _FINGERPRINT_KEYS + D-33 _splice_stub_lists drives-omit branch (COLL-05/06/07 transform-side; D-33/34/35)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 04-05-PLAN.md — Slice 5: HostInfo.sysctl + HostInfo.environment + HostInfo.drives + node_dict_from_host emit-shape extension + end-to-end integration tests (COLL-05/06/07 closure)
 
 ### Phase 5: Logical Diff Lifecycle + Capacity Gate
 
@@ -174,5 +187,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Canonical Layout & Init | 5/5 | Complete    | 2026-06-20 |
 | 2. First-Run Write of Partial systemname.yaml | 6/6 | Complete    | 2026-06-22 |
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
-| 4. Sysctl, Environment, and Drives Coverage | 0/TBD | Not started | - |
+| 4. Sysctl, Environment, and Drives Coverage | 0/5 | Planning complete | - |
 | 5. Logical Diff Lifecycle + Capacity Gate | 0/TBD | Not started | - |
