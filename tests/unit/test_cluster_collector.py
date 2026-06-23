@@ -1,6 +1,7 @@
 """Unit tests for cluster_collector module."""
 
 import json
+import os
 import subprocess
 import time
 import pytest
@@ -18,6 +19,7 @@ from mlpstorage_py.cluster_collector import (
     collect_timeseries_sample,
     TimeSeriesCollector,
     MultiHostTimeSeriesCollector,
+    MPI_COLLECTOR_SCRIPT,
 )
 from mlpstorage_py.interfaces.collector import CollectionResult
 
@@ -1424,3 +1426,178 @@ class TestHostCPUInfoNumSockets:
         })
         assert host_one.cpu is not None
         assert host_one.cpu.num_sockets == 1
+
+
+# =============================================================================
+# Phase 3 Plan 02 — Chassis Model Collector (D-21, COLL-03)
+# =============================================================================
+#
+# Tests for the chassis-model sysfs reader: _DMI_PLACEHOLDERS frozenset,
+# _normalize_dmi case-insensitive helper, collect_chassis_model file reader,
+# and MPI_COLLECTOR_SCRIPT vs. module parity for the duplicated implementations.
+#
+# Pattern: tmp_path + path-indirection (RESEARCH lines 738-792). Avoids
+# patching builtins.open which would corrupt PyYAML and any other I/O the
+# test runner is doing concurrently.
+# =============================================================================
+
+
+# Per D-21, the ten placeholder strings that BIOS vendors leave when a board
+# ships without a real product_name. The collector must collapse all ten to ""
+# regardless of case, after .strip().
+_DMI_PLACEHOLDER_ORIGINALS = [
+    "",
+    "To Be Filled By O.E.M.",
+    "Default string",
+    "System Product Name",
+    "System manufacturer",
+    "None",
+    "Not Specified",
+    "Not Applicable",
+    "OEM",
+    "unknown",
+]
+
+
+def _mixed_case(s: str) -> str:
+    """Build a deterministic mixed-case variant of s by alternating .upper()/.lower()
+    per character. Used to exercise the case-insensitive comparison without
+    depending on a hand-typed case-variant table."""
+    out = []
+    for i, ch in enumerate(s):
+        out.append(ch.upper() if i % 2 == 0 else ch.lower())
+    return "".join(out)
+
+
+_DMI_PLACEHOLDER_CASE_CASES = (
+    [(s, "") for s in _DMI_PLACEHOLDER_ORIGINALS]
+    + [(s.upper(), "") for s in _DMI_PLACEHOLDER_ORIGINALS]
+    + [(_mixed_case(s), "") for s in _DMI_PLACEHOLDER_ORIGINALS]
+)
+
+
+class TestDMIPlaceholders:
+    """D-21 placeholder normalization: case-insensitive, post-strip."""
+
+    @pytest.mark.parametrize("inp,expected", _DMI_PLACEHOLDER_CASE_CASES)
+    def test_each_placeholder_normalizes_to_empty(self, inp, expected):
+        """All 10 D-21 placeholders in 3 case variants each (30 cases total)
+        normalize to the empty string. _normalize_dmi must lower() the stripped
+        input before set-membership testing."""
+        from mlpstorage_py.cluster_collector import _normalize_dmi
+        assert _normalize_dmi(inp) == expected
+
+    def test_real_product_name_passes_through(self):
+        """A legitimate vendor model string passes through unchanged (modulo strip).
+        The .strip() preserves internal whitespace and case for real names."""
+        from mlpstorage_py.cluster_collector import _normalize_dmi
+        assert _normalize_dmi("PowerEdge R760") == "PowerEdge R760"
+        assert _normalize_dmi("Supermicro AS-1024US-TRT") == "Supermicro AS-1024US-TRT"
+
+    def test_strip_then_compare(self):
+        """The strip happens BEFORE the placeholder lookup, so leading/trailing
+        whitespace (including newlines and tabs as sysfs reads commonly carry
+        them) does not prevent placeholder collapse."""
+        from mlpstorage_py.cluster_collector import _normalize_dmi
+        assert _normalize_dmi("  Default string\n") == ""
+        assert _normalize_dmi("\tDefault string  ") == ""
+
+
+class TestCollectChassisModel:
+    """Sysfs reader for /sys/class/dmi/id/product_name with universal D-2
+    collection-failure rule (any exception → empty string)."""
+
+    def test_reads_dmi_file(self, tmp_path):
+        """Happy path: file present and readable, returns the normalized
+        product name. Uses dmi_path indirection (RESEARCH 738-792) so we
+        never patch builtins.open."""
+        from mlpstorage_py.cluster_collector import collect_chassis_model
+        p = tmp_path / "product_name"
+        p.write_text("PowerEdge R760\n")
+        assert collect_chassis_model(dmi_path=str(p)) == "PowerEdge R760"
+
+    def test_placeholder_file_returns_empty(self, tmp_path):
+        """Real BIOS junk on disk: file present but contents are a D-21
+        placeholder → empty string per D-21 normalization."""
+        from mlpstorage_py.cluster_collector import collect_chassis_model
+        p = tmp_path / "product_name"
+        p.write_text("To Be Filled By O.E.M.\n")
+        assert collect_chassis_model(dmi_path=str(p)) == ""
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        """D-2 universal failure rule: missing DMI file (e.g., container
+        without DMI passthrough, WSL2 kernel) → empty string, no exception."""
+        from mlpstorage_py.cluster_collector import collect_chassis_model
+        nonexistent = tmp_path / "no_such_file"
+        assert collect_chassis_model(dmi_path=str(nonexistent)) == ""
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="root bypasses chmod 0o000 file-mode permission denial",
+    )
+    def test_unreadable_file_returns_empty(self, tmp_path):
+        """D-2 universal failure rule: permission denied (hardened container,
+        SELinux confinement) → empty string. We restore perms in finally
+        so tmp_path cleanup does not error."""
+        from mlpstorage_py.cluster_collector import collect_chassis_model
+        p = tmp_path / "product_name"
+        p.write_text("PowerEdge R760\n")
+        try:
+            os.chmod(str(p), 0o000)
+            assert collect_chassis_model(dmi_path=str(p)) == ""
+        finally:
+            os.chmod(str(p), 0o644)
+
+    def test_local_system_info_includes_chassis_model_key(self):
+        """The collect_local_system_info top-level orchestrator wires
+        chassis_model into its result dict. Universal-failure means the
+        value is always a string (possibly empty) and the key is always
+        present — this contract is what HostInfo.from_collected_data
+        will rely on in Plan 03-05."""
+        result = collect_local_system_info()
+        assert "chassis_model" in result
+        assert isinstance(result["chassis_model"], str)
+
+
+class TestMPIScriptParity:
+    """Pattern B (RESEARCH 675-679): the MPI worker script duplicates
+    parse_proc_meminfo + parse_os_release inline because it runs across
+    SSH on heterogeneous Python environments. Phase 3 extends this with
+    _DMI_PLACEHOLDERS, _normalize_dmi, and collect_chassis_model. Drift
+    between the two copies produces divergent per-host data shapes;
+    this parity test catches any such drift at unit-test time."""
+
+    def test_chassis_functions_match_module(self):
+        """exec the MPI_COLLECTOR_SCRIPT in a controlled namespace, then
+        compare its _normalize_dmi against the module's. The script's
+        top-level code may raise (no mpi4py on dev shells, SystemExit
+        from the exit(1) path), but the function DEFs hit the namespace
+        BEFORE the top-level code executes, so we wrap exec in a broad
+        try/except to keep the parity check workable on any host."""
+        from mlpstorage_py.cluster_collector import _normalize_dmi
+        ns = {}
+        try:
+            exec(MPI_COLLECTOR_SCRIPT, ns)
+        except BaseException:
+            # SystemExit, ImportError, NameError, AttributeError, and
+            # anything else from the MPI-only top-level — we only care
+            # that the function DEFs landed in ns before the exception.
+            pass
+        assert '_normalize_dmi' in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _normalize_dmi inline (Pattern B)."
+        )
+        assert 'collect_chassis_model' in ns, (
+            "MPI_COLLECTOR_SCRIPT must define collect_chassis_model inline (Pattern B)."
+        )
+        assert '_DMI_PLACEHOLDERS' in ns, (
+            "MPI_COLLECTOR_SCRIPT must define _DMI_PLACEHOLDERS inline (Pattern B)."
+        )
+        for sample in [
+            "PowerEdge R760",
+            "Default string",
+            "",
+            "  default STRING  ",
+        ]:
+            assert ns['_normalize_dmi'](sample) == _normalize_dmi(sample), (
+                f"MPI-script _normalize_dmi diverged from module on {sample!r}"
+            )
