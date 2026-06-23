@@ -16,7 +16,7 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Final, List, Optional, Tuple
 
 from mlpstorage_py.config import MPIRUN, MPIEXEC, MPI_RUN_BIN, MPI_EXEC_BIN
 from mlpstorage_py.interfaces.collector import ClusterCollectorInterface, CollectionResult
@@ -620,6 +620,80 @@ def parse_proc_cgroups(content: str) -> List[CgroupInfo]:
 
 
 # =============================================================================
+# Chassis Model Collection (DMI / SMBIOS) — Phase 3 Plan 02 (D-21, COLL-03)
+# =============================================================================
+#
+# Path indirection lets tests point the reader at a tmp_path fixture without
+# patching builtins.open (which corrupts PyYAML and other concurrent I/O —
+# see RESEARCH 738-792 / Anti-Patterns to Avoid).
+_DMI_PRODUCT_NAME_PATH: str = '/sys/class/dmi/id/product_name'
+
+
+# D-21 verbatim placeholder list, normalized to lower-case. The collector
+# treats any of these (case-insensitive, post-strip) as "BIOS junk, treat
+# as blank" — the blank then surfaces in submission validation as a
+# visible to-do for the submitter (SER-02 pattern). The empty string is
+# included so an empty product_name file collapses naturally through the
+# same set-membership branch.
+_DMI_PLACEHOLDERS: Final[frozenset[str]] = frozenset({
+    "",
+    "to be filled by o.e.m.",
+    "default string",
+    "system product name",
+    "system manufacturer",
+    "none",
+    "not specified",
+    "not applicable",
+    "oem",
+    "unknown",
+})
+
+
+def _normalize_dmi(s: str) -> str:
+    """Normalize a DMI product_name string per D-21.
+
+    Returns the empty string when ``s.strip().lower()`` matches any entry in
+    ``_DMI_PLACEHOLDERS``; otherwise returns ``s.strip()`` (case preserved
+    for real product names like "PowerEdge R760").
+
+    Both branches are pure str → str. No exception path.
+    """
+    stripped = s.strip()
+    if stripped.lower() in _DMI_PLACEHOLDERS:
+        return ""
+    return stripped
+
+
+def collect_chassis_model(dmi_path: str = _DMI_PRODUCT_NAME_PATH) -> str:
+    """Read the system's chassis/product model from DMI/SMBIOS sysfs.
+
+    Per the universal D-2 collection-failure rule: any exception (file
+    missing on a container without DMI passthrough, PermissionError on
+    a hardened image, OSError EINVAL on an exotic kernel, decoding
+    failure on a corrupt SMBIOS table) yields the empty string. The
+    collector NEVER raises for a sysfs read failure.
+
+    T-3-05 mitigation: explicit 8KB read cap (sysfs files are kernel-buffered
+    to PAGE_SIZE on Linux, typically 4KB; the cap is defense-in-depth
+    against any future kernel exposing an unbounded blob here).
+
+    Args:
+        dmi_path: Path to the DMI product_name file. Production callers
+            use the module default; tests pass a tmp_path fixture.
+
+    Returns:
+        The normalized product name (e.g., "PowerEdge R760"), or the empty
+        string on any read failure or D-21 placeholder match.
+    """
+    try:
+        with open(dmi_path, 'r') as f:
+            raw = f.read(8192)
+        return _normalize_dmi(raw)
+    except Exception:
+        return ""
+
+
+# =============================================================================
 # Local System Information Collection
 # =============================================================================
 
@@ -725,6 +799,18 @@ def collect_local_system_info() -> Dict[str, Any]:
     except Exception as e:
         result['errors']['os_release'] = str(e)
         result['os_release'] = {}
+
+    # Collect /sys/class/dmi/id/product_name → chassis_model (D-21, COLL-03).
+    # collect_chassis_model swallows its own exceptions per D-2, so the
+    # wrapper try/except here is defense-in-depth against an unexpected
+    # surface (e.g., the path-indirection argument default being mutated
+    # to a non-string by a future bug) — the universal-rule contract is
+    # "the key is always present, the value is always a string".
+    try:
+        result['chassis_model'] = collect_chassis_model()
+    except Exception as e:
+        result['errors']['chassis_model'] = str(e)
+        result['chassis_model'] = ''
 
     # Collect /proc/vmstat
     try:
@@ -1018,6 +1104,47 @@ def parse_os_release(content):
     return result
 
 
+# Phase 3 Plan 02 (D-21, COLL-03) — Pattern B (RESEARCH 675-679) duplication
+# of the chassis-model collector into the MPI worker script. Must stay in
+# behavioral parity with the module-level versions in this same file; the
+# parity test in tests/unit/test_cluster_collector.py::TestMPIScriptParity
+# fails loudly on any drift between the two copies. Untyped form (no Final[],
+# no frozenset[str] subscript) so the script survives on Python 3.8 hosts
+# in heterogeneous SSH-fan-out fleets — see PLAN.md Task 2 Step 3 note.
+_DMI_PRODUCT_NAME_PATH = '/sys/class/dmi/id/product_name'
+
+_DMI_PLACEHOLDERS = frozenset({
+    "",
+    "to be filled by o.e.m.",
+    "default string",
+    "system product name",
+    "system manufacturer",
+    "none",
+    "not specified",
+    "not applicable",
+    "oem",
+    "unknown",
+})
+
+
+def _normalize_dmi(s):
+    """Normalize a DMI product_name string per D-21 (mirror of module copy)."""
+    stripped = s.strip()
+    if stripped.lower() in _DMI_PLACEHOLDERS:
+        return ""
+    return stripped
+
+
+def collect_chassis_model(dmi_path=_DMI_PRODUCT_NAME_PATH):
+    """Read DMI product_name with universal-failure rule (mirror of module copy)."""
+    try:
+        with open(dmi_path, 'r') as f:
+            raw = f.read(8192)
+        return _normalize_dmi(raw)
+    except Exception:
+        return ""
+
+
 def collect_local_info():
     """Collect system information from the local node."""
     result = {
@@ -1098,6 +1225,18 @@ def collect_local_info():
     except Exception as e:
         result['errors']['os_release'] = str(e)
         result['os_release'] = {}
+
+    # Collect /sys/class/dmi/id/product_name → chassis_model (D-21, COLL-03).
+    # Parallel to the module-side wiring in collect_local_system_info;
+    # Pattern B duplication discipline (RESEARCH 675-679) keeps the MPI
+    # fan-out path producing the same per-host data shape as the local
+    # fallback. collect_chassis_model swallows its own exceptions per D-2;
+    # the wrapper try/except is defense-in-depth.
+    try:
+        result['chassis_model'] = collect_chassis_model()
+    except Exception as e:
+        result['errors']['chassis_model'] = str(e)
+        result['chassis_model'] = ''
 
     if not result['errors']:
         del result['errors']
