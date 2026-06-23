@@ -810,3 +810,292 @@ def test_validator_no_chassis_error_when_dmi_populated(tmp_path):
             f"DMI was populated; node_dict_from_host should have wired "
             f"the real chassis_model through."
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 / Plan 04-05 — end-to-end sysctl + environment + drives emission
+#
+# Closes the Phase 4 vertical: a HostInfo with populated sysctl + environment
+# + drives flows through node_dict_from_host → group_by_fingerprint →
+# _splice_stub_lists → yaml.safe_dump and lands in the emitted
+# systemname.yaml. Verifies the D-33 drives-omit branch end-to-end (lsblk
+# absent → drives key absent at the client-stanza level), cross-host
+# fingerprint splits on each of the three new dimensions (D-35), homogeneous
+# fleet collapse, and Yamale schema validation pass on Phase-4-populated
+# fields (SER-03).
+# ---------------------------------------------------------------------------
+
+
+def _make_host_phase4(
+    *,
+    sysctl=None,
+    environment=None,
+    drives=None,
+    chassis_model: str = "PowerEdge R760",
+    networking=None,
+    cpu_model: str = "Intel(R) Xeon Platinum 8480+",
+    num_cores: int = 56,
+    num_sockets: int = 2,
+    mem_bytes: int = 274_877_906_944,
+    os_name: str = "Rocky Linux",
+    os_version: str = "9.5",
+    hostname: str = "h1",
+) -> HostInfo:
+    """Phase 4 extension of `_make_host_phase3`: layers sysctl + environment +
+    drives on top of the Phase-3 defaults so end-to-end YAML emit can be
+    exercised against a fully-populated HostInfo.
+
+    Defaults match the Phase-3 helper's networking (1 100GbE up + 1 200Gb IB up).
+    `sysctl`, `environment`, `drives` default to empty lists so callers can
+    selectively populate just the one dimension a test cares about.
+    """
+    host = _make_host_phase3(
+        chassis_model=chassis_model, networking=networking,
+        cpu_model=cpu_model, num_cores=num_cores, num_sockets=num_sockets,
+        mem_bytes=mem_bytes, os_name=os_name, os_version=os_version,
+        hostname=hostname,
+    )
+    host.sysctl = sysctl if sysctl is not None else []
+    host.environment = environment if environment is not None else []
+    host.drives = drives if drives is not None else []
+    return host
+
+
+class TestPhase4EndToEnd:
+    """End-to-end coverage for Phase 4 ROADMAP success criteria #1-5
+    (sysctl populated, environment populated with redaction, drives present,
+    drives omitted per D-33, cross-host splits and homogeneous collapse,
+    Yamale schema validation passes on populated fields).
+    """
+
+    def test_drives_populated_emits_drives_key(self, tmp_path):
+        """ROADMAP SC #3: a host with populated drives produces a
+        clients[0].drives list containing one entry per
+        (vendor,model,interface,capacity_in_GB) group with unit_count.
+        """
+        hosts = [_make_host_phase4(drives=[
+            {"vendor_name": "INTEL", "model_name": "SSDPED1K375GA",
+             "interface": "nvme", "capacity_in_GB": 375},
+        ])]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        client0 = data["system_under_test"]["clients"][0]
+        assert "drives" in client0
+        assert client0["drives"] == [{
+            "vendor_name": "INTEL",
+            "model_name": "SSDPED1K375GA",
+            "interface": "nvme",
+            "capacity_in_GB": 375,
+            "unit_count": 1,
+        }]
+
+    def test_drives_absent_omits_drives_key_d33(self, tmp_path):
+        """ROADMAP SC #5 (D-33): a host with empty drives produces a
+        client stanza with NO drives key — verified by reading back the YAML.
+        """
+        hosts = [_make_host_phase4(drives=[])]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        client0 = data["system_under_test"]["clients"][0]
+        assert "drives" not in client0, (
+            f"Phase 4 / D-33 violation: drives key present in YAML when "
+            f"host.drives was empty; expected key OMITTED. client0={client0!r}"
+        )
+
+    def test_sysctl_populated_emits_sysctl_key(self, tmp_path):
+        """ROADMAP SC #1: a host with populated sysctl produces a
+        clients[0].sysctl list containing the entries verbatim.
+        """
+        hosts = [_make_host_phase4(sysctl=[
+            {"name": "vm.dirty_ratio", "value": "20"},
+        ])]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        client0 = data["system_under_test"]["clients"][0]
+        assert client0["sysctl"] == [
+            {"name": "vm.dirty_ratio", "value": "20"},
+        ]
+
+    def test_environment_populated_emits_environment_with_redaction(self, tmp_path):
+        """ROADMAP SC #2: a host with environment values (already-redacted per
+        the COLL-06 collector contract) round-trips verbatim through the YAML.
+        AWS_SECRET_ACCESS_KEY is length-only redacted (D-24); regular vars
+        flow through unredacted.
+        """
+        hosts = [_make_host_phase4(environment=[
+            {"name": "AWS_SECRET_ACCESS_KEY", "value": "[SET — 40 chars]"},
+            {"name": "BUCKET", "value": "my-bucket"},
+        ])]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        client0 = data["system_under_test"]["clients"][0]
+        # Both entries round-trip verbatim (already-redacted per collector
+        # contract; the writer never re-redacts).
+        env_by_name = {e["name"]: e["value"] for e in client0["environment"]}
+        assert env_by_name["AWS_SECRET_ACCESS_KEY"] == "[SET — 40 chars]"
+        assert env_by_name["BUCKET"] == "my-bucket"
+
+    def test_two_hosts_differ_on_sysctl_split_to_two_stanzas(self, tmp_path):
+        """D-35 strict policy: two hosts that differ on sysctl values produce
+        TWO client stanzas (one per signature), even when every other field
+        is identical. Exercises Plan 04-04's `_sysctl_signature` extractor.
+        """
+        hosts = [
+            _make_host_phase4(
+                hostname="h0",
+                sysctl=[{"name": "vm.dirty_ratio", "value": "10"}],
+            ),
+            _make_host_phase4(
+                hostname="h1",
+                sysctl=[{"name": "vm.dirty_ratio", "value": "20"}],
+            ),
+        ]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        clients = data["system_under_test"]["clients"]
+        assert len(clients) == 2
+        assert sum(c["quantity"] for c in clients) == 2
+
+    def test_two_hosts_differ_on_drives_split_to_two_stanzas(self, tmp_path):
+        """D-35 strict policy: two hosts that differ on drives produce
+        TWO client stanzas. Exercises Plan 04-04's `_drive_signature` extractor.
+        """
+        hosts = [
+            _make_host_phase4(
+                hostname="h0",
+                drives=[
+                    {"vendor_name": "INTEL", "model_name": "X",
+                     "interface": "nvme", "capacity_in_GB": 500},
+                ],
+            ),
+            _make_host_phase4(
+                hostname="h1",
+                drives=[
+                    {"vendor_name": "INTEL", "model_name": "X",
+                     "interface": "nvme", "capacity_in_GB": 1000},
+                ],
+            ),
+        ]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        clients = data["system_under_test"]["clients"]
+        assert len(clients) == 2
+        assert sum(c["quantity"] for c in clients) == 2
+
+    def test_two_hosts_differ_on_environment_split_to_two_stanzas(self, tmp_path):
+        """D-35 strict policy: two hosts that differ on environment values
+        produce TWO client stanzas. Exercises `_environment_signature`."""
+        hosts = [
+            _make_host_phase4(
+                hostname="h0",
+                environment=[{"name": "NCCL_DEBUG", "value": "INFO"}],
+            ),
+            _make_host_phase4(
+                hostname="h1",
+                environment=[{"name": "NCCL_DEBUG", "value": "TRACE"}],
+            ),
+        ]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        clients = data["system_under_test"]["clients"]
+        assert len(clients) == 2
+        assert sum(c["quantity"] for c in clients) == 2
+
+    def test_homogeneous_fleet_collapses_to_one_stanza(self, tmp_path):
+        """ROADMAP SC #1/#2/#3 collapse path: 3 identical hosts with populated
+        sysctl/environment/drives collapse to a single stanza with quantity:3.
+        All three list fields populate the collapsed stanza."""
+        sysctl = [{"name": "vm.dirty_ratio", "value": "20"}]
+        environment = [{"name": "BUCKET", "value": "my-bucket"}]
+        drives = [{"vendor_name": "INTEL", "model_name": "X",
+                   "interface": "nvme", "capacity_in_GB": 500}]
+        hosts = [
+            _make_host_phase4(
+                hostname=f"h{i}",
+                sysctl=sysctl, environment=environment, drives=drives,
+            )
+            for i in range(3)
+        ]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+
+        data = yaml.safe_load(_yaml_path(tmp_path).read_text())
+        clients = data["system_under_test"]["clients"]
+        assert len(clients) == 1
+        assert clients[0]["quantity"] == 3
+        # The collapsed stanza carries all three Phase-4 lists populated.
+        assert clients[0]["sysctl"] == sysctl
+        assert clients[0]["environment"] == environment
+        assert clients[0]["drives"] == [
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500, "unit_count": 1},
+        ]
+
+    def test_yamale_schema_validation_passes_on_phase_4_emit_shape(self, tmp_path):
+        """ROADMAP SC #1+SC #4 + SER-03: with sysctl/environment/drives all
+        populated (and drives entries containing ONLY the four COLL-07 fields
+        — no media_type, no form_factor, no performance), the Pydantic
+        validator surfaces NO errors over the Phase-4-populated fields.
+
+        Pre-existing blanks (D-3 networking stub for empty networking,
+        D-14 top-level omissions) still produce errors — those are the
+        SER-02 signal — but no NEW errors are introduced on the Phase-4
+        emit surface.
+        """
+        from mlpstorage_py.system_description import schema_validator
+
+        hosts = [_make_host_phase4(
+            sysctl=[{"name": "vm.dirty_ratio", "value": "20"}],
+            environment=[{"name": "BUCKET", "value": "my-bucket"}],
+            drives=[{"vendor_name": "INTEL", "model_name": "X",
+                     "interface": "nvme", "capacity_in_GB": 500}],
+        )]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.run()
+        target = _yaml_path(tmp_path)
+        assert target.exists()
+
+        errors = schema_validator.validate_file(str(target))
+        error_paths = {e.split(":", 1)[0].strip() for e in errors}
+
+        # Phase-4-populated fields MUST NOT appear in any error.
+        forbidden_in_errors = [
+            "sysctl -> 0 -> name",
+            "sysctl -> 0 -> value",
+            "environment -> 0 -> name",
+            "environment -> 0 -> value",
+            "drives -> 0 -> vendor_name",
+            "drives -> 0 -> model_name",
+            "drives -> 0 -> interface",
+            "drives -> 0 -> capacity_in_GB",
+        ]
+        for field in forbidden_in_errors:
+            for ep in error_paths:
+                assert field not in ep, (
+                    f"Phase-4-populated field {field!r} unexpectedly appears "
+                    f"in error path {ep!r} — node_dict_from_host should have "
+                    f"wired the real value through cleanly."
+                )
+
+        # ROADMAP SC #4: drives entries do NOT carry media_type/form_factor/
+        # performance keys (the collector emits only the four fields above).
+        data = yaml.safe_load(target.read_text())
+        for client in data["system_under_test"]["clients"]:
+            for drive in client.get("drives", []):
+                assert "media_type" not in drive
+                assert "form_factor" not in drive
+                assert "performance" not in drive

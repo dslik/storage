@@ -2146,6 +2146,170 @@ class TestHostInfoNetworkingField:
 
 
 # =============================================================================
+# Phase 4 / Plan 04-05 — HostInfo.sysctl / .environment / .drives field
+# extensions (COLL-05 / COLL-06 / COLL-07 data-model wire-through).
+#
+# Mirrors the Phase 3 D-16 / TestHostInfoChassisField + TestHostInfoNetworkingField
+# precedent: three new list-typed dataclass fields with `default_factory=list`
+# and corresponding `data.get(..., [])` reads in `from_collected_data`. Defaults
+# are []; missing keys flow through to the default; populated lists flow
+# through verbatim. `from_dict` remains untouched (Phase 3 precedent).
+# =============================================================================
+
+
+class TestHostInfoSysctlField:
+    """Phase 4 / Plan 04-05 — HostInfo.sysctl field (COLL-05).
+
+    Mirror of TestHostInfoNetworkingField: dataclass field with a sensible
+    default (empty list), `from_collected_data` reads `data['sysctl']`, missing
+    key flows to default.
+    """
+
+    def test_default_empty_list(self):
+        """HostInfo(hostname='h').sysctl defaults to []."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo(hostname="h")
+        assert host.sysctl == []
+        assert isinstance(host.sysctl, list)
+
+    def test_constructed_with_populated_list(self):
+        """Direct dataclass construction with a populated sysctl list."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        sysctl = [{"name": "vm.dirty_ratio", "value": "20"}]
+        host = HostInfo(hostname="h", sysctl=sysctl)
+        assert host.sysctl == [{"name": "vm.dirty_ratio", "value": "20"}]
+
+    def test_from_collected_data_reads_sysctl(self):
+        """from_collected_data reads data['sysctl'] (list of dicts) verbatim
+        onto the dataclass field."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        sysctl = [
+            {"name": "vm.dirty_ratio", "value": "20"},
+            {"name": "net.core.somaxconn", "value": "4096"},
+        ]
+        host = HostInfo.from_collected_data({
+            "hostname": "h",
+            "sysctl": sysctl,
+        })
+        assert host.sysctl == sysctl
+
+    def test_from_collected_data_missing_sysctl_defaults_to_empty(self):
+        """from_collected_data with no 'sysctl' key → [] default
+        (universal D-2 collection-failure blank, list-shape)."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo.from_collected_data({"hostname": "h"})
+        assert host.sysctl == []
+
+
+class TestHostInfoEnvironmentField:
+    """Phase 4 / Plan 04-05 — HostInfo.environment field (COLL-06).
+
+    Same shape as TestHostInfoSysctlField for the per-host environment list.
+    Note: values are assumed already-redacted per the COLL-06 collector
+    contract (Plan 04-02 unified `_redact_secret` / `_mask_credential_id`).
+    """
+
+    def test_default_empty_list(self):
+        """HostInfo(hostname='h').environment defaults to []."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo(hostname="h")
+        assert host.environment == []
+        assert isinstance(host.environment, list)
+
+    def test_constructed_with_populated_list(self):
+        """Direct dataclass construction with a populated environment list."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        environment = [
+            {"name": "AWS_SECRET_ACCESS_KEY", "value": "[SET — 40 chars]"},
+            {"name": "BUCKET", "value": "my-bucket"},
+        ]
+        host = HostInfo(hostname="h", environment=environment)
+        assert host.environment == environment
+
+    def test_from_collected_data_reads_environment(self):
+        """from_collected_data reads data['environment'] verbatim onto the
+        dataclass field."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        environment = [
+            {"name": "NCCL_DEBUG", "value": "INFO"},
+            {"name": "AWS_ACCESS_KEY_ID", "value": "AKIA****MPLE"},
+        ]
+        host = HostInfo.from_collected_data({
+            "hostname": "h",
+            "environment": environment,
+        })
+        assert host.environment == environment
+
+    def test_from_collected_data_missing_environment_defaults_to_empty(self):
+        """from_collected_data with no 'environment' key → [] default."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo.from_collected_data({"hostname": "h"})
+        assert host.environment == []
+
+
+class TestHostInfoDrivesField:
+    """Phase 4 / Plan 04-05 — HostInfo.drives field (COLL-07).
+
+    Same shape as TestHostInfoSysctlField for the per-host drives list.
+    Drives are emitted as ungrouped per-row dicts by `collect_drives()`;
+    `node_dict_from_host` performs the per-host `group_by_fingerprint`
+    collapse downstream.
+    """
+
+    def test_default_empty_list(self):
+        """HostInfo(hostname='h').drives defaults to []."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo(hostname="h")
+        assert host.drives == []
+        assert isinstance(host.drives, list)
+
+    def test_constructed_with_populated_list(self):
+        """Direct dataclass construction with a populated drives list."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        drives = [
+            {"vendor_name": "INTEL", "model_name": "SSDPED1K375GA",
+             "interface": "nvme", "capacity_in_GB": 375},
+        ]
+        host = HostInfo(hostname="h", drives=drives)
+        assert host.drives == drives
+
+    def test_from_collected_data_reads_drives(self):
+        """from_collected_data reads data['drives'] verbatim onto the
+        dataclass field."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        drives = [
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500},
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500},
+        ]
+        host = HostInfo.from_collected_data({
+            "hostname": "h",
+            "drives": drives,
+        })
+        assert host.drives == drives
+
+    def test_from_collected_data_missing_drives_defaults_to_empty(self):
+        """from_collected_data with no 'drives' key → [] default
+        (D-33 path: lsblk absent / no devices / all filtered)."""
+        from mlpstorage_py.rules.models import HostInfo
+
+        host = HostInfo.from_collected_data({"hostname": "h"})
+        assert host.drives == []
+
+
+# =============================================================================
 # Phase 4 Plan 04-01 — Sysctl Collector (D-27 allowlist file, D-28 /proc/sys
 # walk semantics, D-29 multi-value verbatim emit, D-36 Pattern B parity).
 # RESEARCH Q2 (write-only leaves), Q3 (fnmatch deep-match gotcha), Q5

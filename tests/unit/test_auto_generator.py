@@ -241,10 +241,14 @@ def test_node_dict_cpu_fields():
     # or [] when host.networking is empty). The _make_host helper produces a
     # HostInfo with the default empty `networking=[]`, so the emit here is [].
     assert result["networking"] == []
-    # drives / environment / sysctl / quantity remain post-process territory.
-    assert "drives" not in result
-    assert "environment" not in result
-    assert "sysctl" not in result
+    # Phase 4 / Plan 04-05: sysctl / environment / drives now ALSO emitted
+    # directly by node_dict_from_host (default empty list when the source
+    # field is empty). The _make_host helper has the default empty
+    # `sysctl=[]`, `environment=[]`, `drives=[]`, so each emit is [].
+    assert result["sysctl"] == []
+    assert result["environment"] == []
+    assert result["drives"] == []
+    # quantity is still injected post-process by group_by_fingerprint.
     assert "quantity" not in result
 
 
@@ -338,19 +342,22 @@ def test_os_field_mapping():
 
 
 def test_node_dict_no_extra_keys():
-    """Schema discipline: top-level keys are exactly the four Phase 3 emits.
+    """Schema discipline: top-level keys are exactly the Phase 4 emit set.
 
     Phase 3 / Plan 03-05 adds the "networking" key directly to the emit
-    (previously spliced post-process by _splice_stub_lists). For a host
-    with empty networking, the emitted "networking" value is []; downstream
-    _splice_stub_lists then falls back to the _NETWORKING_STUB blank entry
-    per D-3 / D-17.
+    (previously spliced post-process by _splice_stub_lists). Phase 4 /
+    Plan 04-05 further adds "sysctl", "environment", "drives" — all three
+    emitted directly from the corresponding HostInfo list fields. For a host
+    with empty source lists, each emitted value is []; downstream
+    _splice_stub_lists then either falls back to a blank stub (networking)
+    or pops the key entirely (drives, per D-33).
     """
     host = _make_host(cpu=HostCPUInfo(model="X", num_cores=4, num_sockets=1))
     result = node_dict_from_host(host)
 
     assert set(result.keys()) == {
-        "friendly_description", "chassis", "operating_system", "networking",
+        "friendly_description", "chassis", "networking",
+        "sysctl", "environment", "drives", "operating_system",
     }
     assert set(result["chassis"].keys()) == {
         "model_name",
@@ -362,6 +369,12 @@ def test_node_dict_no_extra_keys():
     # Empty networking on the host → empty list emitted directly (D-3 fallback
     # then converts this to the blank stub at _splice_stub_lists time).
     assert result["networking"] == []
+    # Phase 4: empty sysctl/environment/drives → empty list emitted directly.
+    # Downstream: sysctl/environment pass through as-is; drives gets popped
+    # by _splice_stub_lists per D-33.
+    assert result["sysctl"] == []
+    assert result["environment"] == []
+    assert result["drives"] == []
 
 
 def test_node_dict_field_names_match_pydantic_reflection():
@@ -1120,13 +1133,15 @@ class TestNodeDictNetworking:
 
 
 class TestNodeDictReflection:
-    """Phase 3 reflection: chassis still issubset of Chassis fields; the
-    new top-level "networking" key joins the emitted dict by direct
-    construction (not by _splice_stub_lists splice as in Phase 2)."""
+    """Phase 3 → Phase 4 reflection: chassis still issubset of Chassis fields;
+    the Phase-3 "networking" + Phase-4 "sysctl"/"environment"/"drives" keys
+    all join the emitted dict by direct construction (not by
+    _splice_stub_lists splice as in Phase 2)."""
 
-    def test_node_dict_field_names_match_pydantic_reflection_after_phase3(self):
-        """Top-level emit now includes "networking" directly; chassis still
-        issubset of Chassis schema (model_name now populated)."""
+    def test_node_dict_field_names_match_pydantic_reflection_after_phase4(self):
+        """Top-level emit now includes networking + sysctl + environment +
+        drives directly; chassis still issubset of Chassis schema
+        (model_name populated)."""
         from mlpstorage_py.system_description.schema_validator import (
             Chassis,
             OperatingSystem,
@@ -1138,9 +1153,10 @@ class TestNodeDictReflection:
         )
         result = node_dict_from_host(host)
 
-        # Top-level keys now include the directly-emitted "networking" key.
+        # Phase 4 final emit shape: 7 top-level keys.
         assert set(result.keys()) == {
-            "friendly_description", "chassis", "operating_system", "networking",
+            "friendly_description", "chassis", "networking",
+            "sysctl", "environment", "drives", "operating_system",
         }
 
         chassis_keys = set(result["chassis"].keys())
@@ -1583,3 +1599,213 @@ class TestSpliceStubListsDrivesOmitBranch:
                 f"D-33 violation: drives key present after splice for "
                 f"client_extra={client_extra}"
             )
+
+
+# ===========================================================================
+# Phase 04 / Plan 04-05 — node_dict_from_host emit-shape extension for
+# sysctl / environment / drives (COLL-05 / COLL-06 / COLL-07 wire-through).
+#
+# These tests are the transform-unit RED for Plan 04-05 Task 1. They mirror
+# the Phase-3 TestNodeDictChassisModel + TestNodeDictNetworking pattern:
+#
+#   - sysctl: pass-through shallow copy of host.sysctl (each key appears
+#     once per host; no per-host group_by_fingerprint collapse).
+#   - environment: same shape as sysctl.
+#   - drives: per-host group_by_fingerprint pass over
+#     ("vendor_name","model_name","interface","capacity_in_GB") with
+#     "unit_count" — collapses identical drive rows on a single host into
+#     stanzas. Mirrors the Phase 3 per-host networking grouping pattern.
+#
+# Helper `_phase4_host` extends `_phase3_host` to also seed sysctl /
+# environment / drives. Pre-Task-2 GREEN, the assignments succeed (dataclass
+# is non-frozen and Plan 04-05 GREEN appends the fields with defaults);
+# what fails RED is the dict-emit-side assertion.
+# ===========================================================================
+
+
+def _phase4_host(
+    *,
+    chassis_model: str = "",
+    networking=None,
+    sysctl=None,
+    environment=None,
+    drives=None,
+    cpu_model: str = "X",
+    num_cores: int = 4,
+    num_sockets: int = 1,
+):
+    """Phase 4 extension of `_phase3_host`. Layers sysctl / environment /
+    drives on top of the Phase-3 helper so the new emit-side tests can
+    drive `node_dict_from_host` against a fully-populated HostInfo."""
+    host = _phase3_host(
+        chassis_model=chassis_model,
+        networking=networking,
+        cpu_model=cpu_model,
+        num_cores=num_cores,
+        num_sockets=num_sockets,
+    )
+    host.sysctl = sysctl if sysctl is not None else []
+    host.environment = environment if environment is not None else []
+    host.drives = drives if drives is not None else []
+    return host
+
+
+class TestNodeDictSysctl:
+    """node_dict_from_host wires host.sysctl → top-level "sysctl" key.
+
+    Pass-through shallow copy: each sysctl entry appears once per host
+    (no per-host collapse), but the result list is a fresh list so caller
+    mutation does not alias back into HostInfo state. Empty host.sysctl
+    → emitted "sysctl": [].
+    """
+
+    def test_empty_host_sysctl_emits_empty_list_at_node_dict_layer(self):
+        """Empty host.sysctl → result["sysctl"] == []."""
+        host = _phase4_host(sysctl=[])
+        result = node_dict_from_host(host)
+        assert result["sysctl"] == []
+
+    def test_populated_sysctl_passes_through_as_shallow_copy(self):
+        """Populated host.sysctl flows through verbatim."""
+        host = _phase4_host(sysctl=[{"name": "a", "value": "1"}])
+        result = node_dict_from_host(host)
+        assert result["sysctl"] == [{"name": "a", "value": "1"}]
+
+    def test_sysctl_shallow_copy_isolates_mutation(self):
+        """Mutating the emitted list MUST NOT alias back into HostInfo.
+
+        `list(host.sysctl)` produces a shallow copy: appending to the
+        result list does not affect host.sysctl.
+        """
+        host = _phase4_host(sysctl=[{"name": "a", "value": "1"}])
+        result = node_dict_from_host(host)
+        result["sysctl"].append({"name": "x", "value": "y"})
+        assert host.sysctl == [{"name": "a", "value": "1"}]
+
+
+class TestNodeDictEnvironment:
+    """node_dict_from_host wires host.environment → top-level "environment" key.
+
+    Same shape as TestNodeDictSysctl: pass-through shallow copy.
+    """
+
+    def test_empty_host_environment_emits_empty_list_at_node_dict_layer(self):
+        host = _phase4_host(environment=[])
+        result = node_dict_from_host(host)
+        assert result["environment"] == []
+
+    def test_populated_environment_passes_through_as_shallow_copy(self):
+        host = _phase4_host(
+            environment=[{"name": "BUCKET", "value": "my-bucket"}],
+        )
+        result = node_dict_from_host(host)
+        assert result["environment"] == [{"name": "BUCKET", "value": "my-bucket"}]
+
+    def test_environment_shallow_copy_isolates_mutation(self):
+        """Mutating the emitted list MUST NOT alias back into HostInfo."""
+        host = _phase4_host(
+            environment=[{"name": "BUCKET", "value": "my-bucket"}],
+        )
+        result = node_dict_from_host(host)
+        result["environment"].append({"name": "X", "value": "Y"})
+        assert host.environment == [{"name": "BUCKET", "value": "my-bucket"}]
+
+
+class TestNodeDictDrives:
+    """node_dict_from_host wires host.drives → top-level "drives" key with a
+    per-host group_by_fingerprint pass over
+    ("vendor_name", "model_name", "interface", "capacity_in_GB") with
+    "unit_count". Mirrors the Phase 3 per-host networking grouping pattern.
+
+    Empty host.drives → result["drives"] == []. Downstream
+    _splice_stub_lists then pops the empty key per D-33.
+    """
+
+    def test_empty_host_drives_emits_empty_list(self):
+        """node_dict_from_host emits drives: [] (splice layer pops it later
+        per D-33; at the node_dict layer the key is always present)."""
+        host = _phase4_host(drives=[])
+        result = node_dict_from_host(host)
+        assert result["drives"] == []
+
+    def test_single_drive_emits_grouped_stanza_with_unit_count_1(self):
+        """A single per-host drive row collapses to one stanza with
+        unit_count=1 (group_by_fingerprint had nothing to collapse)."""
+        host = _phase4_host(drives=[
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500},
+        ])
+        result = node_dict_from_host(host)
+        assert result["drives"] == [
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500, "unit_count": 1},
+        ]
+
+    def test_two_identical_drives_collapse_to_unit_count_2(self):
+        """Per-host fingerprint collapse: two identical rows → 1 stanza
+        with unit_count=2."""
+        drive = {"vendor_name": "INTEL", "model_name": "X",
+                 "interface": "nvme", "capacity_in_GB": 500}
+        host = _phase4_host(drives=[dict(drive), dict(drive)])
+        result = node_dict_from_host(host)
+        assert len(result["drives"]) == 1
+        assert result["drives"][0]["unit_count"] == 2
+        assert result["drives"][0]["vendor_name"] == "INTEL"
+        assert result["drives"][0]["capacity_in_GB"] == 500
+
+    def test_two_different_drives_emit_two_stanzas(self):
+        """Per-host fingerprint split on capacity_in_GB → 2 stanzas."""
+        host = _phase4_host(drives=[
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500},
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 1000},
+        ])
+        result = node_dict_from_host(host)
+        assert len(result["drives"]) == 2
+        capacities = sorted(d["capacity_in_GB"] for d in result["drives"])
+        assert capacities == [500, 1000]
+        assert all(d["unit_count"] == 1 for d in result["drives"])
+
+    def test_three_mixed_drives_two_identical_one_different(self):
+        """3 drives where 2 share fingerprint and 1 differs → 2 stanzas
+        with unit_count [2, 1] (order-independent)."""
+        host = _phase4_host(drives=[
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500},
+            {"vendor_name": "INTEL", "model_name": "X",
+             "interface": "nvme", "capacity_in_GB": 500},
+            {"vendor_name": "INTEL", "model_name": "Y",
+             "interface": "nvme", "capacity_in_GB": 500},
+        ])
+        result = node_dict_from_host(host)
+        assert len(result["drives"]) == 2
+        unit_counts = sorted(d["unit_count"] for d in result["drives"])
+        assert unit_counts == [1, 2]
+
+
+# ===========================================================================
+# Phase 04 / Plan 04-05 — Phase 4 reflection (top-level emit shape lock).
+# ===========================================================================
+
+
+class TestNodeDictReflectionPhase4:
+    """Phase 4 final emit shape (seven top-level keys)."""
+
+    def test_node_dict_top_level_keys_match_phase_4_expected_set(self):
+        """Phase 4 final emit shape: 7 top-level keys, every Phase-4 field
+        emitted directly by node_dict_from_host (sysctl/environment/drives
+        joined the Phase-3 networking key)."""
+        host = _phase4_host(
+            chassis_model="PowerEdge R760",
+            networking=[{"type": "ethernet", "speed": 100, "state": "up"}],
+            sysctl=[{"name": "vm.dirty_ratio", "value": "20"}],
+            environment=[{"name": "BUCKET", "value": "my-bucket"}],
+            drives=[{"vendor_name": "INTEL", "model_name": "X",
+                     "interface": "nvme", "capacity_in_GB": 500}],
+        )
+        result = node_dict_from_host(host)
+        assert set(result.keys()) == {
+            "friendly_description", "chassis", "networking",
+            "sysctl", "environment", "drives", "operating_system",
+        }
