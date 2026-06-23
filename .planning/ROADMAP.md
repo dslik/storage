@@ -14,7 +14,7 @@ This milestone delivers auto-population of the `clients[]` section of `systemnam
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Canonical Layout & Init** — Add `mlpstorage init <orgname> <path>` plus the `mlperf-results.yaml` sentinel; refactor `generate_output_location()` to emit the Rules.md §2.1-shaped tree; add `--systemname` CLI flag + `MLPERF_SYSTEMNAME` env-var default; update affected tests. (Completed 2026-06-19 — LAY-01..LAY-08 all green.)
-- [x] **Phase 2: First-Run Write of Partial systemname.yaml** — On first `run`, write a quantity-grouped `systemname.yaml` containing CPU, memory, and OS for every client; leave non-derivable fields blank; no-op if the file already exists. (Plans 02-01..05 complete 2026-06-19; verification 2026-06-20 found 2 gaps blocking LIFE-01 — gap-closure plan 02-06 shipped 2026-06-20 to close CR-01 AttributeError on datagen/vectordb-no-hosts paths; awaiting /gsd-verify-phase 02 re-run + /gsd-transition.) (completed 2026-06-20)
+- [x] **Phase 2: First-Run Write of Partial systemname.yaml** — On first `run`, write a quantity-grouped `systemname.yaml` containing CPU, memory, and OS for every client; leave non-derivable fields blank; no-op if the file already exists. (Plans 02-01..05 complete 2026-06-19; CR-01 closed by 02-06 gap-closure 2026-06-20; re-verification 2026-06-20 passed 7/7; UAT 4/4 passed end-to-end on real-system smoke 2026-06-22.) (completed 2026-06-22)
 - [ ] **Phase 3: Chassis Model + Networking Coverage** — Extend the auto-filled YAML with DMI chassis `model_name` and a `networking[]` block sourced from sysfs.
 - [ ] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
 - [ ] **Phase 5: Logical Diff Lifecycle + Capacity Gate** — On re-runs, diff the in-memory image against the on-disk YAML for collector-owned fields and fail on drift; preserve user-filled blanks when unchanged; refuse to start `datagen` if the dataset destination directory lacks free space.
@@ -108,7 +108,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. On a host with at least one InfiniBand HCA present under `/sys/class/infiniband/`, at least one networking entry has `type: infiniband`.
   5. Quantity-grouping still collapses hosts that match on the new chassis/networking fingerprint into one `clients[]` stanza, and splits hosts that differ on `chassis.model_name` or networking signature into separate stanzas.
 
-**Plans:** TBD
+**Plans:** 5/5 plans complete
+**Wave 1**
+
+- [x] 03-01-PLAN.md — Slice 1: NetworkPort.state schema extension + _NETWORKING_STUB parity + 6 example_*.yaml lockstep (D-20, D-17 prep, COLL-04 schema-side)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [x] 03-02-PLAN.md — Slice 2: collect_chassis_model + _DMI_PLACEHOLDERS + MPI script duplication (COLL-03, D-21)
+
+**Wave 3** *(blocked on Wave 2; same-file-as-03-02 sequencing — both touch cluster_collector.py + test_cluster_collector.py)*
+
+- [x] 03-03-PLAN.md — Slice 3: collect_networking sysfs walk + IB walk + interface filter + bond aggregation + MPI duplication (COLL-04, D-18/D-19/D-20)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [x] 03-04-PLAN.md — Slice 4: _network_signature + _resolve_fingerprint_key + _FINGERPRINT_KEYS callable-extractor + _splice_stub_lists D-17 traffic splice (D-22, D-17, COLL-04 transform-side)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [x] 03-05-PLAN.md — Slice 5: HostInfo.chassis_model + HostInfo.networking + node_dict_from_host wiring + end-to-end integration tests (COLL-03 + COLL-04 closure)
 
 ### Phase 4: Sysctl, Environment, and Drives Coverage
 
@@ -128,10 +147,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 ### Phase 5: Logical Diff Lifecycle + Capacity Gate
 
-**Goal:** A submitter who re-runs the benchmark against an existing results-dir gets a hard failure if the client fleet has drifted from the previously recorded `systemname.yaml`, but their hand-filled blanks survive unchanged when nothing has drifted — and `datagen` refuses to start if the dataset destination doesn't have room.
+**Goal:** A submitter who re-runs the benchmark against an existing results-dir gets a hard failure if the client fleet has drifted from the previously recorded `systemname.yaml`, but their hand-filled blanks survive unchanged when nothing has drifted — and `datagen` refuses to start if the dataset destination doesn't have room or isn't the same shared filesystem on every participating host.
 **Mode:** mvp
 **Depends on:** Phase 4
-**Requirements:** LIFE-02, LIFE-03, LIFE-04, CAP-01
+**Requirements:** LIFE-02, LIFE-03, LIFE-04, CAP-01, CAP-02
 **Success Criteria** (what must be TRUE):
 
   1. After Phase 2-4 has written `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` and a submitter has filled in `friendly_description`, `networking[].traffic`, and drive `media_type`/`form_factor`/`performance`, re-running the same `run` command against the same fleet completes without modifying the file and without raising drift errors — the submitter's hand-filled values survive.
@@ -140,6 +159,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The diff is per-mode: changes to the `closed` file do not trigger drift errors on a subsequent `open` run, and vice-versa.
   5. At `datagen` startup, when the computed dataset size exceeds the free space reported by `os.statvfs()` on the dataset destination directory (`--data-dir` for training, `--checkpoint-folder` for checkpointing, engine path for vectordb/kvcache), the benchmark fails before any data is written with a message stating the destination path, available bytes, required bytes, and the deficit; on multi-node runs, each rank checks its own destination so a single starved node fails fast.
   6. When free space is sufficient, `datagen` proceeds without printing or logging anything misleading about capacity — the gate is silent on the happy path.
+  7. On multi-host `datagen` and `run`, before any work begins, each participating host reports a filesystem identifier for its `--data-dir` (e.g., via `stat -f -c '%i' <data-dir>` or `os.statvfs(<data-dir>).f_fsid`); if the set of returned IDs has cardinality > 1, the operation fails fast with a message listing each host and the filesystem ID it reported, plus a one-line hint that this typically means a host has a local-disk path where a shared mount was expected.
+  8. On single-host runs (`--hosts` defaults to None or has length 1), the shared-FS check is a no-op and emits nothing.
 
 **Plans:** TBD
 
@@ -151,7 +172,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Canonical Layout & Init | 5/5 | Complete    | 2026-06-20 |
-| 2. First-Run Write of Partial systemname.yaml | 6/6 | Complete    | 2026-06-20 |
-| 3. Chassis Model + Networking Coverage | 0/TBD | Not started | - |
+| 2. First-Run Write of Partial systemname.yaml | 6/6 | Complete    | 2026-06-22 |
+| 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 0/TBD | Not started | - |
 | 5. Logical Diff Lifecycle + Capacity Gate | 0/TBD | Not started | - |

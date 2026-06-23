@@ -28,8 +28,8 @@ The collector extracts these fields from the per-host data the MPI cluster colle
 
 - [x] **COLL-01**: Collector exposes `clients[].chassis.cpu_model`, `cpu_qty`, `cpu_cores`, `memory_capacity` (GiB) for every host, sourced from the existing `/proc/cpuinfo` + `/proc/meminfo` data already gathered by `mlpstorage_py/cluster_collector.py:collect_local_system_info()` and `summarize_cpuinfo()`. Per the universal rule, any unreadable source yields empty strings for the affected fields.
 - [x] **COLL-02**: Collector exposes `clients[].operating_system.name` and `operating_system.version` for every host, sourced from the `/etc/os-release` data already gathered. Per the universal rule.
-- [ ] **COLL-03**: Collector exposes `clients[].chassis.model_name` from `/sys/class/dmi/id/product_name`. Per the universal rule, unreadable yields empty string.
-- [ ] **COLL-04**: Collector exposes `clients[].networking[]` entries with `type` (`ethernet` / `infiniband` / `other`), `speed` (Gbps), and `unit_count`, sourced from `/sys/class/net/<iface>/{type,speed}` and the presence of `/sys/class/infiniband/`. Virtual interfaces (`lo`, `docker*`, `virbr*`, `veth*`, `bond` slaves) are filtered out. Interfaces in the `down` state with `speed: -1` are reported with a recognizable sentinel rather than omitted. Per the universal rule for any unreadable per-interface field.
+- [x] **COLL-03**: Collector exposes `clients[].chassis.model_name` from `/sys/class/dmi/id/product_name`. Per the universal rule, unreadable yields empty string.
+- [x] **COLL-04**: Collector exposes `clients[].networking[]` entries with `type` (`ethernet` / `infiniband` / `other`), `speed` (Gbps), and `unit_count`, sourced from `/sys/class/net/<iface>/{type,speed}` and the presence of `/sys/class/infiniband/`. Virtual interfaces (`lo`, `docker*`, `virbr*`, `veth*`, `bond` slaves) are filtered out. Interfaces in the `down` state with `speed: -1` are reported with a recognizable sentinel rather than omitted. Per the universal rule for any unreadable per-interface field. (End-to-end complete in 03-05: collector 03-03 + transform 03-04 + HostInfo dataclass + node_dict_from_host emit-side wire-through.)
 - [ ] **COLL-05**: Collector exposes `clients[].sysctl[]` as a snapshot of a curated MLPerf-relevant key allowlist read from `/proc/sys/*`. Initial allowlist: `vm.dirty_*`, `net.core.*`, `net.ipv4.tcp_*`, `kernel.numa_balancing`. Allowlist is data-driven and extensible. Per the universal rule for any unreadable key.
 - [ ] **COLL-06**: Collector exposes `clients[].environment[]` as a snapshot of `os.environ` filtered to the prefix allowlist `AWS_*`, `BUCKET`, `STORAGE_*`, `OMPI_*`, `UCX_*`, `NCCL_*`. Credential values (`AWS_SECRET_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`) are redacted per the policy already established in `mlpstorage_py/storage_config.py`.
 - [ ] **COLL-07**: Collector exposes `clients[].drives[]` populated from `lsblk -J -d -o NAME,MODEL,VENDOR,SIZE,ROTA,TRAN,RM`: `vendor_name`, `model_name`, `capacity_in_GB` (base 10), and `interface` (nvme/sata/sas/other). `media_type` (HDD/TLC/QLC), `form_factor`, and `performance` are NOT auto-filled — they're vendor-published spec sheet facts. Per the universal rule, missing `lsblk` or any per-device field yields empty strings.
@@ -50,6 +50,7 @@ The collector extracts these fields from the per-host data the MPI cluster colle
 ### Capacity (CAP)
 
 - [ ] **CAP-01**: At `datagen` startup, after computing the dataset size in bytes, the benchmark calls `os.statvfs()` on the **dataset destination directory** (`--data-dir` for training and checkpointing, the engine-specific data path for vectordb / kvcache — *not* `--results-dir`, which lives off the system-under-test and only holds logs and metadata) and compares free space against the computed size. If free space < computed size, the benchmark fails before generation begins with a message naming the path, the available bytes, the required bytes, and the deficit. Per-node check on multi-node runs (each rank checks its own destination so a single starved node fails fast).
+- [ ] **CAP-02**: At `datagen` or `run` startup on multi-host operations, the benchmark verifies that every participating host sees the **same shared filesystem** at the dataset destination directory. The check collects a filesystem identifier (e.g., `stat -f -c '%i' <data-dir>` on each host, or the Python equivalent `os.statvfs(<data-dir>).f_fsid`) from every rank and compares values. If the set of returned IDs has cardinality > 1, the benchmark fails before any work begins with a message listing each host and the filesystem ID it reported, plus a one-line explanation that this typically means one or more hosts have a local-disk path where a shared mount was expected. On single-host runs (`--hosts` defaults to None or has length 1), CAP-02 is a no-op. Implementation note for Phase 5 discuss/plan: tool choice (`stat -f` vs. `os.statvfs().f_fsid` vs. write-a-sentinel-and-read-on-peer) should be decided during planning; the `fsid` approach is simple but has known edge cases with bind mounts and FUSE that may warrant a sentinel-file fallback.
 
 ## v2 Requirements
 
@@ -98,8 +99,8 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | LAY-08  | Phase 1 | Complete (01-05) |
 | COLL-01 | Phase 2 | Complete |
 | COLL-02 | Phase 2 | Complete |
-| COLL-03 | Phase 3 | Pending |
-| COLL-04 | Phase 3 | Pending |
+| COLL-03 | Phase 3 | Complete (03-05) — end-to-end; collector (03-02) + HostInfo wiring + node_dict_from_host emit (03-05) |
+| COLL-04 | Phase 3 | Complete (03-05) — end-to-end; collector (03-03) + transform (03-04) + HostInfo wiring + node_dict_from_host emit (03-05) |
 | COLL-05 | Phase 4 | Pending |
 | COLL-06 | Phase 4 | Pending |
 | COLL-07 | Phase 4 | Pending |
@@ -111,11 +112,12 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | LIFE-03 | Phase 5 | Pending |
 | LIFE-04 | Phase 5 | Pending |
 | CAP-01  | Phase 5 | Pending |
+| CAP-02  | Phase 5 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 23 total
-- Mapped to phases: 23
+- v1 requirements: 24 total
+- Mapped to phases: 24
 - Unmapped: 0
 
 **Per-phase totals:**
@@ -124,8 +126,8 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 - Phase 2 (First-Run Write of Partial systemname.yaml): 6 requirements — COLL-01, COLL-02, SER-01, SER-02, SER-03, LIFE-01
 - Phase 3 (Chassis Model + Networking Coverage): 2 requirements — COLL-03, COLL-04
 - Phase 4 (Sysctl, Environment, and Drives Coverage): 3 requirements — COLL-05, COLL-06, COLL-07
-- Phase 5 (Logical Diff Lifecycle + Capacity Gate): 4 requirements — LIFE-02, LIFE-03, LIFE-04, CAP-01
+- Phase 5 (Logical Diff Lifecycle + Capacity Gate): 5 requirements — LIFE-02, LIFE-03, LIFE-04, CAP-01, CAP-02
 
 ---
 *Requirements defined: 2026-06-18*
-*Last updated: 2026-06-18 after discuss-phase 1 (Phase 1 split into canonical-layout-and-init, prior phases renumbered)*
+*Last updated: 2026-06-22 after Phase 2 UAT — added CAP-02 (shared-filesystem verification) to Phase 5 scope per submitter clarification on multi-host datagen / run gating.*
