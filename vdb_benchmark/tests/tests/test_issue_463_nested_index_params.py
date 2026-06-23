@@ -127,3 +127,63 @@ def test_empty_config_is_noop():
     out = merge_config_with_args({}, args)
     assert out.M == 16 and out.index_type == "DISKANN"
 
+
+def test_cross_section_same_leaf_does_not_collide():
+    """
+    dataset.batch_size and benchmark.batch_size both exist in the shipped
+    configs. They mean different things and must not collapse into one value.
+    The earlier section (dataset) wins for the shared argparse dest.
+
+    Regression for PR #497 review (ram-sangle): _flatten_config must not let a
+    later section silently overwrite an earlier same-named leaf.
+    """
+    cfg = yaml.safe_load("""
+    dataset:
+      batch_size: 10
+    benchmark:
+      batch_size: 1
+    """)
+    flat = _flatten_config(cfg)
+    assert flat["batch_size"] == 10  # dataset (earlier) wins, not benchmark
+
+
+def test_intra_section_index_params_collision_raises():
+    """
+    A collision *within* one section (a section-level key duplicated by a key
+    nested under index_params) is a genuine mistake and must surface, not be
+    silently resolved.
+    """
+    import pytest
+
+    cfg = yaml.safe_load("""
+    index:
+      index_type: HNSW
+      M: 16
+      index_params:
+        M: 64
+    """)
+    with pytest.raises(ValueError):
+        _flatten_config(cfg)
+
+
+def test_diskann_config_uses_diskann_params():
+    """
+    The shipped DISKANN configs must declare max_degree/search_list_size, not
+    HNSW's M/ef_construction. Regression for PR #497 review (ram-sangle).
+    """
+    cfg = yaml.safe_load("""
+    index:
+      index_type: DISKANN
+      metric_type: COSINE
+      index_params:
+        max_degree: 64
+        search_list_size: 200
+    """)
+    args = merge_config_with_args(cfg, _make_args())
+    assert args.index_type == "DISKANN"
+    assert args.max_degree == 64
+    assert args.search_list_size == 200
+    # HNSW params remain at their defaults, untouched.
+    assert args.M == 16
+    assert args.ef_construction == 200
+
