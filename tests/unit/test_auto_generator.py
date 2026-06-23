@@ -361,22 +361,35 @@ def test_node_dict_field_names_match_pydantic_reflection():
 
 
 def test_networking_stub_shape():
-    """_NETWORKING_STUB has the four NetworkPort field names with empty-string /
-    empty-list values per RESEARCH.md Pattern 3 (D-3 seam).
+    """_NETWORKING_STUB has the five NetworkPort field names with empty-string /
+    empty-list values per RESEARCH.md Pattern 3 (D-3 seam) plus the Phase 3
+    `state` key added in lockstep with D-20.
 
-    `traffic` is a List[TrafficType] with min_length=1 in NetworkPort, so the
-    stub uses `[]` (not `""`) — Pydantic will reject `[]` at validation time,
-    which is the intended visible-to-do UX (SER-02).
+    `traffic` is a List[TrafficType] with min_length=1 in NetworkPort
+    (pre-Phase-3) and Optional[List[TrafficType]] (post-Phase-3); the stub
+    uses `[]` either way because Pydantic rejects `[]` at validation time
+    (intended SER-02 to-do UX).
+
+    `state` is `""` (D-3 option (a) per RESEARCH § "_NETWORKING_STUB Redesign
+    Tradeoff Analysis"): the empty string means "collector has no information
+    at all" and is distinct from a real `"down"` (which would be a positive
+    statement about NIC state). Pydantic rejects `""` against
+    `Literal["up","down"]`, which is the SER-02 signal that the collector
+    failed and the submitter must fill the NIC entry by hand.
     """
     assert _NETWORKING_STUB == {
         "unit_count": "",
         "type": "",
+        "state": "",
         "speed": "",
         "traffic": [],
     }
     # traffic specifically must be the empty LIST, not empty string.
     assert _NETWORKING_STUB["traffic"] == []
     assert isinstance(_NETWORKING_STUB["traffic"], list)
+    # state is the empty STRING (Pydantic-bypass per D-3 option (a)), NOT "down".
+    assert _NETWORKING_STUB["state"] == ""
+    assert isinstance(_NETWORKING_STUB["state"], str)
 
 
 def test_drive_stub_shape():
