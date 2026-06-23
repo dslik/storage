@@ -49,6 +49,19 @@ from mlpstorage_py.system_description.auto_generator import (  # noqa: E402
     _resolve_fingerprint_key,
 )
 
+# Phase 04 / Plan 04-04 — three new fingerprint signature extractors +
+# generalized dispatch map (D-34) and the extended _splice_stub_lists D-33
+# drives-omit branch. These imports are NEW: _sysctl_signature,
+# _environment_signature, _drive_signature, and _EXTRACTOR_SOURCE_KEYS
+# do not yet exist at module scope; this import block will ImportError at
+# collection time until Task 2 implements them, producing the RED gate.
+from mlpstorage_py.system_description.auto_generator import (  # noqa: E402
+    _EXTRACTOR_SOURCE_KEYS,
+    _drive_signature,
+    _environment_signature,
+    _sysctl_signature,
+)
+
 
 # ---------------------------------------------------------------------------
 # Task 1 — _get_dotted
@@ -510,32 +523,42 @@ def _bare_client_dump(num_clients: int = 1) -> dict:
 
 
 def test_splice_stub_lists_adds_to_every_client():
-    """Single-client dump: networking and drives lists each get one stub entry."""
+    """Single-client dump: networking list gets one stub entry; drives key is
+    OMITTED per Phase 4 D-33 (no drives collected → no `drives:` key in YAML).
+
+    Phase 2 originally spliced [dict(_DRIVE_STUB)] unconditionally; Phase 4 /
+    Plan 04-04 / D-33 replaces that with `client.pop('drives', None)` when
+    the client has no drives data.
+    """
     dump = _bare_client_dump(num_clients=1)
     result = _splice_stub_lists(dump)
 
     client = result["system_under_test"]["clients"][0]
     assert client["networking"] == [_NETWORKING_STUB]
-    assert client["drives"] == [_DRIVE_STUB]
+    # Phase 4 / D-33: bare client (no drives) → drives key OMITTED.
+    assert "drives" not in client
 
-    # The spliced entries are FRESH dicts (not aliases of the module constants).
-    # Mutating one must not mutate the other.
+    # The spliced networking entry is a FRESH dict (not aliased to the constant).
     assert client["networking"][0] is not _NETWORKING_STUB
-    assert client["drives"][0] is not _DRIVE_STUB
 
 
 def test_splice_stub_lists_multiple_clients():
-    """All clients in a multi-client dump receive their own stub lists."""
+    """All clients in a multi-client dump receive their own networking stub;
+    drives key is OMITTED on every client per Phase 4 D-33.
+    """
     dump = _bare_client_dump(num_clients=3)
     result = _splice_stub_lists(dump)
 
     for client in result["system_under_test"]["clients"]:
         assert client["networking"] == [_NETWORKING_STUB]
-        assert client["drives"] == [_DRIVE_STUB]
+        # Phase 4 / D-33: no drives collected on these bare clients.
+        assert "drives" not in client
 
 
 def test_splice_stub_lists_idempotent():
-    """Calling twice REPLACES the spliced entries — does not append.
+    """Calling twice REPLACES the spliced entries — does not append. Phase 4
+    extension: the D-33 drives-omit branch is also idempotent (second call
+    sees no drives key → still no drives key).
 
     Idempotence is a contractual property: callers (Plan 02-04) may chain
     `_splice_stub_lists(_build_outer_dict(stanzas))` and trust that re-running
@@ -547,9 +570,9 @@ def test_splice_stub_lists_idempotent():
 
     client = dump["system_under_test"]["clients"][0]
     assert len(client["networking"]) == 1
-    assert len(client["drives"]) == 1
     assert client["networking"] == [_NETWORKING_STUB]
-    assert client["drives"] == [_DRIVE_STUB]
+    # Phase 4 / D-33: idempotent omit — drives key remains absent.
+    assert "drives" not in client
 
 
 def test_splice_stub_lists_empty_clients():
@@ -666,16 +689,11 @@ def test_outer_dict_with_spliced_stubs_yaml_roundtrip():
         # D-20 (Phase 3): _NETWORKING_STUB now carries state="" per D-3 option (a)
         {"unit_count": "", "type": "", "state": "", "speed": "", "traffic": []}
     ]
-    assert client["drives"] == [
-        {
-            "unit_count": "",
-            "vendor_name": "",
-            "model_name": "",
-            "interface": "",
-            "media_type": "",
-            "capacity_in_GB": "",
-        }
-    ]
+    # Phase 4 / D-33: this stanza has no drives data → drives key OMITTED
+    # entirely from the YAML (NOT a blank stub). The schema validator will
+    # surface this as the SER-02 "submitter has work to do" signal for the
+    # drives block.
+    assert "drives" not in client
     # D-14: top-level forbidden blocks remain absent after YAML roundtrip.
     assert "solution" not in reloaded["system_under_test"]
     assert "deployment" not in reloaded["system_under_test"]
@@ -968,17 +986,17 @@ class TestSpliceUpNicTraffic:
             == [dict(_NETWORKING_STUB)]
         )
 
-    def test_existing_phase2_drives_stub_unchanged(self):
-        """REGRESSION-LOCK (passes pre-Task-2): the drives branch always
-        splices _DRIVE_STUB regardless of networking content."""
+    def test_drives_key_omitted_when_no_drives(self):
+        """Phase 4 / D-33: a client with real networking but NO drives data
+        ends up with the drives key OMITTED entirely (NOT a Phase-2 blank
+        stub). The Phase 2 unconditional `client['drives'] = [dict(_DRIVE_STUB)]`
+        has been replaced by `client.pop('drives', None)` for the empty path.
+        """
         dump = self._dump_with_networking(
             [{"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2}]
         )
         _splice_stub_lists(dump)
-        assert (
-            dump["system_under_test"]["clients"][0]["drives"]
-            == [dict(_DRIVE_STUB)]
-        )
+        assert "drives" not in dump["system_under_test"]["clients"][0]
 
     def test_up_entry_traffic_splice_idempotent(self):
         """Calling _splice_stub_lists twice on the same dump leaves traffic=[]
@@ -1136,3 +1154,432 @@ class TestNodeDictReflection:
         os_schema_keys = set(OperatingSystem.model_fields.keys())
         assert os_keys == os_schema_keys
 
+
+# ===========================================================================
+# Phase 04 / Plan 04-04 — three new fingerprint signatures + generalized
+# dispatch + D-33 drives-omit splice branch.
+#
+# Seven new test classes (described in 04-04-PLAN.md) cover:
+#
+#   - TestSysctlSignature: _sysctl_signature shape, empty, order-independence,
+#     value-difference splits, missing-keys default.
+#   - TestEnvironmentSignature: mirror of TestSysctlSignature.
+#   - TestDriveSignature: shape, empty, order-independence, D-22 key=repr
+#     mixed-type safety, unit_count/capacity difference splits.
+#   - TestExtractorSourceKeys: the new _EXTRACTOR_SOURCE_KEYS dispatch map.
+#   - TestResolveFingerprintKeyGeneralized: scalar + 4 extractor dispatches.
+#   - TestFingerprintKeysExtended: the 11-tuple shape (D-34).
+#   - TestGroupByFingerprintSplitsOnNewKeys: cross-host divergence on each
+#     of the three new dimensions splits stanzas (D-35).
+#   - TestSpliceStubListsDrivesOmitBranch: D-33 conditional drives-omit splice.
+# ===========================================================================
+
+
+class TestSysctlSignature:
+    """D-34 sysctl extractor: sorted multiset of (name, value) tuples, key=repr.
+
+    Mixed-type safety is not strictly required for sysctl (both fields are
+    str on the emit path), but the D-22 key=repr defense is uniformly applied
+    to all four extractors for shape parity with `_network_signature`.
+    """
+
+    def test_empty_returns_empty_tuple(self):
+        assert _sysctl_signature([]) == ()
+
+    def test_single_entry(self):
+        assert _sysctl_signature(
+            [{"name": "vm.dirty_ratio", "value": "20"}]
+        ) == (("vm.dirty_ratio", "20"),)
+
+    def test_order_independence(self):
+        a = [
+            {"name": "vm.dirty_ratio", "value": "20"},
+            {"name": "vm.swappiness", "value": "60"},
+            {"name": "net.core.somaxconn", "value": "4096"},
+        ]
+        b = list(reversed(a))
+        assert _sysctl_signature(a) == _sysctl_signature(b)
+
+    def test_value_difference_splits(self):
+        a = _sysctl_signature([{"name": "vm.dirty_ratio", "value": "10"}])
+        b = _sysctl_signature([{"name": "vm.dirty_ratio", "value": "20"}])
+        assert a != b
+
+    def test_missing_keys_default_to_empty_string(self):
+        """The .get(..., '') defense produces ('x', '') without KeyError."""
+        assert _sysctl_signature([{"name": "x"}]) == (("x", ""),)
+
+
+class TestEnvironmentSignature:
+    """D-34 environment extractor: sorted multiset of (name, value) tuples.
+
+    Per D-34 the signature uses the already-redacted value present in the
+    emit block (no separate raw / re-redacted form). Shape mirrors
+    TestSysctlSignature exactly.
+    """
+
+    def test_empty_returns_empty_tuple(self):
+        assert _environment_signature([]) == ()
+
+    def test_single_entry(self):
+        assert _environment_signature(
+            [{"name": "BUCKET", "value": "my-bucket"}]
+        ) == (("BUCKET", "my-bucket"),)
+
+    def test_order_independence(self):
+        a = [
+            {"name": "BUCKET", "value": "b"},
+            {"name": "NCCL_DEBUG", "value": "INFO"},
+            {"name": "AWS_ACCESS_KEY_ID", "value": "AKIA****MPLE"},
+        ]
+        b = list(reversed(a))
+        assert _environment_signature(a) == _environment_signature(b)
+
+    def test_value_difference_splits(self):
+        a = _environment_signature([{"name": "NCCL_DEBUG", "value": "INFO"}])
+        b = _environment_signature([{"name": "NCCL_DEBUG", "value": "TRACE"}])
+        assert a != b
+
+    def test_missing_keys_default_to_empty_string(self):
+        assert _environment_signature([{"name": "x"}]) == (("x", ""),)
+
+
+class TestDriveSignature:
+    """D-34 drive extractor: sorted multiset of
+    (vendor, model, interface, capacity_in_GB, unit_count) tuples, key=repr.
+
+    Mixed-type safety (key=repr) is LOAD-BEARING here: drives shipped from
+    `collect_drives()` carry int `capacity_in_GB`, but the .get(..., '')
+    defense produces '' for hosts where the field is missing. The collision
+    of int 500 and '' would crash sorted() without key=repr (the Plan 03-04
+    surprise from `_network_signature`).
+    """
+
+    def test_empty_returns_empty_tuple(self):
+        assert _drive_signature([]) == ()
+
+    def test_single_entry_shape(self):
+        sig = _drive_signature(
+            [{
+                "vendor_name": "INTEL",
+                "model_name": "X",
+                "interface": "nvme",
+                "capacity_in_GB": 500,
+                "unit_count": 1,
+            }]
+        )
+        assert sig == (("INTEL", "X", "nvme", 500, 1),)
+
+    def test_order_independence(self):
+        a = [
+            {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 500, "unit_count": 1},
+            {"vendor_name": "SAMSUNG", "model_name": "Y", "interface": "sata",
+             "capacity_in_GB": 1000, "unit_count": 2},
+        ]
+        b = list(reversed(a))
+        assert _drive_signature(a) == _drive_signature(b)
+
+    def test_mixed_type_sort_safety_per_d22_key_repr(self):
+        """Without key=repr, sorted() would raise TypeError comparing
+        int 500 vs '' (str) for capacity_in_GB."""
+        sig = _drive_signature([
+            {"vendor_name": "A", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 500, "unit_count": 1},
+            {"vendor_name": "B", "model_name": "Y", "interface": "sas",
+             "capacity_in_GB": "", "unit_count": ""},
+        ])
+        # The exact sort order isn't the contract here — the contract is
+        # that the call SUCCEEDS rather than raising TypeError.
+        assert len(sig) == 2
+        # Both entries present (multiset preserved).
+        assert {tup[0] for tup in sig} == {"A", "B"}
+
+    def test_unit_count_difference_splits(self):
+        a = _drive_signature([
+            {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 500, "unit_count": 1},
+        ])
+        b = _drive_signature([
+            {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 500, "unit_count": 2},
+        ])
+        assert a != b
+
+    def test_capacity_difference_splits(self):
+        a = _drive_signature([
+            {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 500, "unit_count": 1},
+        ])
+        b = _drive_signature([
+            {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 1000, "unit_count": 1},
+        ])
+        assert a != b
+
+
+class TestExtractorSourceKeys:
+    """The new module-level _EXTRACTOR_SOURCE_KEYS dispatch map per
+    PATTERNS.md §"Caveat for planner": generalizes _resolve_fingerprint_key
+    from the hardcoded `item.get('networking', [])` to a name→source-key
+    lookup supporting all four callable extractors."""
+
+    def test_is_dict_with_four_entries(self):
+        assert isinstance(_EXTRACTOR_SOURCE_KEYS, dict)
+        assert set(_EXTRACTOR_SOURCE_KEYS.keys()) == {
+            "networking_sig", "sysctl_sig", "environment_sig", "drives_sig",
+        }
+
+    def test_source_key_mapping(self):
+        assert _EXTRACTOR_SOURCE_KEYS["networking_sig"] == "networking"
+        assert _EXTRACTOR_SOURCE_KEYS["sysctl_sig"] == "sysctl"
+        assert _EXTRACTOR_SOURCE_KEYS["environment_sig"] == "environment"
+        assert _EXTRACTOR_SOURCE_KEYS["drives_sig"] == "drives"
+
+
+class TestResolveFingerprintKeyGeneralized:
+    """The Phase-3 _resolve_fingerprint_key dispatch is generalized from the
+    single hardcoded `item.get('networking', [])` callsite to use the new
+    _EXTRACTOR_SOURCE_KEYS map. All four callable extractors must dispatch
+    against the right source key."""
+
+    def test_scalar_dotted_still_works(self):
+        """REGRESSION-LOCK (Phase 2 behavior unchanged)."""
+        assert _resolve_fingerprint_key(
+            {"chassis": {"cpu_model": "X"}}, "chassis.cpu_model"
+        ) == "X"
+
+    def test_networking_callable_still_works(self):
+        """REGRESSION-LOCK (Phase 3 behavior unchanged): generalized dispatch
+        must preserve the networking_sig branch verbatim."""
+        item = {"networking": [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+        ]}
+        sig = _resolve_fingerprint_key(
+            item, ("networking_sig", _network_signature)
+        )
+        assert sig == _network_signature(item["networking"])
+
+    def test_sysctl_callable_dispatches_to_sysctl_source(self):
+        item = {"sysctl": [{"name": "vm.dirty_ratio", "value": "20"}]}
+        sig = _resolve_fingerprint_key(
+            item, ("sysctl_sig", _sysctl_signature)
+        )
+        assert sig == _sysctl_signature(item["sysctl"])
+
+    def test_environment_callable_dispatches_to_environment_source(self):
+        item = {"environment": [{"name": "BUCKET", "value": "my-bucket"}]}
+        sig = _resolve_fingerprint_key(
+            item, ("environment_sig", _environment_signature)
+        )
+        assert sig == _environment_signature(item["environment"])
+
+    def test_drives_callable_dispatches_to_drives_source(self):
+        item = {"drives": [
+            {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+             "capacity_in_GB": 500, "unit_count": 1},
+        ]}
+        sig = _resolve_fingerprint_key(
+            item, ("drives_sig", _drive_signature)
+        )
+        assert sig == _drive_signature(item["drives"])
+
+    def test_missing_source_key_returns_empty_list_extractor_value(self):
+        """item.get(source_key, []) defends against items missing the source
+        key — the extractor sees [] and returns ()."""
+        assert _resolve_fingerprint_key(
+            {}, ("sysctl_sig", _sysctl_signature)
+        ) == _sysctl_signature([])
+        assert _resolve_fingerprint_key(
+            {}, ("environment_sig", _environment_signature)
+        ) == _environment_signature([])
+        assert _resolve_fingerprint_key(
+            {}, ("drives_sig", _drive_signature)
+        ) == _drive_signature([])
+
+
+class TestFingerprintKeysExtended:
+    """D-34: _FINGERPRINT_KEYS grows from Phase-3 8-tuple to 11-tuple by
+    appending three new (name, extractor) tuples at the tail (drives,
+    sysctl, environment). The 8 Phase-3 entries are preserved verbatim
+    at the head."""
+
+    def test_length_is_eleven(self):
+        assert len(_FINGERPRINT_KEYS) == 11
+
+    def test_tail_three_entries_are_new_extractors(self):
+        """The last three entries are the Phase-4 callable extractor tuples.
+
+        Ordering at the tail is intentional: sysctl, environment, drives —
+        matches the order PATTERNS.md §"Fingerprint extractors" prescribes
+        and matches the per-collector slice ordering (04-01 → 04-02 → 04-03).
+        """
+        assert _FINGERPRINT_KEYS[-3] == ("sysctl_sig", _sysctl_signature)
+        assert _FINGERPRINT_KEYS[-2] == ("environment_sig", _environment_signature)
+        assert _FINGERPRINT_KEYS[-1] == ("drives_sig", _drive_signature)
+
+    def test_phase_3_8_entries_preserved_at_head(self):
+        """The first 8 entries match the Phase-3 locked tuple verbatim."""
+        assert _FINGERPRINT_KEYS[:8] == (
+            "chassis.cpu_model",
+            "chassis.cpu_qty",
+            "chassis.cpu_cores",
+            "chassis.memory_capacity",
+            "chassis.model_name",
+            "operating_system.name",
+            "operating_system.version",
+            ("networking_sig", _network_signature),
+        )
+
+
+def _phase4_host_dict(
+    *,
+    cpu_model: str = "X",
+    chassis_model: str = "PowerEdge-R760",
+    sysctl=None,
+    environment=None,
+    drives=None,
+) -> dict:
+    """Build a node-description-shaped dict with all four extractor source
+    keys populated. Defaults give a clean 'shared baseline' so tests can
+    vary one dimension to assert splits.
+    """
+    if sysctl is None:
+        sysctl = [{"name": "vm.dirty_ratio", "value": "20"}]
+    if environment is None:
+        environment = [{"name": "BUCKET", "value": "my-bucket"}]
+    if drives is None:
+        drives = [{
+            "vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+            "capacity_in_GB": 500, "unit_count": 1,
+        }]
+    return {
+        "friendly_description": "",
+        "chassis": {
+            "model_name": chassis_model,
+            "cpu_model": cpu_model,
+            "cpu_qty": 2,
+            "cpu_cores": 64,
+            "memory_capacity": 256,
+        },
+        "operating_system": {"name": "Rocky", "version": "9.5"},
+        "networking": [
+            {"type": "ethernet", "speed": 100, "state": "up", "unit_count": 2},
+        ],
+        "sysctl": sysctl,
+        "environment": environment,
+        "drives": drives,
+    }
+
+
+class TestGroupByFingerprintSplitsOnNewKeys:
+    """D-35 strict policy: every divergence splits. Two hosts that differ on
+    sysctl, environment, or drives produce separate `clients[]` stanzas."""
+
+    def test_two_hosts_differ_on_sysctl_value_split(self):
+        items = [
+            _phase4_host_dict(sysctl=[{"name": "vm.dirty_ratio", "value": "10"}]),
+            _phase4_host_dict(sysctl=[{"name": "vm.dirty_ratio", "value": "20"}]),
+        ]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 2
+
+    def test_two_hosts_differ_on_environment_value_split(self):
+        items = [
+            _phase4_host_dict(environment=[{"name": "NCCL_DEBUG", "value": "INFO"}]),
+            _phase4_host_dict(environment=[{"name": "NCCL_DEBUG", "value": "TRACE"}]),
+        ]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 2
+
+    def test_two_hosts_differ_on_drives_complement_split(self):
+        items = [
+            _phase4_host_dict(drives=[
+                {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+                 "capacity_in_GB": 500, "unit_count": 1},
+            ]),
+            _phase4_host_dict(drives=[
+                {"vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+                 "capacity_in_GB": 1000, "unit_count": 1},
+            ]),
+        ]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 2
+
+    def test_two_hosts_identical_collapse(self):
+        """D-35 strict but consistent: identical sysctl + environment + drives
+        + everything else → 1 group with quantity=2."""
+        items = [_phase4_host_dict() for _ in range(2)]
+        result = group_by_fingerprint(items, _FINGERPRINT_KEYS, "quantity")
+        assert len(result) == 1
+        assert result[0]["quantity"] == 2
+
+
+class TestSpliceStubListsDrivesOmitBranch:
+    """D-33: _splice_stub_lists swaps the Phase-2 unconditional
+    `client['drives'] = [dict(_DRIVE_STUB)]` line for a conditional:
+      - drives present (truthy list) → left as-is.
+      - drives empty list OR missing → `client.pop('drives', None)` (key OMITTED).
+    The `_DRIVE_STUB` constant remains importable for legacy test paths but
+    is no longer emitted by the splicer.
+    """
+
+    @staticmethod
+    def _outer_dict_with_client(client_extra: dict) -> dict:
+        """Build an outer dict shaped like _build_outer_dict's output, with
+        one client. `client_extra` is merged into the client dict so tests
+        can inject (or omit) the drives key freely.
+        """
+        client = {
+            "friendly_description": "",
+            "chassis": {"cpu_model": "X"},
+            "operating_system": {"name": "R", "version": "1"},
+        }
+        client.update(client_extra)
+        return {"system_under_test": {"clients": [client]}}
+
+    def test_drives_present_left_alone(self):
+        real_drives = [{
+            "vendor_name": "INTEL", "model_name": "X", "interface": "nvme",
+            "capacity_in_GB": 500, "unit_count": 1,
+        }]
+        dump = self._outer_dict_with_client({"drives": real_drives})
+        _splice_stub_lists(dump)
+        client = dump["system_under_test"]["clients"][0]
+        # Drives left as-is (NOT replaced with _DRIVE_STUB).
+        assert client["drives"] == real_drives
+
+    def test_drives_empty_list_omits_key(self):
+        """D-33: `client['drives'] = []` → drives key REMOVED from client."""
+        dump = self._outer_dict_with_client({"drives": []})
+        _splice_stub_lists(dump)
+        client = dump["system_under_test"]["clients"][0]
+        assert "drives" not in client
+
+    def test_drives_missing_omits_key(self):
+        """D-33: client never had a drives key → drives key still absent."""
+        dump = self._outer_dict_with_client({})
+        _splice_stub_lists(dump)
+        client = dump["system_under_test"]["clients"][0]
+        assert "drives" not in client
+
+    def test_legacy_drive_stub_still_importable(self):
+        """_DRIVE_STUB remains a module-level constant for legacy test paths,
+        but the splicer no longer emits it. The three above tests confirm
+        the post-splice output never contains _DRIVE_STUB."""
+        from mlpstorage_py.system_description.auto_generator import _DRIVE_STUB
+        assert isinstance(_DRIVE_STUB, dict)
+        # Sanity: the legacy stub still has the Phase-2 shape.
+        assert "vendor_name" in _DRIVE_STUB
+        assert "interface" in _DRIVE_STUB
+
+        # Confirm none of the three above tests' post-splice client dicts
+        # contain the stub (the new contract).
+        for client_extra in ({"drives": []}, {}, {"drives": None}):
+            dump = self._outer_dict_with_client(client_extra)
+            _splice_stub_lists(dump)
+            client = dump["system_under_test"]["clients"][0]
+            assert "drives" not in client, (
+                f"D-33 violation: drives key present after splice for "
+                f"client_extra={client_extra}"
+            )
