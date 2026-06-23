@@ -42,7 +42,10 @@ def _power(min_active=1) -> dict:
 
 
 def _networking() -> list:
-    return [{"unit_count": 1, "type": "ethernet", "speed": 100, "traffic": ["data"]}]
+    # D-20: every NetworkPort dict now carries state="up"; pre-existing examples
+    # in this test module are all "well-formed working configurations" so the
+    # up-with-speed-and-traffic shape is the right default for the helpers.
+    return [{"unit_count": 1, "type": "ethernet", "state": "up", "speed": 100, "traffic": ["data"]}]
 
 
 def _os() -> dict:
@@ -116,7 +119,7 @@ def _switch(rack_units=2, unit_count=1) -> dict:
         "unit_count": unit_count,
         "vendor_name": "Cisco",
         "model_name": "Nexus 5000",
-        "ports": [{"unit_count": 48, "type": "ethernet", "speed": 100, "traffic": ["data"]}],
+        "ports": [{"unit_count": 48, "type": "ethernet", "state": "up", "speed": 100, "traffic": ["data"]}],
         "rack_units": rack_units,
         "power": _power(),
     }

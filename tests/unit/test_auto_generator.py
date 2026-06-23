@@ -638,7 +638,8 @@ def test_outer_dict_with_spliced_stubs_yaml_roundtrip():
     assert client["chassis"]["cpu_qty"] == 2
     assert client["operating_system"]["name"] == "Rocky Linux"
     assert client["networking"] == [
-        {"unit_count": "", "type": "", "speed": "", "traffic": []}
+        # D-20 (Phase 3): _NETWORKING_STUB now carries state="" per D-3 option (a)
+        {"unit_count": "", "type": "", "state": "", "speed": "", "traffic": []}
     ]
     assert client["drives"] == [
         {

@@ -259,8 +259,9 @@ def node_dict_from_host(host: HostInfo) -> dict:
 _NETWORKING_STUB: Final[dict] = {
     "unit_count": "",   # NetworkPort.unit_count: int(ge=1) — '' fails validation
     "type":       "",   # NetworkPort.type: NetworkType enum — '' fails enum check
-    "speed":      "",   # NetworkPort.speed: int(ge=1)
-    "traffic":    [],   # NetworkPort.traffic: List[TrafficType], min_length=1
+    "state":      "",   # NEW (Phase 3 D-20): parity with NetworkPort.model_fields; D-3 option (a) — '' means "collector blind", distinct from real "down"
+    "speed":      "",   # NetworkPort.speed: Optional[int](ge=1) — '' fails int coercion
+    "traffic":    [],   # NetworkPort.traffic: Optional[List[TrafficType]] — [] rejected by _require_speed_and_traffic_when_up when state would be "up"
 }
 
 _DRIVE_STUB: Final[dict] = {
