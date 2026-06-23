@@ -70,18 +70,57 @@ from mlpstorage_py.cluster_collector import collect_local_system_info
 from mlpstorage_py.rules.models import HostInfo
 
 
+def _network_signature(networking: list) -> tuple:
+    """D-22 cross-host networking extractor: order-independent multiset of
+    (type, speed, state, unit_count) tuples.
+
+    Uses .get(..., '') for every key so per-host pre-grouped (no unit_count
+    yet) and post-grouped (with unit_count) entries both work, and so down
+    NICs (no speed key per Plan 03-03's emit shape) participate as
+    ('ethernet', '', 'down', N) rather than crashing with KeyError.
+
+    Two hosts that enumerated identical NICs in different listdir order
+    produce equal signatures because the per-entry tuples are sorted before
+    being wrapped into the outer tuple (which is the hashable value
+    group_by_fingerprint hashes alongside the scalar dotted keys).
+
+    The sort uses a `repr`-based key because mixed-type fields would
+    otherwise raise `TypeError: '<' not supported between instances of
+    'str' and 'int'` when an up entry's `speed=100` (int) collides with a
+    down entry's `speed=""` (the .get default for the missing key). The
+    repr-based key is deterministic; the resulting tuple values themselves
+    keep their native types so equal multisets still hash to equal sigs.
+    """
+    return tuple(sorted(
+        (
+            (e.get("type", ""), e.get("speed", ""), e.get("state", ""), e.get("unit_count", ""))
+            for e in networking
+        ),
+        key=repr,
+    ))
+
+
 # ---------------------------------------------------------------------------
-# D-4: locked fingerprint key set for quantity-grouping homogeneous client
-# stanzas. Order matters only for human readability of the resulting tuples;
-# group_by_fingerprint hashes them as a tuple so any consistent order works.
+# D-4 + D-22: locked fingerprint key set for quantity-grouping homogeneous
+# client stanzas. Each entry is either:
+#   - a dotted-path string (resolved via _get_dotted), OR
+#   - a (name, callable_extractor) tuple (D-22) where the extractor is
+#     invoked on item.get('networking', []) at dispatch time.
+# The string-only Phase 2 form is preserved at the head of the tuple;
+# chassis.model_name + the ('networking_sig', _network_signature) callable
+# join in Phase 3 per D-22. Order matters only for human readability of the
+# resulting fp tuples; group_by_fingerprint hashes them as a tuple so any
+# consistent order works.
 # ---------------------------------------------------------------------------
-_FINGERPRINT_KEYS: tuple[str, ...] = (
+_FINGERPRINT_KEYS: tuple = (
     "chassis.cpu_model",
     "chassis.cpu_qty",
     "chassis.cpu_cores",
     "chassis.memory_capacity",
+    "chassis.model_name",                        # NEW (Phase 3 / COLL-03)
     "operating_system.name",
     "operating_system.version",
+    ("networking_sig", _network_signature),      # NEW (Phase 3 / COLL-04; D-22 callable extractor)
 )
 
 
@@ -109,6 +148,15 @@ def _get_dotted(d: dict, dotted_key: str) -> Any:
     return cur
 
 
+def _resolve_fingerprint_key(item: dict, key: Any) -> Any:
+    """D-22 dispatch: scalar dotted-string keys resolve via _get_dotted;
+    (name, extractor) callable tuples invoke extractor(item.get('networking', []))."""
+    if isinstance(key, tuple):
+        _name, extractor = key
+        return extractor(item.get("networking", []))
+    return _get_dotted(item, key)
+
+
 def group_by_fingerprint(
     items: list[dict],
     fingerprint_keys: tuple[str, ...],
@@ -128,8 +176,12 @@ def group_by_fingerprint(
     - The input list and its dicts are NOT mutated: each accepted item is
       deep-copied before being annotated with the count field. Callers can
       safely pass the same list to repeated calls.
-    - Dotted keys (`chassis.cpu_model`) are resolved by `_get_dotted`; missing
-      keys → `""`, preserving determinism for partial collections.
+    - Keys are resolved by `_resolve_fingerprint_key` per D-22: scalar dotted
+      strings (`chassis.cpu_model`) go through `_get_dotted` (missing keys →
+      `""`, preserving determinism for partial collections); `(name, extractor)`
+      callable tuples invoke the extractor on `item.get('networking', [])`
+      (used by `('networking_sig', _network_signature)` for the cross-host
+      networking multiset).
 
     Args:
         items: list of dicts (e.g. node_description-shaped dicts from
@@ -145,7 +197,7 @@ def group_by_fingerprint(
     """
     groups: dict[tuple, dict] = {}
     for item in items:
-        fp = tuple(_get_dotted(item, k) for k in fingerprint_keys)
+        fp = tuple(_resolve_fingerprint_key(item, k) for k in fingerprint_keys)
         if fp not in groups:
             # Deep copy preserves the no-mutation invariant: callers' items
             # stay clean and re-grouping (e.g. in tests) is idempotent.
@@ -285,9 +337,31 @@ def _splice_stub_lists(dump: dict) -> dict:
     (`dict(_NETWORKING_STUB)`) so callers can safely mutate without
     aliasing the module-level constant.
 
-    Idempotent: re-running on the same dict REPLACES the spliced entries,
-    not appends. Plan 02-04 relies on this so callers can chain
-    `_splice_stub_lists(_build_outer_dict(stanzas))` even after re-grouping.
+    D-17 (Phase 3): when the client already has real networking entries
+    (provided by Plan 03-05's `node_dict_from_host` wiring), the helper
+    iterates the entries and sets `entry['traffic'] = []` on every entry
+    whose `state == 'up'`. This is the post-Pydantic splice seam: the
+    schema validator at submission time then surfaces the empty-list
+    `traffic` field as the SER-02 "submitter must fill the traffic role"
+    UX. `NetworkPort` is never constructed with `traffic=[]` (the
+    `_require_speed_and_traffic_when_up` validator would crash); the
+    splice mutates the dumped dict directly.
+
+    Down entries are NOT mutated — Plan 03-03's emit shape for down NICs
+    omits both `speed` and `traffic` keys, and `model_dump(exclude_none=True)`
+    drops the optional fields on the Pydantic round-trip, so down entries
+    serialize cleanly without a splice.
+
+    When the client has NO networking entries (or an empty list), the
+    helper falls back to the Phase 2 behavior: splice in a single
+    `[dict(_NETWORKING_STUB)]`. This is the "we collected nothing" path —
+    the universal-rule blank stub.
+
+    Idempotent: re-running on the same dict REPLACES the spliced entries
+    in the fallback branch and re-sets `traffic = []` on up entries in
+    the real-data branch (no append). Plan 02-04 relies on this so callers
+    can chain `_splice_stub_lists(_build_outer_dict(stanzas))` even after
+    re-grouping.
 
     Defensive on shape: if `dump` has no `system_under_test` or no
     `clients`, the function returns the dump unchanged (no `KeyError`).
@@ -298,8 +372,21 @@ def _splice_stub_lists(dump: dict) -> dict:
     """
     clients = dump.get("system_under_test", {}).get("clients", [])
     for client in clients:
-        client["networking"] = [dict(_NETWORKING_STUB)]
-        client["drives"]     = [dict(_DRIVE_STUB)]
+        existing_net = client.get("networking")
+        if existing_net:
+            # D-17: real networking from node_dict_from_host (Plan 03-05).
+            # Splice traffic=[] on every up entry so the resulting YAML
+            # fails schema_validator.validate_file on the visible blank —
+            # that IS the SER-02 "submitter must fill the traffic role" UX.
+            for entry in existing_net:
+                if entry.get("state") == "up":
+                    entry["traffic"] = []
+        else:
+            # Phase 2 fallback: no real networking collected → emit the
+            # blank stub so schema validation surfaces the universal-rule
+            # blanks.
+            client["networking"] = [dict(_NETWORKING_STUB)]
+        client["drives"] = [dict(_DRIVE_STUB)]
     return dump
 
 
