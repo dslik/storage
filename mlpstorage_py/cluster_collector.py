@@ -8,6 +8,7 @@ including meminfo, cpuinfo, diskstats, and network statistics.
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -694,6 +695,347 @@ def collect_chassis_model(dmi_path: str = _DMI_PRODUCT_NAME_PATH) -> str:
 
 
 # =============================================================================
+# Networking Collection (sysfs + InfiniBand) — Phase 3 Plan 03
+#                     (D-18 filter scope, D-19 IB-first, D-20 operstate +
+#                      effective-state demotion, COLL-04)
+# =============================================================================
+#
+# Per-host enumeration of real NICs and IB ports. Output is a flat list of
+# per-iface/per-port {type, speed, state} dicts, ungrouped — the per-host
+# grouping into stanzas with unit_count happens in auto_generator's
+# node_dict_from_host via group_by_fingerprint (Plan 03-04 / 03-05).
+#
+# Path indirection (net_root, ib_root parameters with module-default
+# production constants) lets tests point the reader at a tmp_path fixture
+# without patching builtins.open — RESEARCH 738-792 / Pattern D.
+_SYSFS_NET_ROOT: str = '/sys/class/net'
+_SYSFS_INFINIBAND_ROOT: str = '/sys/class/infiniband'
+
+# D-18 virtual-interface name-prefix list (belt-and-suspenders against
+# D-19 IPoIB shadow double-counting via ib*/iboeth*/ib_eth* entries).
+# Compiled as a single regex at module load. The literal prefix tuple is
+# preserved alongside so D-18 grep-finds the source-of-truth list.
+_VIRTUAL_NAME_PREFIXES: Tuple[str, ...] = (
+    'lo', 'docker', 'virbr', 'veth', 'tun', 'tap', 'gre', 'wg',
+    'ib', 'iboeth', 'ib_eth',
+)
+
+# Matches: exact 'lo'; docker0/docker123; virbr0; veth* with any suffix;
+# tun/tap/gre/wg with optional numeric suffix; ib0; iboeth0; ib_eth0.
+# Anchored ^...$ for whole-name match.
+_VIRTUAL_NAME_RE = re.compile(
+    r'^(lo|docker[0-9]*|virbr[0-9]*|veth.*|tun[0-9]*|tap[0-9]*|'
+    r'gre[0-9]*|wg[0-9]*|ib[0-9]*|iboeth[0-9]*|ib_eth[0-9]*)$'
+)
+
+# D-20 permissive operstate mapping: 'up' and 'unknown' both map to up.
+# 'unknown' is included because many drivers (virtio, several wifi) don't
+# update operstate when carrier comes online; treating unknown as down
+# would systematically misreport those NICs.
+_OPERSTATE_UP_VALUES: frozenset = frozenset({'up', 'unknown'})
+
+# T-3-07 belt-and-suspenders: iface names are kernel-side basenames but a
+# defensive whitelist regex blocks any name with path separators or shell
+# metacharacters before we construct a sysfs path with it. POSIX device
+# names are [A-Za-z0-9._-]+; nothing legitimate violates this.
+_SAFE_IFACE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _read_sysfs_text(path: str) -> str:
+    """Read a single-line sysfs file; return its stripped content.
+
+    Returns '' on any exception (FileNotFoundError on hot-unplug,
+    PermissionError on hardened images, OSError on exotic kernels).
+    T-3-09: explicit 8KB read cap defense-in-depth against an unbounded
+    blob (sysfs is normally PAGE_SIZE-buffered to 4KB).
+    """
+    try:
+        with open(path, 'r') as f:
+            return f.read(8192).strip()
+    except Exception:
+        return ''
+
+
+def _read_sysfs_int(path: str, default: int = -1) -> int:
+    """Read a sysfs file and int() its first token; return default on any failure.
+
+    T-3-08: int() failure on tampered/garbled content returns default
+    rather than raising; the -1 sentinel then participates in the D-20
+    effective-state demotion path so the iface emits as down with no
+    speed key.
+    """
+    try:
+        with open(path, 'r') as f:
+            raw = f.read(8192).strip()
+        return int(raw.split()[0])
+    except Exception:
+        return default
+
+
+def _is_virtual_by_name(iface: str) -> bool:
+    """D-18 name-prefix shortcut: True if the iface name matches any
+    excluded prefix. Fast O(1) regex test before any I/O.
+
+    D-18 source-of-truth prefix list (also exposed via
+    _VIRTUAL_NAME_PREFIXES for grep): lo, docker*, virbr*, veth*, tun*,
+    tap*, gre*, wg*. D-19 belt-and-suspenders prefixes (skip IPoIB
+    shadows from net walk): ib*, iboeth*, ib_eth*.
+    """
+    return _VIRTUAL_NAME_RE.match(iface) is not None
+
+
+def _is_bridge_master(iface_dir: str) -> bool:
+    """D-18: a Linux bridge (br0 etc.) carries /sys/class/net/<iface>/bridge/.
+    Its speed is meaningless (kernel returns a default value regardless
+    of real port speeds). Skip."""
+    return os.path.isdir(os.path.join(iface_dir, 'bridge'))
+
+
+def _is_vlan_subif(iface_dir: str) -> bool:
+    """D-18: detect VLAN sub-interfaces (eth0.100) and MACVLAN/IPVLAN
+    children. Both have iflink pointing at the parent interface's
+    ifindex, distinct from their own ifindex.
+
+    Returns False if either sysfs file is unreadable — we err on the
+    side of inclusion (a stale read of '0' for both would otherwise
+    falsely match) rather than silently dropping real NICs.
+    """
+    iflink_path = os.path.join(iface_dir, 'iflink')
+    ifindex_path = os.path.join(iface_dir, 'ifindex')
+    if not (os.path.exists(iflink_path) and os.path.exists(ifindex_path)):
+        return False
+    iflink = _read_sysfs_int(iflink_path, default=-1)
+    ifindex = _read_sysfs_int(ifindex_path, default=-1)
+    if iflink == -1 or ifindex == -1:
+        return False
+    return iflink != ifindex
+
+
+def _is_bond_slave(iface_dir: str) -> bool:
+    """D-18: bond slaves leak operstate=up + a real speed; the bond's own
+    aggregate speed is reported on the master. We must filter slaves so
+    they do not double-count alongside the master. Detection: <iface>/
+    master symlink exists AND basename of the target starts with 'bond'.
+    """
+    master_path = os.path.join(iface_dir, 'master')
+    if not os.path.exists(master_path):
+        return False
+    try:
+        target = os.readlink(master_path)
+        return os.path.basename(target).startswith('bond')
+    except OSError:
+        return False
+
+
+def _is_bond_master(iface_dir: str) -> bool:
+    """D-18: bond masters carry /sys/class/net/<iface>/bonding/ subdir."""
+    return os.path.isdir(os.path.join(iface_dir, 'bonding'))
+
+
+def _bond_aggregate_speed_mbps(iface_dir: str, net_root: str) -> int:
+    """Per RESEARCH 484-519 bond master aggregation: sum the speed_mbps of
+    every active slave (positive speed only; slaves with speed=-1 or 0
+    contribute zero). Returns total Mbps; 0 means the bond has no active
+    legs.
+
+    The bond's own /sys/class/net/<bond>/speed is unreliable (Pitfall 4)
+    — many drivers report a sentinel rather than the aggregate. We always
+    walk slaves and re-derive.
+    """
+    slaves_path = os.path.join(iface_dir, 'bonding', 'slaves')
+    raw = _read_sysfs_text(slaves_path)
+    if not raw:
+        return 0
+    total = 0
+    for name in raw.split():
+        if not _SAFE_IFACE_NAME_RE.match(name):
+            # T-3-09: skip slave names with shell metacharacters / path
+            # separators rather than constructing a sysfs path with them.
+            continue
+        speed = _read_sysfs_int(os.path.join(net_root, name, 'speed'),
+                                default=-1)
+        if speed > 0:
+            total += speed
+    return total
+
+
+def _map_operstate(operstate: str) -> str:
+    """D-20 permissive operstate mapping: 'up' | 'unknown' → 'up';
+    everything else (down, dormant, notpresent, lowerlayerdown, testing)
+    → 'down'."""
+    return 'up' if operstate.strip().lower() in _OPERSTATE_UP_VALUES else 'down'
+
+
+def _parse_ib_state(state_file_contents: str) -> str:
+    """D-19; Pitfall 8 robust '4:' prefix match. The IB state file format
+    is '<num>: <text>' (e.g. '4: ACTIVE'). Only '4: ACTIVE' counts as up;
+    everything else (1: DOWN, 2: INIT, 3: ARMED, 5: ACTIVE_DEFER) is down.
+    """
+    return 'up' if state_file_contents.strip().startswith('4:') else 'down'
+
+
+def _parse_ib_rate(rate_file_contents: str) -> Optional[int]:
+    """D-19: parse 'NN Gb/sec (...)' → int(NN). Returns None on parse
+    failure (empty file, garbled content); the caller demotes such ports
+    to state=down so the downstream Pydantic NetworkPort never sees an
+    'up' state without a speed.
+    """
+    try:
+        return int(rate_file_contents.split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def collect_networking(net_root: str = _SYSFS_NET_ROOT,
+                       ib_root: str = _SYSFS_INFINIBAND_ROOT) -> List[Dict[str, Any]]:
+    """Enumerate real per-host network interfaces and IB ports.
+
+    Returns a list of {type, speed?, state} dicts — one entry per
+    surviving ethernet iface (D-18 filters virtuals/bridges/VLANs/bond
+    slaves; bond masters emit ONE aggregated entry per LAG) and one
+    entry per IB port (D-19 IB-first). The list is ungrouped — per-host
+    stanza collapsing happens in node_dict_from_host (Plan 03-05) via
+    group_by_fingerprint(...).
+
+    Universal D-2 rule applied at per-iface scope: a single bad iface
+    (hot-unplug FileNotFoundError, PermissionError, parse error)
+    silently skips that one entry; the function returns whatever
+    entries did succeed.
+
+    Args:
+        net_root: Path to /sys/class/net (production default); tests
+            pass a tmp_path fixture root.
+        ib_root: Path to /sys/class/infiniband (production default);
+            tests pass a tmp_path fixture root or a non-existent path
+            to exercise the missing-IB-hardware code path.
+
+    Returns:
+        list of dicts. For up ethernet/IB: {type, speed (Gbps), state:'up'}.
+        For down: {type, state:'down'} (no speed key, consistent with
+        Pydantic model_dump(exclude_none=True) on a NetworkPort with
+        speed=None).
+    """
+    out: List[Dict[str, Any]] = []
+
+    # --- Ethernet walk: /sys/class/net/* per RESEARCH 484-519 decision tree.
+    try:
+        net_entries = os.listdir(net_root)
+    except Exception:
+        net_entries = []
+
+    for iface in net_entries:
+        try:
+            # T-3-07: defensive name validation before constructing any path.
+            if not _SAFE_IFACE_NAME_RE.match(iface):
+                continue
+
+            # 1. Name-prefix shortcut (D-18 + D-19): cheap O(1) reject.
+            if _is_virtual_by_name(iface):
+                continue
+
+            iface_dir = os.path.join(net_root, iface)
+
+            # 2. Bridge master?
+            if _is_bridge_master(iface_dir):
+                continue
+
+            # 3. VLAN / MACVLAN / IPVLAN sub-interface?
+            if _is_vlan_subif(iface_dir):
+                continue
+
+            # 4. Bond slave?
+            if _is_bond_slave(iface_dir):
+                continue
+
+            # 5. Bond master? Emit one aggregated entry per LAG.
+            if _is_bond_master(iface_dir):
+                aggregate_mbps = _bond_aggregate_speed_mbps(iface_dir, net_root)
+                if aggregate_mbps > 0:
+                    out.append({
+                        'type': 'ethernet',
+                        'speed': aggregate_mbps // 1000,
+                        'state': 'up',
+                    })
+                else:
+                    out.append({'type': 'ethernet', 'state': 'down'})
+                continue
+
+            # 6. Plain physical ethernet.
+            iface_type = _read_sysfs_text(os.path.join(iface_dir, 'type'))
+            if iface_type != '1':
+                # Not ARPHRD_ETHER (e.g., sit0=776, ip6tnl0=769). Skip.
+                continue
+
+            operstate_raw = _read_sysfs_text(os.path.join(iface_dir, 'operstate'))
+            mapped_state = _map_operstate(operstate_raw)
+            speed_mbps = _read_sysfs_int(os.path.join(iface_dir, 'speed'),
+                                         default=-1)
+
+            # D-20 effective-state demotion: an iface that says 'up' but
+            # reports no negotiated speed is operationally down (Pitfall 2
+            # — virtio NICs report speed=-1 despite operstate=up).
+            if mapped_state == 'up' and speed_mbps in (-1, 0):
+                mapped_state = 'down'
+
+            if mapped_state == 'up':
+                out.append({
+                    'type': 'ethernet',
+                    'speed': speed_mbps // 1000,
+                    'state': 'up',
+                })
+            else:
+                out.append({'type': 'ethernet', 'state': 'down'})
+        except Exception:
+            # Per-iface defense (D-2 at iface scope): any unexpected
+            # failure skips this one iface, never aborts the walk.
+            continue
+
+    # --- InfiniBand walk: /sys/class/infiniband/<dev>/ports/<port>/ per D-19.
+    if os.path.isdir(ib_root):
+        try:
+            ib_devs = os.listdir(ib_root)
+        except Exception:
+            ib_devs = []
+        for dev in ib_devs:
+            if not _SAFE_IFACE_NAME_RE.match(dev):
+                continue
+            ports_dir = os.path.join(ib_root, dev, 'ports')
+            if not os.path.isdir(ports_dir):
+                continue
+            try:
+                ports = os.listdir(ports_dir)
+            except Exception:
+                continue
+            for port in ports:
+                try:
+                    if not _SAFE_IFACE_NAME_RE.match(port):
+                        continue
+                    port_dir = os.path.join(ports_dir, port)
+                    state_raw = _read_sysfs_text(os.path.join(port_dir, 'state'))
+                    ib_state = _parse_ib_state(state_raw)
+                    if ib_state == 'up':
+                        rate_raw = _read_sysfs_text(os.path.join(port_dir, 'rate'))
+                        speed = _parse_ib_rate(rate_raw)
+                        if speed is None:
+                            # D-19 blank-splice: state ACTIVE but rate
+                            # unparseable → cannot truthfully claim 'up'
+                            # without a speed. Emit as down.
+                            out.append({'type': 'infiniband', 'state': 'down'})
+                        else:
+                            out.append({
+                                'type': 'infiniband',
+                                'speed': speed,
+                                'state': 'up',
+                            })
+                    else:
+                        out.append({'type': 'infiniband', 'state': 'down'})
+                except Exception:
+                    continue
+
+    return out
+
+
+# =============================================================================
 # Local System Information Collection
 # =============================================================================
 
@@ -811,6 +1153,18 @@ def collect_local_system_info() -> Dict[str, Any]:
     except Exception as e:
         result['errors']['chassis_model'] = str(e)
         result['chassis_model'] = ''
+
+    # Collect networking inventory via /sys/class/net + /sys/class/infiniband
+    # (D-18 filter scope, D-19 IB-first, D-20 operstate + effective-state
+    # demotion, COLL-04). collect_networking applies per-iface D-2 internally
+    # so individual hot-unplug / permission failures don't surface here; the
+    # outer try/except is defense-in-depth against an unexpected listdir
+    # failure surfacing through the top-level walk.
+    try:
+        result['networking'] = collect_networking()
+    except Exception as e:
+        result['errors']['networking'] = str(e)
+        result['networking'] = []
 
     # Collect /proc/vmstat
     try:
@@ -934,6 +1288,7 @@ It gathers data from /proc files and aggregates results on rank 0.
 
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -1145,6 +1500,210 @@ def collect_chassis_model(dmi_path=_DMI_PRODUCT_NAME_PATH):
         return ""
 
 
+# Phase 3 Plan 03 (D-18, D-19, D-20, COLL-04) — Pattern B (RESEARCH 675-679)
+# duplication of the networking sysfs + IB walk. Must stay in behavioral
+# parity with the module-level versions; the parity test in
+# tests/unit/test_cluster_collector.py::TestNetworkingMPIScriptParity
+# fails on any drift. Untyped form so the script survives on Python 3.8
+# hosts in heterogeneous SSH-fan-out fleets.
+_SYSFS_NET_ROOT = '/sys/class/net'
+_SYSFS_INFINIBAND_ROOT = '/sys/class/infiniband'
+
+_VIRTUAL_NAME_PREFIXES = (
+    'lo', 'docker', 'virbr', 'veth', 'tun', 'tap', 'gre', 'wg',
+    'ib', 'iboeth', 'ib_eth',
+)
+
+_VIRTUAL_NAME_RE = re.compile(
+    r'^(lo|docker[0-9]*|virbr[0-9]*|veth.*|tun[0-9]*|tap[0-9]*|'
+    r'gre[0-9]*|wg[0-9]*|ib[0-9]*|iboeth[0-9]*|ib_eth[0-9]*)$'
+)
+
+_OPERSTATE_UP_VALUES = frozenset(['up', 'unknown'])
+
+_SAFE_IFACE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _read_sysfs_text(path):
+    try:
+        with open(path, 'r') as f:
+            return f.read(8192).strip()
+    except Exception:
+        return ''
+
+
+def _read_sysfs_int(path, default=-1):
+    try:
+        with open(path, 'r') as f:
+            raw = f.read(8192).strip()
+        return int(raw.split()[0])
+    except Exception:
+        return default
+
+
+def _is_virtual_by_name(iface):
+    return _VIRTUAL_NAME_RE.match(iface) is not None
+
+
+def _is_bridge_master(iface_dir):
+    return os.path.isdir(os.path.join(iface_dir, 'bridge'))
+
+
+def _is_vlan_subif(iface_dir):
+    iflink_path = os.path.join(iface_dir, 'iflink')
+    ifindex_path = os.path.join(iface_dir, 'ifindex')
+    if not (os.path.exists(iflink_path) and os.path.exists(ifindex_path)):
+        return False
+    iflink = _read_sysfs_int(iflink_path, default=-1)
+    ifindex = _read_sysfs_int(ifindex_path, default=-1)
+    if iflink == -1 or ifindex == -1:
+        return False
+    return iflink != ifindex
+
+
+def _is_bond_slave(iface_dir):
+    master_path = os.path.join(iface_dir, 'master')
+    if not os.path.exists(master_path):
+        return False
+    try:
+        target = os.readlink(master_path)
+        return os.path.basename(target).startswith('bond')
+    except OSError:
+        return False
+
+
+def _is_bond_master(iface_dir):
+    return os.path.isdir(os.path.join(iface_dir, 'bonding'))
+
+
+def _bond_aggregate_speed_mbps(iface_dir, net_root):
+    slaves_path = os.path.join(iface_dir, 'bonding', 'slaves')
+    raw = _read_sysfs_text(slaves_path)
+    if not raw:
+        return 0
+    total = 0
+    for name in raw.split():
+        if not _SAFE_IFACE_NAME_RE.match(name):
+            continue
+        speed = _read_sysfs_int(os.path.join(net_root, name, 'speed'),
+                                default=-1)
+        if speed > 0:
+            total += speed
+    return total
+
+
+def _map_operstate(operstate):
+    return 'up' if operstate.strip().lower() in _OPERSTATE_UP_VALUES else 'down'
+
+
+def _parse_ib_state(state_file_contents):
+    return 'up' if state_file_contents.strip().startswith('4:') else 'down'
+
+
+def _parse_ib_rate(rate_file_contents):
+    try:
+        return int(rate_file_contents.split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def collect_networking(net_root=_SYSFS_NET_ROOT, ib_root=_SYSFS_INFINIBAND_ROOT):
+    """Enumerate real per-host NICs and IB ports (mirror of module copy)."""
+    out = []
+
+    try:
+        net_entries = os.listdir(net_root)
+    except Exception:
+        net_entries = []
+
+    for iface in net_entries:
+        try:
+            if not _SAFE_IFACE_NAME_RE.match(iface):
+                continue
+            if _is_virtual_by_name(iface):
+                continue
+            iface_dir = os.path.join(net_root, iface)
+            if _is_bridge_master(iface_dir):
+                continue
+            if _is_vlan_subif(iface_dir):
+                continue
+            if _is_bond_slave(iface_dir):
+                continue
+            if _is_bond_master(iface_dir):
+                aggregate_mbps = _bond_aggregate_speed_mbps(iface_dir, net_root)
+                if aggregate_mbps > 0:
+                    out.append({
+                        'type': 'ethernet',
+                        'speed': aggregate_mbps // 1000,
+                        'state': 'up',
+                    })
+                else:
+                    out.append({'type': 'ethernet', 'state': 'down'})
+                continue
+
+            iface_type = _read_sysfs_text(os.path.join(iface_dir, 'type'))
+            if iface_type != '1':
+                continue
+
+            operstate_raw = _read_sysfs_text(os.path.join(iface_dir, 'operstate'))
+            mapped_state = _map_operstate(operstate_raw)
+            speed_mbps = _read_sysfs_int(os.path.join(iface_dir, 'speed'),
+                                         default=-1)
+            if mapped_state == 'up' and speed_mbps in (-1, 0):
+                mapped_state = 'down'
+
+            if mapped_state == 'up':
+                out.append({
+                    'type': 'ethernet',
+                    'speed': speed_mbps // 1000,
+                    'state': 'up',
+                })
+            else:
+                out.append({'type': 'ethernet', 'state': 'down'})
+        except Exception:
+            continue
+
+    if os.path.isdir(ib_root):
+        try:
+            ib_devs = os.listdir(ib_root)
+        except Exception:
+            ib_devs = []
+        for dev in ib_devs:
+            if not _SAFE_IFACE_NAME_RE.match(dev):
+                continue
+            ports_dir = os.path.join(ib_root, dev, 'ports')
+            if not os.path.isdir(ports_dir):
+                continue
+            try:
+                ports = os.listdir(ports_dir)
+            except Exception:
+                continue
+            for port in ports:
+                try:
+                    if not _SAFE_IFACE_NAME_RE.match(port):
+                        continue
+                    port_dir = os.path.join(ports_dir, port)
+                    state_raw = _read_sysfs_text(os.path.join(port_dir, 'state'))
+                    ib_state = _parse_ib_state(state_raw)
+                    if ib_state == 'up':
+                        rate_raw = _read_sysfs_text(os.path.join(port_dir, 'rate'))
+                        speed = _parse_ib_rate(rate_raw)
+                        if speed is None:
+                            out.append({'type': 'infiniband', 'state': 'down'})
+                        else:
+                            out.append({
+                                'type': 'infiniband',
+                                'speed': speed,
+                                'state': 'up',
+                            })
+                    else:
+                        out.append({'type': 'infiniband', 'state': 'down'})
+                except Exception:
+                    continue
+
+    return out
+
+
 def collect_local_info():
     """Collect system information from the local node."""
     result = {
@@ -1237,6 +1796,16 @@ def collect_local_info():
     except Exception as e:
         result['errors']['chassis_model'] = str(e)
         result['chassis_model'] = ''
+
+    # Collect networking inventory (D-18 / D-19 / D-20, COLL-04) — Pattern B
+    # parallel to the module-side wiring in collect_local_system_info. The
+    # collect_networking function applies per-iface D-2 internally; this
+    # outer try/except is defense-in-depth.
+    try:
+        result['networking'] = collect_networking()
+    except Exception as e:
+        result['errors']['networking'] = str(e)
+        result['networking'] = []
 
     if not result['errors']:
         del result['errors']

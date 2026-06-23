@@ -1646,6 +1646,9 @@ def _make_iface(net_dir, name, *, type_val="1", operstate="up", speed="10000",
             # macOS / locked-down envs may refuse; we don't run there in CI
             # but be defensive so the fixture still constructs.
             pass
+    if bridge:
+        # D-18: bridge masters carry /sys/class/net/<iface>/bridge/ subdir.
+        (d / "bridge").mkdir(exist_ok=True)
     return d
 
 
