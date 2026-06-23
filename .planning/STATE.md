@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: human_needed (UAT deferred — needs real-hardware host)
-stopped_at: "Phase 03 code-side COMPLETE end-to-end, code-reviewed, verified, and PUSHED to origin (HEAD 4704c52 on FileSystemGuy-client-system-collector tracking origin/FileSystemGuy-client-system-collector). Total 13 atomic source commits 1e8870e..a9559b2 + 03-05 docs roll-up e4c551c + planning-artifacts roll-up 4704c52 (5 SUMMARY.md + REVIEW + VERIFICATION committed via git add -f matching Phase 2 convention; PLAN/CONTEXT/RESEARCH/PATTERNS/VALIDATION/UAT remain untracked). Code review (03-REVIEW.md): 1 BLOCKER (CR-01 HostInfo.to_dict drift on new chassis_model + networking fields — affects ClusterInformation.as_dict JSON-metadata roundtrip, NOT the systemname.yaml emit path that Phase 3 was scoped to deliver; deferred to Phase 5 LIFE-02 per direct WR-03 precedent) + 5 WARNING + 6 INFO. Phase verification (03-VERIFICATION.md): status human_needed; 7/7 automated must-haves verified, 4 real-hardware UAT items pending in 03-UAT.md. UAT attempted on WSL2 dev-shell DESKTOP-JS4EFLH 2026-06-22 21:49 — informally satisfies Test 4 (no-DMI scenario: /sys/class/dmi/id/product_name confirmed absent → chassis.model_name='' + silverfish.yaml still written at /tmp/nerf-res/closed/silverfish/systems/ + run did not crash on Phase 3 path; D-17 traffic=[] splice live in output) but Tests 1/2/3 require bare-metal Linux host with real DMI + ethernet NIC + InfiniBand. UAT formally deferred per user direction with full evidence captured in 03-UAT.md frontmatter (deferred / deferred_reason / deferred_evidence fields). Phase 3 NOT marked complete — ROADMAP shows 5/5 plans built but verification pending hardware. Pre-execute upstream sync: merged origin/main (PR #486 docs + PR #488 vectordb/kvcache fix) into branch via dca0ace before phase execution started; worktree.baseRef set to head in .claude/settings.local.json. Worktree isolation auto-degraded to sequential because Claude Code's isolation=worktree forks off origin/HEAD (not local HEAD or gsd-tools baseRef), and the unpushed Phase 1+2 commits caused executor-side branch-check halt at exit 42. Next session options: (a) resume UAT on real hardware via /gsd-verify-work 3 — Test 1 is entry point, Test 4 markable pass-by-evidence from frontmatter; or (b) start Phase 4 in parallel via /gsd-discuss-phase 4 (Sysctl + Environment + Drives, MVP mode, COLL-05/06/07 — pattern mirrors Phase 3: schema → collector → transform extractor → HostInfo wire-through)."
-last_updated: "2026-06-23T06:00:00Z"
-last_activity: 2026-06-23 -- Phase 03 code shipped + pushed; UAT deferred for hardware
+status: verifying
+stopped_at: "Phase 04 context gathered (D-23..D-36 locked: env redaction policy, sysctl allowlist file, drive filters, no schema change, strict cross-host fingerprint)"
+last_updated: "2026-06-23T16:46:31.486Z"
+last_activity: 2026-06-22 -- Phase 03 Plan 05 complete (Phase 3 vertical end-to-end closed)
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 16
   completed_plans: 16
-  percent: 53
+  percent: 60
 ---
 
 # Project State
@@ -158,14 +158,15 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-23T06:00:00Z
-Stopped at: Phase 03 code-side end-to-end COMPLETE + reviewed + verified + pushed to origin. HEAD 4704c52 on FileSystemGuy-client-system-collector (tracks origin/FileSystemGuy-client-system-collector). UAT formally deferred — needs bare-metal Linux host with real DMI + ethernet + InfiniBand (WSL2 dev-shell DESKTOP-JS4EFLH cannot exercise Tests 1/2/3; informally satisfies Test 4 via no-DMI fallback evidence captured in 03-UAT.md frontmatter).
-Resume file: .planning/phases/03-chassis-model-networking-coverage/03-UAT.md (deferred_reason + deferred_evidence in frontmatter)
+Last session: 2026-06-23T16:46:31.477Z
+Stopped at: Phase 04 context gathered (D-23..D-36 locked: env redaction policy, sysctl allowlist file, drive filters, no schema change, strict cross-host fingerprint)
+Resume file: .planning/phases/04-sysctl-environment-and-drives-coverage/04-CONTEXT.md
 Next-session options:
   (a) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately.
   (b) Start Phase 4 in parallel (recommended — UAT is independent of code progression): `/gsd-discuss-phase 4` — Sysctl + Environment + Drives, MVP mode, COLL-05/06/07. Drives pattern mirrors Phase 3 (schema → collector → transform extractor → HostInfo wire-through); per-host drive grouping key `(vendor_name, model_name, interface, media_type, capacity_in_GB)`, cross-host inclusion via `_drive_signature` extractor following `_network_signature` pattern from Plan 03-04.
   (c) Cheap hygiene: `/gsd-secure-phase 02` (Path-B skipped during transition) or REQUIREMENTS.md traceability sync for SCH-01/BUN-01/ADP-01.
 Open follow-ups carried forward (all from prior phases, not blocking Phase 3):
+
   - Phase 5 LIFE-02 scope expanded to include Phase 3 CR-01 (`HostInfo.to_dict()` drift on chassis_model + networking) in addition to Phase 2 WR-03 (`num_sockets`).
   - Phase 2 PR #488 (preview-OPEN-bump fix) merged via dca0ace upstream sync 2026-06-22.
   - 03-REVIEW.md WR-01..WR-05 + IN-01..IN-06: hardening items for Phase 4/5 backlog (mostly Phase 5 LIFE-02 lifecycle territory).
