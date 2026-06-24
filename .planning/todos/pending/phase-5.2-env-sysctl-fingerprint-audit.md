@@ -1,10 +1,10 @@
 ---
-title: Phase 5.1 — audit environment + kernel sysctl values in client-identity fingerprint
+title: Phase 5.2 — audit environment + kernel sysctl values in client-identity fingerprint
 created: 2026-06-24
 status: pending
 severity: major
 resolves_phase: ""
-proposed_for: phase 5.1 (decimal/polish phase)
+proposed_for: phase 5.2 (decimal/polish phase)
 source: phase-05 UAT Test 3 (LIFE-04 hand-fill survival, OMPI env bug)
 ---
 
@@ -58,21 +58,21 @@ requires:
    - `OS, version` — identity but SHOULD it be? A package upgrade
      shouldn't flag drift on a stable cluster
 
-## Proposed approach (phase 5.1 PLAN)
+## Proposed approach (phase 5.2 PLAN)
 
-- Plan 05.1-01: enumerate every key captured by the collector + cross-reference
+- Plan 05.2-01: enumerate every key captured by the collector + cross-reference
   to `_FINGERPRINT_KEYS`. Produce a categorization spreadsheet (identity / config /
   runtime / auto-tuned).
-- Plan 05.1-02: write the environment denylist (extends the OMPI fix from
+- Plan 05.2-02: write the environment denylist (extends the OMPI fix from
   the UAT session — pattern + literal denylist with cross-launcher
   coverage).
-- Plan 05.1-03: write the sysctl filter (likely an allowlist of
+- Plan 05.2-03: write the sysctl filter (likely an allowlist of
   intentionally-tracked admin-set sysctls rather than a denylist —
   smaller surface, less subject to kernel evolution).
-- Plan 05.1-04: revisit the D-38 11-tuple composition — should
+- Plan 05.2-04: revisit the D-38 11-tuple composition — should
   environment/sysctl be in the fingerprint at all, or only in the
   leaf-diff layer that drives the SystemDriftError detail report?
-- Plan 05.1-05: integration tests that simulate (a) reboot, (b) kernel
+- Plan 05.2-05: integration tests that simulate (a) reboot, (b) kernel
   upgrade, (c) launcher change, (d) NIC swap — and assert which trigger
   drift vs which are silently absorbed.
 
@@ -80,10 +80,10 @@ requires:
 
 The empty-collector-as-handfill semantics (sibling todo
 `diff-empty-collector-as-handfill-affordance.md`) is orthogonal but
-related — both touch the diff layer. Phase 5.1 should bundle both
+related — both touch the diff layer. Phase 5.2 should bundle both
 investigations.
 
-## Why this is decimal-phase (5.1) not Phase 6
+## Why this is decimal-phase (5.2) not Phase 6
 
 The auto-collector + diff form a tightly-coupled subsystem shipped as a
 unit in Phase 5. Audit + correction should land as a polish phase

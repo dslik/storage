@@ -52,6 +52,14 @@ The collector extracts these fields from the per-host data the MPI cluster colle
 - [x] **CAP-01**: At `datagen` startup, after computing the dataset size in bytes, the benchmark calls `os.statvfs()` on the **dataset destination directory** (`--data-dir` for training and checkpointing, the engine-specific data path for vectordb / kvcache — *not* `--results-dir`, which lives off the system-under-test and only holds logs and metadata) and compares free space against the computed size. If free space < computed size, the benchmark fails before generation begins with a message naming the path, the available bytes, the required bytes, and the deficit. Per-node check on multi-node runs (each rank checks its own destination so a single starved node fails fast).
 - [x] **CAP-02**: At `datagen` or `run` startup on multi-host operations, the benchmark verifies that every participating host sees the **same shared filesystem** at the dataset destination directory. The check collects a filesystem identifier (e.g., `stat -f -c '%i' <data-dir>` on each host, or the Python equivalent `os.statvfs(<data-dir>).f_fsid`) from every rank and compares values. If the set of returned IDs has cardinality > 1, the benchmark fails before any work begins with a message listing each host and the filesystem ID it reported, plus a one-line explanation that this typically means one or more hosts have a local-disk path where a shared mount was expected. On single-host runs (`--hosts` defaults to None or has length 1), CAP-02 is a no-op. Implementation note for Phase 5 discuss/plan: tool choice (`stat -f` vs. `os.statvfs().f_fsid` vs. write-a-sentinel-and-read-on-peer) should be decided during planning; the `fsid` approach is simple but has known edge cases with bind mounts and FUSE that may warrant a sentinel-file fallback.
 
+### Hardening (HARDEN)
+
+Added by Phase 5.1 (closeout phase for v1.0). Two new requirement IDs that capture the post-implementation regressions surfaced by Phase 5's UAT — kept distinct from CAP-01 / CAP-02 to preserve the "each requirement maps to exactly one phase" Traceability invariant.
+
+- [ ] **HARDEN-01**: `mlpstorage <mode> training <model> datagen <file|s3|object> --results-dir <init'd-dir> --systemname <sys> ...` completes the CAP-01 capacity check on the `datagen` path without raising `AttributeError: 'TrainingBenchmark' object has no attribute 'cluster_information'`. The capacity check either (a) computes a real required-bytes value from lazy-collected cluster information, or (b) gracefully degrades to a 0-byte no-op gate with an operator-visible INFO log when cluster information cannot be determined (e.g., the dev box lacks `psutil` / `mpi4py` and the CLI does not expose `--client-host-memory-in-gb` on the datagen subparser). Regression guard for E201 (fixed in commits `754763a` + `29f1062`; locked in place by Phase 5.1's RED-first regression test). Scope is limited to `TrainingBenchmark` — the scout for Phase 5.1 confirmed `CheckpointingBenchmark`, `KVCacheBenchmark`, and `VectorDBBenchmark` do not read `self.cluster_information` in their `required_bytes_for_capacity_gate` implementations (pure args/constants math) and therefore have structural immunity to the E201 pattern.
+
+- [ ] **HARDEN-02**: The CAP-02 shared-FS probe transmits its rank-0 result via stdout (mpirun `--tag-output` + `__CAP02_RESULT_BEGIN__` / `__CAP02_RESULT_END__` framing), not via a launch-host-local file. The launcher therefore succeeds at parsing the rank-0 payload even when the launch host is outside `--hosts` and rank 0 lands on a remote host (the REVIEW-CR-02 submitter-laptop scenario in `05-REVIEW.md`). The launcher never raises a misleading `"mpi4py not installed on all hosts"` error when the probe semantically succeeded. Non-rank-0 processes are silent on stdout, enforced by a structural unit test that runs the probe-script entry point with `MPI_COMM_WORLD.Get_rank` mocked to non-zero values and asserts captured stdout is empty. The pre-existing file-based transport (`tempfile.mkstemp` at `cluster_collector.py:3348`, `argv[3]=output_file` plumbing, write/read sites at lines 2689 / 2813 / 3505) is removed in the same plan as the fix — argv signature reduces from three positional args to two (`argv[1]=data_dir argv[2]=run_uuid`). Closes REVIEW-CR-02 from `05-REVIEW.md`.
+
 ## v2 Requirements
 
 Deferred — not in current milestone, but flagged for future consideration.
@@ -113,11 +121,13 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | LIFE-04 | Phase 5 | Complete |
 | CAP-01  | Phase 5 / Plan 05-03 + 05-05 | Complete |
 | CAP-02  | Phase 5 / Plan 05-04 | Complete |
+| HARDEN-01 | Phase 5.1 | Pending — E201 regression guard for CAP-01 datagen path (fix shipped 754763a + 29f1062; 5.1 retroactively locks with RED-first test) |
+| HARDEN-02 | Phase 5.1 | Pending — REVIEW-CR-02 stdout-transport fix for CAP-02 launcher (rank 0 may land remote when launch host is outside `--hosts`) |
 
 **Coverage:**
 
-- v1 requirements: 24 total
-- Mapped to phases: 24
+- v1 requirements: 26 total (24 original + 2 HARDEN from Phase 5.1)
+- Mapped to phases: 26
 - Unmapped: 0
 
 **Per-phase totals:**
@@ -127,7 +137,8 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 - Phase 3 (Chassis Model + Networking Coverage): 2 requirements — COLL-03, COLL-04
 - Phase 4 (Sysctl, Environment, and Drives Coverage): 3 requirements — COLL-05, COLL-06, COLL-07
 - Phase 5 (Logical Diff Lifecycle + Capacity Gate): 5 requirements — LIFE-02, LIFE-03, LIFE-04, CAP-01, CAP-02
+- Phase 5.1 (Phase 5 Hardening & UAT Closeout): 2 requirements — HARDEN-01, HARDEN-02
 
 ---
 *Requirements defined: 2026-06-18*
-*Last updated: 2026-06-22 after Phase 2 UAT — added CAP-02 (shared-filesystem verification) to Phase 5 scope per submitter clarification on multi-host datagen / run gating.*
+*Last updated: 2026-06-24 — Phase 5.1 (INSERTED) added HARDEN-01 (E201 regression guard for CAP-01 datagen path) and HARDEN-02 (REVIEW-CR-02 stdout-transport fix for CAP-02 launcher); 2026-06-22 added CAP-02 (shared-filesystem verification) to Phase 5 scope per submitter clarification on multi-host datagen / run gating.*

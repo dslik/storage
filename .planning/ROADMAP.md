@@ -18,6 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Chassis Model + Networking Coverage** — Extend the auto-filled YAML with DMI chassis `model_name` and a `networking[]` block sourced from sysfs.
 - [x] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
 - [ ] **Phase 5: Logical Diff Lifecycle + Capacity Gate** — On re-runs, diff the in-memory image against the on-disk YAML for collector-owned fields and fail on drift; preserve user-filled blanks when unchanged; refuse to start `datagen` if the dataset destination directory lacks free space.
+- [ ] **Phase 5.1: Phase 5 Hardening & UAT Closeout** *(INSERTED)* — Fix two regressions blocking Phase 5 sign-off: the CAP-01 `cluster_information` E201 crash on the `datagen` path, and the CAP-02 shared-FS probe's launch-host-local `output_file` defect that misleads when rank 0 lands on a remote host (REVIEW-CR-02).
 
 ## Phase Details
 
@@ -193,6 +194,26 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] 05-05-PLAN.md — Slice 5: End-to-end integration tests covering ROADMAP SC#1-8 + LIFE-04 hand-fill survival + main.py top-level dispatch (TestPhase5Lifecycle + TestPhase5Cap01 + TestPhase5Cap02 appended to tests/integration/test_systemname_yaml_end_to_end.py + tests/integration/test_shared_fs_probe_real_mpi.py for B-3 Option A real-mpirun coverage)
 
+### Phase 5.1: Phase 5 Hardening & UAT Closeout (INSERTED)
+
+**Goal:** Phase 5's UAT (deferred 2026-06-24) surfaced two regressions that block phase sign-off. (a) The CAP-01 capacity gate crashes during `datagen` with E201 `'TrainingBenchmark' object has no attribute 'cluster_information'` because `TrainingBenchmark.__init__` collects host info only when `args.command != "datagen"`, but `_pre_execution_gate` is now wired into `datasize()` for datagen and reads `self.cluster_information` in `required_bytes_for_capacity_gate`. (b) The CAP-02 shared-FS probe writes its result to a launch-host-local `output_file`, but rank 0 of the mpirun job may land on a remote host (typical submitter-laptop deployment where the launch host is outside `--hosts`), causing the launcher to read a non-existent local path and raise a misleading `"mpi4py not installed on all hosts"` error even when the probe semantically succeeded (REVIEW-CR-02). After this phase, both regressions are fixed across all affected benchmark subclasses, and UAT Test 4 (multi-host CAP-02 reproduction on a submitter laptop) can be re-run on real hardware to validate CR-02 closure.
+**Mode:** mvp
+**Depends on:** Phase 5
+**Requirements:** HARDEN-01, HARDEN-02
+**Success Criteria** (what must be TRUE):
+
+  1. `./mlpstorage init <orgname> <results-dir> && ./mlpstorage closed training unet3d datagen file -rd <results-dir> -np 4 -sn <sys> -dd <data-dir>` completes the CAP-01 capacity check and proceeds to data generation without raising E201 — the failed gap recorded in `05-UAT.md` is resolved.
+  2. The same fix path is verified (or its absence justified) for `CheckpointingBenchmark`, `KVCacheBenchmark`, and `VectorDBBenchmark` — every subclass whose `datagen` / `datasize` path invokes `_pre_execution_gate` and therefore reads `cluster_information`.
+  3. On multi-host `datagen` and `run`, the CAP-02 shared-FS probe writes its `output_file` to a location all participating ranks (including rank 0 on a remote host) can produce or fetch back from, so the launcher no longer raises a misleading `"mpi4py not installed on all hosts"` error when the probe semantically succeeded.
+  4. UAT Test 4 (submitter-laptop deployment for CAP-02, REVIEW-CR-02 reproduction) re-runs against the fixed launcher and either passes silently on the happy path or fails with an accurate diagnostic that names the real cause — the misleading mpi4py message is gone from the CR-02 code path.
+  5. `05-UAT.md` is updated: the failed gap (E201) is marked resolved with the fixing commit, and Test 4 transitions from `pending` to `passed` (or to an explicit hardware-blocked status with rationale — not left dangling as `pending`).
+  6. No regression in Phase 5 success criteria #1-#8 — the existing diff-lifecycle and capacity-gate behaviors continue to hold after the fixes.
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run `/gsd-plan-phase 5.1` to break down)
+
 ## Progress
 
 **Execution Order:**
@@ -205,3 +226,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
 | 5. Logical Diff Lifecycle + Capacity Gate | 5/5 | Plans complete; awaiting verify | - |
+| 5.1. Phase 5 Hardening & UAT Closeout | 0/0 | Pending | - |
