@@ -346,6 +346,76 @@ class TestTrainingBenchmarkRequiredBytes:
             TrainingBenchmark.datasize(bm)
         assert order == ["gate", "calc"]
 
+    def test_required_bytes_lazy_collects_cluster_information_when_missing(self):
+        """Phase 5.1 / Gap fix: datagen path doesn't pre-collect cluster info
+        (Benchmark._collect_cluster_start short-circuits for
+        args.command in ('datagen','configview')), yet
+        Benchmark.run() still fires _pre_execution_gate after that
+        short-circuit. required_bytes_for_capacity_gate must therefore
+        lazy-collect cluster_information instead of assuming __init__ /
+        _collect_cluster_start already set it. Repro for AttributeError:
+        '_pre_execution_gate' raised
+        \"'TrainingBenchmark' object has no attribute 'cluster_information'\"
+        on `mlpstorage closed training unet3d datagen ...`.
+        """
+        from mlpstorage_py.benchmarks.dlio import TrainingBenchmark
+
+        bm = MagicMock(spec=TrainingBenchmark)
+        bm.args = SimpleNamespace(data_dir="/data")
+        # Critical: bm starts WITHOUT cluster_information set (datagen flow).
+        # spec=TrainingBenchmark inheritance makes the attribute missing rather
+        # than auto-mocked. Use del to be defensive in case mock created it.
+        try:
+            del bm.cluster_information
+        except AttributeError:
+            pass
+        bm.combined_params = {"dataset": {}, "reader": {}}
+        bm.logger = MagicMock()
+
+        collected = MagicMock(name="cluster_info_collected")
+        bm.accumulate_host_info = MagicMock(return_value=collected)
+
+        with patch(
+            "mlpstorage_py.benchmarks.dlio.calculate_training_data_size",
+            return_value=(100, 5, 9_999_999),
+        ) as mock_calc:
+            result = TrainingBenchmark.required_bytes_for_capacity_gate(bm)
+
+        # Bug fix: lazy collection happened
+        bm.accumulate_host_info.assert_called_once_with(bm.args)
+        # And the collected info was threaded into calculate_training_data_size
+        # (not the missing attribute that triggered the AttributeError)
+        called_args, called_kwargs = mock_calc.call_args
+        assert collected in called_args or collected in called_kwargs.values(), (
+            "calculate_training_data_size must receive the lazy-collected "
+            "ClusterInformation, not be invoked with a missing attribute."
+        )
+        assert result == 9_999_999
+
+    def test_required_bytes_uses_existing_cluster_information_when_already_set(self):
+        """Run-command path already pre-collected cluster info via
+        Benchmark._collect_cluster_start. The lazy-collect must NOT
+        re-collect or overwrite — that would double-MPI on every run."""
+        from mlpstorage_py.benchmarks.dlio import TrainingBenchmark
+
+        bm = MagicMock(spec=TrainingBenchmark)
+        bm.args = SimpleNamespace(data_dir="/data")
+        existing = MagicMock(name="cluster_info_existing")
+        bm.cluster_information = existing
+        bm.combined_params = {"dataset": {}, "reader": {}}
+        bm.logger = MagicMock()
+        bm.accumulate_host_info = MagicMock()
+
+        with patch(
+            "mlpstorage_py.benchmarks.dlio.calculate_training_data_size",
+            return_value=(100, 5, 1234),
+        ) as mock_calc:
+            TrainingBenchmark.required_bytes_for_capacity_gate(bm)
+
+        bm.accumulate_host_info.assert_not_called()
+        called_args, called_kwargs = mock_calc.call_args
+        assert existing in called_args or existing in called_kwargs.values()
+
 
 class TestCheckpointingBenchmarkRequiredBytes:
     """A7 destination join + sum(rank_gb) * GiB * num_checkpoints_write."""
