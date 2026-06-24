@@ -1286,3 +1286,58 @@ class TestWrapperCommandForwardsPerOptionArgs:
         bm.args.inter_option_delay = 0
         cmd0 = self._capture_first_cmd(bm, self._fake_agg())
         assert '--config' in cmd0
+
+    def _capture_all_cmds(self, bm, fake_agg_result):
+        """Capture every per-option/per-trial wrapper command built by _execute_run."""
+        executed = []
+        def fake_execute(cmd, **kwargs):
+            executed.append(cmd)
+            return ('', '', 0)
+        with patch.object(bm, '_execute_command', side_effect=fake_execute), \
+             patch.object(bm, '_interruptible_sleep'), \
+             patch.object(bm, '_aggregate_option_results', return_value=fake_agg_result), \
+             patch.object(bm, '_write_run_summary'), \
+             patch.object(bm, 'write_metadata'):
+            bm._execute_run()
+        return executed
+
+    def test_open_option3_defaults_to_70b_when_user_did_not_override(self, tmp_path):
+        """OPEN with no --model override: option 3 must still receive the
+        MLPerf-mandated llama70b model from WORKLOAD_PARAMS[3]. Closes the
+        gap between _build_option_kvcache_args (covered) and the actual
+        wrapper command (was uncovered)."""
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.mode = 'open'
+        bm.args.trials = 1
+        bm.args.inter_option_delay = 0
+        # Remove the fixture's model/num-users defaults so the fallback path
+        # in _build_option_kvcache_args is exercised — this mirrors the case
+        # where the OPEN user invoked the run without those flags.
+        for attr in ('model', 'num_users'):
+            if hasattr(bm.args, attr):
+                delattr(bm.args, attr)
+        cmds = self._capture_all_cmds(bm, self._fake_agg())
+        assert len(cmds) == 3, f"Expected 3 commands (one per option), got {len(cmds)}"
+        # cmds[0] is option 1, cmds[1] is option 2, cmds[2] is option 3
+        assert '--model llama3.1-8b' in cmds[0]
+        assert '--num-users 200' in cmds[0]
+        assert '--model llama3.1-8b' in cmds[1]
+        assert '--num-users 100' in cmds[1]
+        assert '--model llama3.1-70b-instruct' in cmds[2]
+        assert '--num-users 70' in cmds[2]
+
+    def test_open_user_config_path_supersedes_wrapper_default(self, tmp_path):
+        """OPEN: when the user provides --config /custom/path.yaml, mlpstorage
+        forwards that exact path to the wrapper instead of the kv-cache.py
+        adjacent default. (CLOSED rejects --config — covered separately.)"""
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.mode = 'open'
+        bm.args.config = '/custom/path/user.yaml'
+        bm.args.trials = 1
+        bm.args.inter_option_delay = 0
+        cmd0 = self._capture_first_cmd(bm, self._fake_agg())
+        assert '--config /custom/path/user.yaml' in cmd0, \
+            f"User config path missing from cmd: {cmd0}"
+        # And the wrapper-adjacent default must NOT also be present.
+        assert 'kv_cache_benchmark/config.yaml' not in cmd0, \
+            f"Default config path leaked into cmd alongside user override: {cmd0}"
