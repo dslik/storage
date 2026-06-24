@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 5 Plan 03 (CAP-01 capacity gate) complete — check_capacity_4field + Benchmark._pre_execution_gate template + 4 subclass overrides; 29 unit tests green, 401 Phase 2/3/4 regression tests green"
-last_updated: "2026-06-24T03:48:04Z"
-last_activity: 2026-06-24 -- Phase 05 Plan 03 (CAP-01) complete
+stopped_at: "Phase 5 Plan 02 (LIFE-02/03/04 wiring) complete — SystemDriftError + SystemDescriptionParseError + parse_on_disk_systemname_yaml + load-diff-raise FileExistsError branch; 17 new wiring tests + 19 new errors tests + 3 stale Phase-2 tests rewritten; 466 Phase 2/3/4/5 regression tests green"
+last_updated: "2026-06-24T04:00:00Z"
+last_activity: 2026-06-24 -- Phase 05 Plan 02 (LIFE-02/03/04 wiring) complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 26
-  completed_plans: 23
-  percent: 88
+  completed_plans: 24
+  percent: 92
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-06-18)
 ## Current Position
 
 Phase: 05 (logical-diff-lifecycle-capacity-gate) — EXECUTING
-Plan: 3 of 5 (05-03 CAP-01 complete; 05-02 LIFE-02 wiring + 05-04 CAP-02 + 05-05 integration tests still ahead)
+Plan: 4 of 5 (05-01 diff core + 05-02 LIFE-02/03/04 wiring + 05-03 CAP-01 capacity gate all complete; 05-04 CAP-02 shared-FS probe + 05-05 integration tests still ahead)
 Status: Ready to execute
-Last activity: 2026-06-24 -- Phase 05 Plan 03 (CAP-01) complete
+Last activity: 2026-06-24 -- Phase 05 Plan 02 (LIFE-02/03/04 wiring) complete
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
@@ -39,9 +39,9 @@ Progress (Phase 4): [██████████] 100% (5/5 plans complete; P
 
 **Velocity:**
 
-- Total plans completed: 33
+- Total plans completed: 34
 - Average duration: ~25 min
-- Total execution time: ~375 min
+- Total execution time: ~387 min
 
 **By Phase:**
 
@@ -61,6 +61,7 @@ Progress (Phase 4): [██████████] 100% (5/5 plans complete; P
 *Updated after each plan completion*
 | Phase 05 P01 | 5 | 2 tasks | 2 files |
 | Phase 05 P03 | 8 | 2 tasks | 6 files (2 created + 4 modified) |
+| Phase 05 P02 | 12 | 2 tasks | 4 files (1 created + 3 modified) |
 
 ## Accumulated Context
 
@@ -168,6 +169,11 @@ Recent decisions affecting current work:
 - Execute 05-03 surprise: PLAN's downstream `awk '...write_systemname_yaml... exit 0...' END{exit 1}` lock has a known awk-quirk — `exit 0` in a body still triggers the END block which then `exit 1`s. Semantic intent is fully satisfied (call at base.py:1074, write at base.py:1082, 8 lines apart) and verified via corrected `awk '/_pre_execution_gate\(\)/{a=NR} /write_systemname_yaml/{b=NR; if(a && b>a && b<a+20){found=1; exit}} END{exit !found}'` which exits 0. PLAN's gate is buggy, not the implementation. Logged for future verifiers.
 - Execute 05-03 surprise: PLAN's `grep -c 'check_disk_space' mlpstorage_py/benchmarks/capacity_gate.py returns 0` success criterion returns 2 — both matches are docstring references explaining the deliberate divergence per D-45 (NOT actual function calls). Semantic intent (no calls to validation_helpers.check_disk_space) is fully satisfied. Matches the same PLAN-grep-vs-AST divergence pattern explicitly documented in 02-02/02-03/03-02 SUMMARYs (educational docstring mentions tolerated).
 - Execute 05-03 process: NO `git stash` used. Two-commit RED/GREEN cadence preserved cleanly per task: 22422db (RED-1) → 88633d6 (GREEN-1) → 89ee08b (RED-2) → 2f0243b (GREEN-2). Test fixture corrections (psutil stub, MagicMock binding) folded into the same commit as the production change that requires them — same convention as Phase 4-02/04-03/04-04.
+- Execute 05-02 (LIFE-02/03/04 wiring): SystemDriftError and SystemDescriptionParseError land as siblings of FileSystemError under MLPStorageException — same shape verbatim (path attribute via `self.path = path` after super().__init__; _default_suggestion staticmethod; ErrorCode default per ErrorCode mapping). Default codes: FS_INVALID_STRUCTURE (E404) for drift; CONFIG_PARSE_ERROR (E104) for parse error. Both classes inherit main.py:262 dispatch via MLPStorageException base — no new error-handling plumbing needed.
+- Execute 05-02 (LIFE-02/03/04 wiring): SystemDescriptionParseError._default_suggestion takes a `path` argument (cosmetic UX improvement over PLAN spec): renders `rm <concrete-path> && re-run` instead of `rm <systemname.yaml>` placeholder. Substring assertion in the test still passes either way; concrete-path form is materially more actionable for operators.
+- Execute 05-02 deviation (Rule 3 - Blocking Issue): top-level `from mlpstorage_py.system_description.diff import ...` in auto_generator.py creates a circular import edge with diff.py's `from mlpstorage_py.system_description.auto_generator import _FINGERPRINT_KEYS, _resolve_fingerprint_key` (the D-38 single source of truth locked in Slice-1 SUMMARY). Fix: move the diff import INSIDE write_systemname_yaml's FileExistsError branch as a lazy import. Added module-level docstring note recording the rationale so future readers don't optimize it back. Functionally identical at runtime (sys.modules caches the import after first call; branch only entered after module fully loaded). Folded into the Task-2 GREEN commit (4cd9e3d).
+- Execute 05-02 deviation (Rule 3 - Blocking Issue): three Phase-2 tests in test_auto_generator_write.py encoded the obsolete `FileExistsError → return None unconditionally` contract — `test_no_op_if_exists` wrote garbage content expecting no-op (now raises SystemDescriptionParseError); `test_concurrent_writers_one_wins` expected pure FileExistsError no-op on loser (now loser hits LIFE-04 no-touch); `test_symlink_attack_at_target_path_returns_none` expected None (now raises SystemDescriptionParseError because the symlink target `"innocent"` is not valid YAML). Updated all three to match Phase-5 semantics while preserving original security/correctness intent (file-not-overwritten, single-winner race, symlink-target-not-overwritten). T-2-08 security guarantee explicitly re-asserted via `assert innocent.read_text() == "innocent"` after the raise. Folded into the Task-2 GREEN commit (4cd9e3d).
+- Execute 05-02 process: NO `git stash` used. Four-commit RED/GREEN cadence preserved per task: a180d13 (Task-1 RED) → 914063b (Task-1 GREEN) → 6d202a2 (Task-2 RED) → 4cd9e3d (Task-2 GREEN). Both Rule-3 fixes (lazy import + stale-test rewrites) folded into the same commit as the production change that requires them — same convention as Phase 4-02/04-03/04-04/05-03. The B-5 stub-splice symmetry copy implemented exactly per PLAN as `_splice_stub_lists(_build_outer_dict(copy.deepcopy(stanzas)))` and verified via `grep -Pzo` source-lock.
 
 ### Pending Todos
 

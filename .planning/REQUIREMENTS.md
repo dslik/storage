@@ -43,9 +43,9 @@ The collector extracts these fields from the per-host data the MPI cluster colle
 ### Lifecycle (LIFE)
 
 - [x] **LIFE-01**: At the start of `mlpstorage <mode> <benchmark> [model] run` (and only `run` — not `datagen`, since the datagen client fleet may differ from the run fleet), the benchmark builds the in-memory `systemname.yaml` representation from the MPI-collected data. The target path is `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` where `<orgname>` comes from `<results-dir>/mlperf-results.yaml` and `<systemname>` comes from `--systemname` / `MLPERF_SYSTEMNAME`. If the file does not exist, the in-memory image is written before the benchmark proceeds.
-- [ ] **LIFE-02**: When `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` already exists, the on-disk version is loaded and a *logical* diff (YAML tree diff after canonicalization, not a text diff) is computed against the in-memory image, comparing **only fields the auto-collector is responsible for filling**. User-supplied fields (the blanks from SER-02) are not part of the diff — submitters can fill them in without re-triggering drift detection. The diff is per-mode: each mode (`closed`/`open`/`whatif`) owns its own systemname.yaml at its own path, generated and checked independently. The same fleet under different modes can legitimately produce different content (e.g., environment vars filtered to mode-specific allowlists).
-- [ ] **LIFE-03**: When the LIFE-02 diff is non-empty, the benchmark fails before any DLIO/MPI execution begins, with an error that (a) lists each differing field by JSONPath-style path, (b) shows the on-disk value and the in-memory value side-by-side, and (c) instructs the submitter to either rename the existing `<systemname>.yaml` (and re-run with a different `--systemname`, generating a fresh one) or remove it and re-run.
-- [ ] **LIFE-04**: When the LIFE-02 diff is empty, the benchmark proceeds without touching the on-disk file; whatever the submitter has filled into the blanks survives across runs.
+- [x] **LIFE-02**: When `<results-dir>/<mode>/<orgname>/systems/<systemname>.yaml` already exists, the on-disk version is loaded and a *logical* diff (YAML tree diff after canonicalization, not a text diff) is computed against the in-memory image, comparing **only fields the auto-collector is responsible for filling**. User-supplied fields (the blanks from SER-02) are not part of the diff — submitters can fill them in without re-triggering drift detection. The diff is per-mode: each mode (`closed`/`open`/`whatif`) owns its own systemname.yaml at its own path, generated and checked independently. The same fleet under different modes can legitimately produce different content (e.g., environment vars filtered to mode-specific allowlists).
+- [x] **LIFE-03**: When the LIFE-02 diff is non-empty, the benchmark fails before any DLIO/MPI execution begins, with an error that (a) lists each differing field by JSONPath-style path, (b) shows the on-disk value and the in-memory value side-by-side, and (c) instructs the submitter to either rename the existing `<systemname>.yaml` (and re-run with a different `--systemname`, generating a fresh one) or remove it and re-run.
+- [x] **LIFE-04**: When the LIFE-02 diff is empty, the benchmark proceeds without touching the on-disk file; whatever the submitter has filled into the blanks survives across runs.
 
 ### Capacity (CAP)
 
@@ -108,9 +108,9 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | SER-02  | Phase 2 | Complete |
 | SER-03  | Phase 2 | Complete |
 | LIFE-01 | Phase 2 | Complete |
-| LIFE-02 | Phase 5 | Pending |
-| LIFE-03 | Phase 5 | Pending |
-| LIFE-04 | Phase 5 | Pending |
+| LIFE-02 | Phase 5 | Complete |
+| LIFE-03 | Phase 5 | Complete |
+| LIFE-04 | Phase 5 | Complete |
 | CAP-01  | Phase 5 | Pending |
 | CAP-02  | Phase 5 | Pending |
 
