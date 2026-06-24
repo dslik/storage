@@ -416,6 +416,42 @@ class TestTrainingBenchmarkRequiredBytes:
         called_args, called_kwargs = mock_calc.call_args
         assert existing in called_args or existing in called_kwargs.values()
 
+    def test_required_bytes_returns_zero_when_lazy_collect_cannot_determine_memory(self):
+        """When MPI collection fails AND args lacks client_host_memory_in_gb
+        (the realistic datagen-from-CLI flow on a dev/submitter box),
+        accumulate_host_info raises AttributeError on the CLI-fallback path.
+        The CAP-01 gate must degrade gracefully — log a clear "deferred"
+        notice and return 0 so _pre_execution_gate's check_capacity_4field
+        becomes a no-op rather than crashing the benchmark.
+
+        Parallels the A8 escape-hatch pattern in VectorDB
+        (_capacity_gate_destination returning None).
+        """
+        from mlpstorage_py.benchmarks.dlio import TrainingBenchmark
+
+        bm = MagicMock(spec=TrainingBenchmark)
+        bm.args = SimpleNamespace(data_dir="/data")  # NO client_host_memory_in_gb
+        try:
+            del bm.cluster_information
+        except AttributeError:
+            pass
+        bm.combined_params = {"dataset": {}, "reader": {}}
+        bm.logger = MagicMock()
+
+        def _raise_missing_arg(_args):
+            raise AttributeError(
+                "'Namespace' object has no attribute 'client_host_memory_in_gb'"
+            )
+        bm.accumulate_host_info = MagicMock(side_effect=_raise_missing_arg)
+
+        result = TrainingBenchmark.required_bytes_for_capacity_gate(bm)
+
+        assert result == 0
+        # A clear operator-visible notice is required (parallel to A8 escape).
+        assert bm.logger.info.called, (
+            "Operator must be told CAP-01 was deferred — silent skip violates SC#6 intent."
+        )
+
 
 class TestCheckpointingBenchmarkRequiredBytes:
     """A7 destination join + sum(rank_gb) * GiB * num_checkpoints_write."""

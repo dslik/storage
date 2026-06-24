@@ -525,10 +525,23 @@ class TrainingBenchmark(DLIOBenchmark):
         # Benchmark.run() still fires _pre_execution_gate (Phase 5 wiring).
         # The run-command path pre-collects via _collect_cluster_start, so the
         # attribute is already set and we leave it alone — never double-collect.
+        # If neither MPI collection nor the CLI-args fallback can produce a
+        # cluster_info (e.g. datagen CLI doesn't expose --client-host-memory-in-gb
+        # and the dev box lacks psutil/mpi4py), degrade gracefully: log an
+        # operator-visible deferral notice and return 0 so the CAP-01 gate
+        # becomes a no-op. This parallels the A8 escape hatch in VectorDB.
         cluster_info = getattr(self, "cluster_information", None)
         if cluster_info is None:
-            cluster_info = self.accumulate_host_info(self.args)
-            self.cluster_information = cluster_info
+            try:
+                cluster_info = self.accumulate_host_info(self.args)
+                self.cluster_information = cluster_info
+            except AttributeError as exc:
+                self.logger.info(
+                    "CAP-01 deferred: unable to determine system memory "
+                    f"({exc}). Re-run with --client-host-memory-in-gb to "
+                    "enable the disk-capacity check."
+                )
+                return 0
         _, _, total_disk_bytes = calculate_training_data_size(
             self.args,
             cluster_info,
