@@ -175,7 +175,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   7. On multi-host `datagen` and `run`, before any work begins, each participating host reports a filesystem identifier for its `--data-dir` (e.g., via `stat -f -c '%i' <data-dir>` or `os.statvfs(<data-dir>).f_fsid`); if the set of returned IDs has cardinality > 1, the operation fails fast with a message listing each host and the filesystem ID it reported, plus a one-line hint that this typically means a host has a local-disk path where a shared mount was expected.
   8. On single-host runs (`--hosts` defaults to None or has length 1), the shared-FS check is a no-op and emits nothing.
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 **Wave 1**
 
 - [x] 05-01-PLAN.md — Slice 1: Pure-function diff core (DiffEntry, DiffResult, _flatten_to_paths, diff_node_dict_lists, format_unified_diff) per D-37/D-38/D-39/D-40/D-41/D-46/D-47 + Pitfall 3(a) SER-02 blank preservation (LIFE-02 + LIFE-03)
@@ -187,7 +187,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on 05-03 for the base.py _pre_execution_gate template)*
 
-- [ ] 05-04-PLAN.md — Slice 4: SHARED_FS_PROBE_SCRIPT MPI heredoc + run_shared_fs_probe launcher + Benchmark._run_uuid init + _pre_execution_gate CAP-02 call (CAP-02; D-43/D-44/D-45/D-49 + Pitfall 4 bcast-before-barrier + Pitfall 7 per-instance uuid)
+- [x] 05-04-PLAN.md — Slice 4: SHARED_FS_PROBE_SCRIPT MPI heredoc + run_shared_fs_probe launcher + Benchmark._run_uuid init + _pre_execution_gate CAP-02 call (CAP-02; D-43/D-44/D-45/D-49 + Pitfall 4 bcast-before-barrier + Pitfall 7 per-instance uuid)
 
 **Wave 4** *(blocked on Slices 1-4)*
 
@@ -204,4 +204,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. First-Run Write of Partial systemname.yaml | 6/6 | Complete    | 2026-06-22 |
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
-| 5. Logical Diff Lifecycle + Capacity Gate | 1/5 | In Progress|  |
+| 5. Logical Diff Lifecycle + Capacity Gate | 4/5 | In Progress|  |
