@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: "Phase 5 context gathered (D-37..D-49 locked: round-trip-recompute drift, fingerprint match, unified-diff format, SystemDriftError, sentinel-file CAP-02, MPI-barrier quiesce)"
-last_updated: "2026-06-24T01:21:39.131Z"
-last_activity: 2026-06-23 -- Phase 04 verified (8/8 after inline gap-closure)
+status: executing
+stopped_at: "Phase 5 Plan 03 (CAP-01 capacity gate) complete — check_capacity_4field + Benchmark._pre_execution_gate template + 4 subclass overrides; 29 unit tests green, 401 Phase 2/3/4 regression tests green"
+last_updated: "2026-06-24T03:48:04Z"
+last_activity: 2026-06-24 -- Phase 05 Plan 03 (CAP-01) complete
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 21
-  completed_plans: 21
-  percent: 80
+  total_plans: 26
+  completed_plans: 23
+  percent: 88
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-18)
 
 **Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
-**Current focus:** Phase 04 — sysctl-environment-and-drives-coverage
+**Current focus:** Phase 05 — logical-diff-lifecycle-capacity-gate
 
 ## Current Position
 
-Phase: 04 (sysctl-environment-and-drives-coverage) — COMPLETE (vertical end-to-end SHIPPED)
-Plan: 5 of 5 (complete)
-Status: verified
-Last activity: 2026-06-23 -- Phase 04 verified (8/8 after inline gap-closure)
+Phase: 05 (logical-diff-lifecycle-capacity-gate) — EXECUTING
+Plan: 3 of 5 (05-03 CAP-01 complete; 05-02 LIFE-02 wiring + 05-04 CAP-02 + 05-05 integration tests still ahead)
+Status: Ready to execute
+Last activity: 2026-06-24 -- Phase 05 Plan 03 (CAP-01) complete
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
@@ -54,10 +54,13 @@ Progress (Phase 4): [██████████] 100% (5/5 plans complete; P
 
 **Recent Trend:**
 
-- Last 6 plans: 02-06 (~5min), 03-01 (~30min), 03-02 (~7min), 03-03 (~20min), 03-04 (~25min), 03-05 (~30min)
+- Last 6 plans: 03-05 (~30min), 04-01..05 (5 plans ~110min total ~22min/plan), 05-01 (Slice 1 diff core), 05-03 (~8min)
+- 05-03 is the tightest CAP-01 slice: two RED/GREEN cycles closed in ~8 min total, 29 unit tests + 401 regression tests all green, zero out-of-scope Rule 1/2/4 fixes needed. The two Rule 3 deviations (psutil stub at file top + MagicMock class-attribute binding) are pure test-fixture corrections folded into the natural commits. PLAN flaws (awk END block + check_disk_space docstring grep) are documented for future verifiers but did not require any production-code change.
 - Trend: 02-06 is the tightest gap-closure slice yet — single 8-line additive diff in `Benchmark.__init__` (the comment block dominates; the load-bearing change is one assignment) plus two sibling regression tests in the existing integration file. RED captured the exact production crash `AttributeError: 'VectorDBBenchmark' object has no attribute '_cluster_info_start'` at base.py:991 (relabeled by the catch-all as "Failed to write systemname.yaml: ...") that the verifier surfaced in 02-VERIFICATION.md Behavioral Spot-Checks row 5. GREEN required one test-fixture correction during iteration: the `fake_local['cpuinfo']` mock for `collect_local_system_info` needed to be a list of dicts (not a string blob) because `HostInfo.from_collected_data` consumes it via `summarize_cpuinfo(cpuinfo_list)` which does `cpuinfo_list[0].get('model name', '')`. The RED commit's test still proves the bug because the AttributeError fires BEFORE reaching the cpuinfo consumer; the fixture correction is part of the GREEN commit since it's needed for the run-subcase to fully exercise the D-8 fallback path. 14/14 integration + 2/2 hook regressions + 68/68 Phase 2 unit tests all green; awaiting /gsd-verify-phase 02 to flip LIFE-01 from BLOCKED to SATISFIED.
 
 *Updated after each plan completion*
+| Phase 05 P01 | 5 | 2 tasks | 2 files |
+| Phase 05 P03 | 8 | 2 tasks | 6 files (2 created + 4 modified) |
 
 ## Accumulated Context
 
@@ -155,6 +158,16 @@ Recent decisions affecting current work:
 - Execute 04-05: zero auto-fixed deviations and zero process deviations. RED → GREEN was clean on first run; no Rule 1/2/3 fixes needed. The mixed-type sort issue Plan 04-05's planner flagged as a possible Plan-03-04-style surprise for the per-host drives group_by_fingerprint pass did NOT materialize — `group_by_fingerprint` uses `_resolve_fingerprint_key` which for scalar dotted keys (the per-host drives fingerprint is 4 scalar string-keyed dotted strings, NOT a callable extractor tuple) calls `_get_dotted` which returns the value or `""` on miss. Mixed types only arise in the cross-host `_drive_signature` callable extractor (which uses `key=repr` since Plan 04-04), not in the per-host pass. NO `git stash` used. Suite runtime ~28s for 1849 tests (full unit suite). Same 8 pre-existing failures (out-of-scope per Rule 3 scope boundary; documented in STATE.md Deferred Items).
 - Execute 04-05 surprise: live WSL2 dev-shell end-to-end smoke confirmed the D-33 omit-key path on real `collect_local_system_info()` → `HostInfo.from_collected_data` → `node_dict_from_host` → `_splice_stub_lists` → on-disk YAML chain. `data['sysctl']` returns 134 entries (Plan 04-01 allowlist matches flow through), `data['environment']` returns 0 entries (no AWS_*/MLPERF_*/NCCL_* set in dev shell — universal D-2 empty-list path), `data['drives']` returns 0 entries (Plan 04-03 collector returns [] on WSL2 because every TRAN is null and D-31 filter drops all rows). The on-disk YAML at `/tmp/.../sys-v1.yaml` has client0 keys = {chassis, environment, friendly_description, networking, operating_system, quantity, sysctl} — NO drives key. ROADMAP SC #5 contract live-confirmed at the YAML level, not just via mocked integration tests.
 - Execute 04-05 process: NO `git stash` used. Read-only inspection only via the Read tool against committed files. Two-commit RED/GREEN cadence preserved cleanly (dc3ab89 RED + 840cbfe GREEN). Test contract updates for the Phase-4 7-key emit set folded into RED so GREEN remained purely additive on production code (same convention as Plan 03-05 + Plan 04-04). Phase 4 vertical end-to-end COMPLETE — Phase 4 status now `100% (5/5 plans)` and awaiting `/gsd-verify-phase 04` then `/gsd-transition` to advance to Phase 5.
+- [Phase ?]: Execute 05-01: Pure-function diff core shipped — DiffEntry frozen dataclass, DiffResult, _flatten_to_paths generator, _compute_fingerprint reusing Phase-4 _FINGERPRINT_KEYS for D-38 identity, diff_node_dict_lists with SER-02 Pitfall 3(a) skip (mem_v=='' AND disk_v present-and-non-empty), and format_unified_diff with --- / +++ / @@ <JSONPath> @@ / -/+ / Remediation block.
+- [Phase ?]: Execute 05-01 deviation (Rule 1 - Bug): D-41 truncation regression caught during GREEN — PLAN's verbatim f-string used repr() which escapes literal tabs in sysctl leaves as backslash-t. Fix: _render_fingerprint helper walks the tuple recursively and emits leaves via plain str(). PLAN's <action> block explicitly anticipated this fix. Folded into GREEN commit fd011ff.
+- [Phase ?]: Execute 05-01: SER-02 Pitfall 3(a) direction-lock regression test (test_in_memory_NONEMPTY_disk_filled_with_different_value_IS_diff) locks asymmetric skip semantics — direction (a) means 'skip when in-memory IS empty AND disk has non-empty filled value', NOT 'always skip when disk filled'. Direction (b) MUST surface as drift.
+- [Phase ?]: Execute 05-01 process: NO git stash used. Two-commit RED/GREEN cadence preserved cleanly (810bc15 RED + fd011ff GREEN); git diff between commits on tests/unit/test_diff.py returns empty. Phase 5 Slice 1 public API now LOCKED for Slice 2 (Plan 05-02) consumption.
+- Execute 05-03: CAP-01 capacity gate shipped — new module `mlpstorage_py/benchmarks/capacity_gate.py` with `check_capacity_4field(destination, required_bytes, logger=None) -> None` (parent-walk + os.statvfs + locked four-field message body: available_bytes/required_bytes/deficit). Deliberately does NOT call `validation_helpers.check_disk_space` because the message format diverges per D-45 + 05-RESEARCH wrap-vs-augment. Benchmark base class grows two abstract methods + `_pre_execution_gate()` template (with A8 None-destination escape hatch logging "CAP-01 skipped" at INFO) + ONE new call line in `Benchmark.run()` between `_collect_cluster_start()` (line 1067) and the existing `write_systemname_yaml` try/except (line 1082). Per-subclass overrides: TrainingBenchmark routes calculate_training_data_size through a NullHandler silent logger to preserve SC#6; CheckpointingBenchmark mirrors per-rank GiB math at datasize:593 without logger calls and joins (checkpoint_folder, model) per A7; VectorDBBenchmark _capacity_gate_destination ALWAYS returns None per A8 (VDB is fundamentally a remote-engine benchmark — even on --host localhost the data lives in the VDB process); KVCacheBenchmark enforces 1x floor per A6 (NOT 2x recommendation) via inline `_MODEL_CACHE_ESTIMATES` class table (NOT LLM_SIZE_BY_RANK from config.py).
+- Execute 05-03 deviation (Rule 3 - Blocking Issue): test file required psutil/pyarrow stub-at-file-top pattern (mirror of tests/integration/test_systemname_yaml_end_to_end.py:36-39) to overcome the pre-existing dev-env psutil gap documented in STATE.md Deferred Items. Folded into the RED commit (22422db). Single block, zero production-code impact.
+- Execute 05-03 deviation (Rule 3 - Blocking Issue): `MagicMock(spec=KVCacheBenchmark)` returns a MagicMock for class-attribute lookups, so `bm._MODEL_CACHE_ESTIMATES.get(model)` cascaded down to `int(MagicMock()) == 1`. Fix: bind the real class attributes onto the mock instance (`bm._MODEL_CACHE_ESTIMATES = KVCacheBenchmark._MODEL_CACHE_ESTIMATES`) in the two A6 lock tests. Folded into the GREEN commit (2f0243b) — required for the contract to validate.
+- Execute 05-03 surprise: PLAN's downstream `awk '...write_systemname_yaml... exit 0...' END{exit 1}` lock has a known awk-quirk — `exit 0` in a body still triggers the END block which then `exit 1`s. Semantic intent is fully satisfied (call at base.py:1074, write at base.py:1082, 8 lines apart) and verified via corrected `awk '/_pre_execution_gate\(\)/{a=NR} /write_systemname_yaml/{b=NR; if(a && b>a && b<a+20){found=1; exit}} END{exit !found}'` which exits 0. PLAN's gate is buggy, not the implementation. Logged for future verifiers.
+- Execute 05-03 surprise: PLAN's `grep -c 'check_disk_space' mlpstorage_py/benchmarks/capacity_gate.py returns 0` success criterion returns 2 — both matches are docstring references explaining the deliberate divergence per D-45 (NOT actual function calls). Semantic intent (no calls to validation_helpers.check_disk_space) is fully satisfied. Matches the same PLAN-grep-vs-AST divergence pattern explicitly documented in 02-02/02-03/03-02 SUMMARYs (educational docstring mentions tolerated).
+- Execute 05-03 process: NO `git stash` used. Two-commit RED/GREEN cadence preserved cleanly per task: 22422db (RED-1) → 88633d6 (GREEN-1) → 89ee08b (RED-2) → 2f0243b (GREEN-2). Test fixture corrections (psutil stub, MagicMock binding) folded into the same commit as the production change that requires them — same convention as Phase 4-02/04-03/04-04.
 
 ### Pending Todos
 
@@ -180,10 +193,11 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T00:22:17.135Z
-Stopped at: Phase 5 context gathered (D-37..D-49 locked: round-trip-recompute drift, fingerprint match, unified-diff format, SystemDriftError, sentinel-file CAP-02, MPI-barrier quiesce)
-Resume file: .planning/phases/05-logical-diff-lifecycle-capacity-gate/05-CONTEXT.md
+Last session: 2026-06-24T03:48:04Z
+Stopped at: Phase 5 Plan 03 (CAP-01 capacity gate) complete — capacity_gate.py + Benchmark._pre_execution_gate + 4 subclass overrides; 29 unit tests + 401 regression tests green
+Resume file: .planning/phases/05-logical-diff-lifecycle-capacity-gate/05-03-SUMMARY.md
 Next-session options:
+  (z) Continue Phase 5: `/gsd-execute-phase 05` — execute the remaining wave-2 plan 05-02 (LIFE-02 SystemDriftError + diff-and-raise on re-write), then wave-3 plan 05-04 (CAP-02 shared-FS probe — builds on the `_pre_execution_gate` body this plan landed), then wave-4 plan 05-05 (end-to-end integration tests).
   (a) Verify Phase 4: `/gsd-verify-phase 04` — flip Phase 4 status from `executing` to `verified`. Standard Phase 2/3-style verification: re-run the full Phase 4 target slice (`tests/unit/test_cluster_collector.py tests/unit/test_auto_generator.py tests/integration/test_systemname_yaml_end_to_end.py`), check ROADMAP SC #1-5 coverage, generate 04-VERIFICATION.md.
   (b) Transition Phase 4 → Phase 5: `/gsd-transition` — advance to Phase 5 (LIFE-02 logical-diff lifecycle + CAP-01 capacity gate + CAP-02 shared-filesystem verification per ROADMAP.md).
   (c) Resume Phase 3 hardware UAT on a real server: `/gsd-verify-work 3` — Test 1 is entry point; Test 4 can be marked pass-by-evidence from 03-UAT.md frontmatter immediately. Can be batched alongside Phase 4 verification on the same hardware.

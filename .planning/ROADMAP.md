@@ -175,15 +175,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   7. On multi-host `datagen` and `run`, before any work begins, each participating host reports a filesystem identifier for its `--data-dir` (e.g., via `stat -f -c '%i' <data-dir>` or `os.statvfs(<data-dir>).f_fsid`); if the set of returned IDs has cardinality > 1, the operation fails fast with a message listing each host and the filesystem ID it reported, plus a one-line hint that this typically means a host has a local-disk path where a shared mount was expected.
   8. On single-host runs (`--hosts` defaults to None or has length 1), the shared-FS check is a no-op and emits nothing.
 
-**Plans:** 5 plans
+**Plans:** 2/5 plans executed
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — Slice 1: Pure-function diff core (DiffEntry, DiffResult, _flatten_to_paths, diff_node_dict_lists, format_unified_diff) per D-37/D-38/D-39/D-40/D-41/D-46/D-47 + Pitfall 3(a) SER-02 blank preservation (LIFE-02 + LIFE-03)
+- [x] 05-01-PLAN.md — Slice 1: Pure-function diff core (DiffEntry, DiffResult, _flatten_to_paths, diff_node_dict_lists, format_unified_diff) per D-37/D-38/D-39/D-40/D-41/D-46/D-47 + Pitfall 3(a) SER-02 blank preservation (LIFE-02 + LIFE-03)
 
 **Wave 2** *(blocked on Wave 1 for 05-02; 05-03 is independent)*
 
 - [ ] 05-02-PLAN.md — Slice 2: SystemDriftError + SystemDescriptionParseError exception classes + parse_on_disk_systemname_yaml + replace FileExistsError no-op in write_systemname_yaml with load-diff-raise branch (LIFE-02 + LIFE-03 + LIFE-04 wiring; D-42 + D-48)
-- [ ] 05-03-PLAN.md — Slice 3: check_capacity_4field wrapper + Benchmark._pre_execution_gate template + required_bytes_for_capacity_gate + _capacity_gate_destination on Training/Checkpointing/VectorDB/KVCache subclasses (CAP-01; A6/A7/A8)
+- [x] 05-03-PLAN.md — Slice 3: check_capacity_4field wrapper + Benchmark._pre_execution_gate template + required_bytes_for_capacity_gate + _capacity_gate_destination on Training/Checkpointing/VectorDB/KVCache subclasses (CAP-01; A6/A7/A8)
 
 **Wave 3** *(blocked on 05-03 for the base.py _pre_execution_gate template)*
 
@@ -204,4 +204,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. First-Run Write of Partial systemname.yaml | 6/6 | Complete    | 2026-06-22 |
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
-| 5. Logical Diff Lifecycle + Capacity Gate | 0/5 | Planning complete | - |
+| 5. Logical Diff Lifecycle + Capacity Gate | 1/5 | In Progress|  |
