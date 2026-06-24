@@ -67,7 +67,11 @@ KVCACHE_HELP_MESSAGES = {
         "OPEN submissions only — fixed at 42 in CLOSED."
     ),
     'kvcache_bin_path': "Path to kv-cache.py script. Auto-detected if not specified.",
-    'npernode': "Number of kv-cache instances per client host (ranks per node).",
+    'npernode': (
+        "Number of kv-cache instances per client host (ranks per node). "
+        "Total cluster ranks = npernode * len(hosts). Use either this or "
+        "--num-processes; if both are set they must be consistent."
+    ),
     'trials': (
         "Number of trial runs per option (default 3). "
         "OPEN submissions only — fixed at 3 in CLOSED."
@@ -378,7 +382,12 @@ def _add_kvcache_distributed_arguments(parser):
     distributed_group.add_argument(
         '--num-processes', '-np',
         type=int,
-        help="Number of MPI processes (ranks) to spawn for distributed execution."
+        help=(
+            "Total number of MPI processes (ranks) to spawn across all hosts. "
+            "Must divide evenly by --hosts count; per-host rank count is "
+            "derived as num_processes // len(hosts). Use either this or "
+            "--npernode; if both are set they must be consistent."
+        )
     )
 
     # Add host arguments from common_args
