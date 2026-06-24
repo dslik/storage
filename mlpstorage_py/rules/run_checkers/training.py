@@ -106,14 +106,29 @@ class TrainingRunRulesChecker(RunRulesChecker):
         configured_num_files = int(dataset_params['num_files_train'])
         reader_params = self.benchmark_run.parameters.get('reader', {})
 
-        required_num_files, _, _ = calculate_training_data_size(
-            None,
-            self.benchmark_run.system_info,
-            dataset_params,
-            reader_params,
-            self.logger,
-            self.benchmark_run.num_processes
-        )
+        try:
+            required_num_files, _, _ = calculate_training_data_size(
+                None,
+                self.benchmark_run.system_info,
+                dataset_params,
+                reader_params,
+                self.logger,
+                self.benchmark_run.num_processes
+            )
+        except ValueError as e:
+            # Loaded-from-disk runs (reportgen) may lack cluster_information,
+            # so the 5×memory rule cannot be evaluated. Skip the check rather
+            # than crashing the entire verification (which previously marked
+            # every run INVALID via an AttributeError caught by the verifier
+            # framework). (#503)
+            if "cluster_information" in str(e):
+                self.logger.warning(
+                    f"Skipping check_num_files_train: {e}. "
+                    f"The check requires live cluster info; this run was "
+                    f"loaded from on-disk metadata that does not preserve it."
+                )
+                return None
+            raise
 
         if configured_num_files < required_num_files:
             return Issue(

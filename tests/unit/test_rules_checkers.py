@@ -335,6 +335,37 @@ class TestTrainingRunRulesChecker:
         assert issue.validation == PARAM_VALIDATION.INVALID
         assert "Missing num_files_train" in issue.message
 
+    def test_check_num_files_train_skips_when_system_info_missing(self, mock_logger):
+        """Issue #503 bug 1: when the run was loaded from on-disk metadata
+        without cluster_information (system_info is None), check_num_files_train
+        must skip the check (return None) and log a warning rather than crash
+        with AttributeError. Before the fix, the AttributeError was caught by
+        the verifier's per-check wrapper and the entire run was marked INVALID."""
+        data = BenchmarkRunData(
+            benchmark_type=BENCHMARK_TYPES.training,
+            model="unet3d",
+            command="run",
+            run_datetime="20250111_143022",
+            num_processes=8,
+            parameters={"dataset": {"num_files_train": 1000}},
+            override_parameters={},
+        )
+        run = BenchmarkRun.from_data(data, mock_logger)
+        # BenchmarkRunData defaults system_info to None — exactly the state
+        # a reportgen-loaded run lands in when on-disk metadata lacks
+        # cluster_information, so no explicit assignment is needed.
+        assert run.system_info is None, "Test precondition: system_info must be None"
+        checker = TrainingRunRulesChecker(run, logger=mock_logger)
+
+        issue = checker.check_num_files_train()
+
+        assert issue is None, "Check must skip cleanly, not return an Issue"
+        # Confirm we surfaced the skip to the user via the logger
+        warnings = [c for c in mock_logger.method_calls if c[0] == 'warning']
+        assert any('check_num_files_train' in str(c) for c in warnings), (
+            f"Expected a warning naming check_num_files_train; got: {warnings}"
+        )
+
     def test_check_allowed_params_closed_param(self, mock_logger):
         """check_allowed_params returns CLOSED for allowed closed params."""
         data = BenchmarkRunData(
