@@ -150,19 +150,36 @@ def test_path_parent_mkdir_creates_systems_dir(args, cluster_info, tmp_path):
 
 
 def test_no_op_if_exists(args, cluster_info, target_path):
-    """Pre-existing file → return None, file content unchanged, logger.debug called."""
-    target_path.parent.mkdir(parents=True)
-    target_path.write_text("existing: content\n")
+    """Pre-existing valid + matching file → LIFE-04 no-touch path: return None,
+    file content unchanged, logger.debug called.
+
+    Phase-5 NOTE: the original Phase-2 test wrote garbage content (`existing:
+    content\\n`) and expected the FileExistsError no-op to return None
+    unconditionally. Phase 5 LIFE-02/03 replaces that no-op with a load-diff
+    branch — garbage content now correctly raises
+    `SystemDescriptionParseError`. The semantic intent of this test (file is
+    not overwritten when it already exists matching the in-memory image) is
+    preserved by switching the pre-existing content to a byte-equal copy of
+    what the writer would emit. This is the LIFE-04 no-touch contract.
+    """
+    # Write the file once via the writer so the on-disk content matches the
+    # in-memory image byte-for-byte.
+    write_systemname_yaml(args, cluster_info, MagicMock())
+    pre_existing_text = target_path.read_text()
 
     logger = MagicMock()
     returned = write_systemname_yaml(args, cluster_info, logger)
 
     assert returned is None
-    assert target_path.read_text() == "existing: content\n"
-    # logger.debug fired at least once with a message about the existing file.
+    assert target_path.read_text() == pre_existing_text  # no overwrite
+    # logger.debug fired with a "no-touch" or "matches" message per LIFE-04.
     assert logger.debug.called
     debug_messages = " ".join(str(c) for c in logger.debug.call_args_list)
-    assert "exists" in debug_messages.lower() or "no-op" in debug_messages.lower()
+    assert (
+        "no-touch" in debug_messages.lower()
+        or "matches" in debug_messages.lower()
+        or "life-04" in debug_messages.lower()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +188,20 @@ def test_no_op_if_exists(args, cluster_info, target_path):
 
 
 def test_concurrent_writers_one_wins(args, cluster_info, target_path):
-    """T-2-01: two simultaneous writers → exactly one wins, the other returns None.
+    """T-2-01: two simultaneous writers → exactly one wins, the other hits the
+    LIFE-04 no-touch path (returns None) since both write IDENTICAL content.
 
     Uses `threading.Barrier(2)` to synchronize both threads' entry into
     `os.open(..., O_CREAT|O_EXCL|O_WRONLY)` so the kernel-level race is
     actually exercised. Per RESEARCH.md Code Example lines 676-700.
+
+    Phase-5 NOTE: the Phase-2 contract was "the loser returns None
+    unconditionally because FileExistsError → no-op". Phase 5 LIFE-02 changes
+    the loser's path to load-then-diff. Because both threads compute the same
+    in-memory image from the same `cluster_info`, the diff is empty → LIFE-04
+    no-touch → loser still returns None. The winner/loser distinction
+    survives but the loser now exercises the diff branch instead of the
+    pure no-op.
     """
     barrier = threading.Barrier(2)
     results: list = []
@@ -479,7 +505,17 @@ def test_symlink_attack_at_target_path_returns_none(args, cluster_info, tmp_path
     Verifies POSIX guarantee that O_CREAT|O_EXCL fails if the path resolves to
     anything pre-existing — including a symlink. The symlink's target file
     MUST remain unchanged.
+
+    Phase-5 NOTE: the Phase-2 contract was "returns None on symlink-attack".
+    Phase 5 LIFE-02 routes the FileExistsError handler through the load-diff
+    branch. The symlink resolves to `innocent.txt` whose content (`"innocent"`)
+    is structurally-invalid as a systemname.yaml → the new branch raises
+    `SystemDescriptionParseError`. The T-2-08 security guarantee (the symlink
+    target is NOT overwritten) still holds — the parse error fires BEFORE any
+    write attempt — but the test now asserts the new exception shape.
     """
+    from mlpstorage_py.errors import SystemDescriptionParseError
+
     innocent = tmp_path / "innocent.txt"
     innocent.write_text("innocent")
 
@@ -488,10 +524,11 @@ def test_symlink_attack_at_target_path_returns_none(args, cluster_info, tmp_path
     target = target_dir / "sys-v1.yaml"
     os.symlink(str(innocent), str(target))
 
-    returned = write_systemname_yaml(args, cluster_info, MagicMock())
+    with pytest.raises(SystemDescriptionParseError):
+        write_systemname_yaml(args, cluster_info, MagicMock())
 
-    assert returned is None
-    # The symlink target is unchanged.
+    # T-2-08 security guarantee: the symlink target is NOT overwritten — the
+    # parse-error path fires after a read but BEFORE any write.
     assert innocent.read_text() == "innocent"
 
 

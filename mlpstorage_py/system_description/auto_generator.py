@@ -67,7 +67,19 @@ from typing import Any, Final, Optional
 import yaml
 
 from mlpstorage_py.cluster_collector import collect_local_system_info
+from mlpstorage_py.errors import SystemDescriptionParseError, SystemDriftError
 from mlpstorage_py.rules.models import HostInfo
+
+# NOTE: `mlpstorage_py.system_description.diff` is imported at function level
+# inside `write_systemname_yaml`'s FileExistsError branch to break the
+# circular-import edge — diff.py imports `_FINGERPRINT_KEYS` and
+# `_resolve_fingerprint_key` from THIS module (single source of truth for the
+# D-38 identity rule per the Slice-1 SUMMARY), so a top-level
+# `from .diff import ...` here would cause a partially-initialized-module
+# error at import time. The lazy import is safe: the FileExistsError branch
+# is only entered after the module is fully imported, and Python caches the
+# `sys.modules` entry on the first sub-import so subsequent calls have zero
+# overhead.
 
 
 def _network_signature(networking: list) -> tuple:
@@ -654,6 +666,83 @@ def _resolve_host_info_list(cluster_info) -> list:
     return [HostInfo.from_collected_data(local_data)]
 
 
+def parse_on_disk_systemname_yaml(path: Path) -> list[dict]:
+    """Load and structurally validate an on-disk systemname.yaml.
+
+    Phase 5 / D-48: returns the `system_under_test.clients` list as a list of
+    plain dicts (the same shape `node_dict_from_host` + `group_by_fingerprint`
+    produces in-memory). Raises `SystemDescriptionParseError` on any of:
+
+    - `yaml.YAMLError` from `yaml.safe_load` (structurally-invalid YAML).
+      The error message includes `(line N, column M)` when the parser exposes
+      a `problem_mark`.
+    - Loaded data is not a dict, or missing `system_under_test`.
+    - `system_under_test` is not a dict, or missing `clients`.
+    - `clients` is not a list.
+
+    `yaml.safe_load` (NOT `yaml.load`) is used per T-5-02-01: only basic types,
+    no arbitrary Python object construction. Project-wide convention; see
+    `schema_validator.py:487` for the canonical reference.
+
+    OSError from `path.read_text` propagates per D-9: this function is only
+    reached after `os.open(..., O_CREAT|O_EXCL|O_WRONLY)` raised
+    FileExistsError, which proves the file existed at that moment. A transient
+    OSError between O_CREAT|O_EXCL failure and read_text is a different kind
+    of filesystem error and should NOT be swallowed by the universal
+    collection-failure rule.
+
+    Args:
+        path: pathlib.Path to the on-disk systemname.yaml.
+
+    Returns:
+        list of client stanza dicts ready to feed into
+        `diff_node_dict_lists(on_disk=..., in_memory=...)`.
+
+    Raises:
+        SystemDescriptionParseError: structural-validation failure.
+        OSError: propagates from read_text per D-9.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            location = f" (line {mark.line + 1}, column {mark.column + 1})"
+        else:
+            location = ""
+        raise SystemDescriptionParseError(
+            f"systemname.yaml at {path}{location} is malformed: {exc}\n"
+            f"Remediation: rm {path} && re-run",
+            path=str(path),
+        ) from exc
+
+    if not isinstance(data, dict) or "system_under_test" not in data:
+        raise SystemDescriptionParseError(
+            f"systemname.yaml at {path} missing top-level system_under_test key.\n"
+            f"Remediation: rm {path} && re-run",
+            path=str(path),
+        )
+
+    sut = data["system_under_test"]
+    if not isinstance(sut, dict) or "clients" not in sut:
+        raise SystemDescriptionParseError(
+            f"systemname.yaml at {path} missing system_under_test.clients key.\n"
+            f"Remediation: rm {path} && re-run",
+            path=str(path),
+        )
+
+    clients = sut["clients"]
+    if not isinstance(clients, list):
+        raise SystemDescriptionParseError(
+            f"systemname.yaml at {path} system_under_test.clients is not a list.\n"
+            f"Remediation: rm {path} && re-run",
+            path=str(path),
+        )
+
+    return clients
+
+
 def write_systemname_yaml(args, cluster_info, logger) -> Optional[str]:
     """Materialize systemname.yaml at the Rules.md §2.1.8 canonical path.
 
@@ -754,11 +843,53 @@ def write_systemname_yaml(args, cluster_info, logger) -> Optional[str]:
             _SYSTEMNAME_YAML_MODE,
         )
     except FileExistsError:
-        logger.debug(
-            f"systemname.yaml already exists at {systemname_path}; no-op "
-            f"(Phase 5 will own diff-and-fail)"
+        # Lazy import to break the auto_generator <-> diff circular edge.
+        # See module-level docstring note above for rationale.
+        from mlpstorage_py.system_description.diff import (
+            diff_node_dict_lists,
+            format_unified_diff,
         )
-        return None
+
+        # Phase 5 LIFE-02/03/04: the on-disk file already exists. Load it,
+        # diff it against the recomputed in-memory image, and raise
+        # SystemDriftError on drift (LIFE-03) or return None on no-touch
+        # (LIFE-04). Per D-37, the in-memory recompute IS the comparison
+        # subject — `stanzas` (computed above at the same path the first
+        # write took) is the canonical in-memory image.
+        on_disk_stanzas = parse_on_disk_systemname_yaml(systemname_path)
+
+        # B-5 stub-splice symmetry: the on-disk YAML went through both
+        # _build_outer_dict AND _splice_stub_lists during the original write,
+        # so its clients list carries the D-3 networking stub splice and the
+        # D-33 drives-omit/passthrough treatment. The raw `stanzas` variable
+        # above is BEFORE those passes. Build a parallel in-memory copy that
+        # passes through the same pipeline so the diff compares apples-to-
+        # apples; otherwise an identical re-run would surface a spurious
+        # diff between (in-memory pre-splice `drives: []`) and (on-disk
+        # post-splice drives-omitted). The deepcopy is cheap: same data, no
+        # I/O, no Pydantic construction.
+        in_memory_dump = _splice_stub_lists(_build_outer_dict(copy.deepcopy(stanzas)))
+        in_memory_stanzas = in_memory_dump["system_under_test"]["clients"]
+
+        diff_result = diff_node_dict_lists(on_disk_stanzas, in_memory_stanzas)
+        if diff_result.empty:
+            # LIFE-04: no drift; preserve submitter hand-fills; do NOT touch
+            # the file. This is the no-op path that LIFE-04 SC#1 requires.
+            logger.debug(
+                f"systemname.yaml at {systemname_path} matches in-memory image; "
+                f"no-touch (LIFE-04)"
+            )
+            return None
+
+        # LIFE-03: drift detected. Format the unified-diff report, log it at
+        # error level (operator sees it in the run log even if the exception
+        # is later swallowed), and surface SystemDriftError so main.py's
+        # top-level MLPStorageException handler (main.py:262) routes through
+        # the error-footer formatter with a non-zero exit BEFORE DLIO is
+        # launched (the LIFE-03 fail-before-DLIO contract).
+        report = format_unified_diff(diff_result, str(systemname_path))
+        logger.error(report)
+        raise SystemDriftError(report, path=str(systemname_path))
 
     # `os.fdopen` adopts the fd; closing the file object closes the fd.
     # D-10 emit kwargs locked here.
