@@ -40,6 +40,7 @@ import signal
 import sys
 import time
 import types
+import uuid
 from argparse import Namespace
 from typing import Tuple, Dict, Any, List, Optional, Callable, Set, TYPE_CHECKING
 
@@ -62,6 +63,7 @@ from mlpstorage_py.cluster_collector import (
     SSHClusterCollector,
     TimeSeriesCollector,
     MultiHostTimeSeriesCollector,
+    run_shared_fs_probe,
 )
 from mlpstorage_py.progress import create_stage_progress, progress_context
 from mlpstorage_py.system_description.auto_generator import write_systemname_yaml
@@ -154,6 +156,13 @@ class Benchmark(BenchmarkInterface, abc.ABC):
         # fallback at auto_generator.py:374-378 takes over via
         # _resolve_host_info_list. See CR-01 in 02-REVIEW.md.
         self._cluster_info_start = None
+        # D-43: per-instance sentinel suffix for CAP-02 shared-FS probe
+        # (Pitfall 7 collision protection). Generated once per Benchmark
+        # instance — NOT per-import or per-module — so concurrent runs
+        # against the same data_dir cannot collide on the sentinel path.
+        # W-5 launcher contract: this value is passed verbatim to
+        # run_shared_fs_probe(...) → mpirun argv[2]; nothing mutates it.
+        self._run_uuid = uuid.uuid4().hex
         self._validator = validator
 
         self.benchmark_run_verifier = None
@@ -996,7 +1005,26 @@ class Benchmark(BenchmarkInterface, abc.ABC):
             return
         required_bytes = self.required_bytes_for_capacity_gate()
         check_capacity_4field(destination, required_bytes, self.logger)
-        # Slice 4 / CAP-02: shared-FS verification appended here in plan 05-04.
+        # ------------------------------------------------------------------
+        # Slice 4 / CAP-02: shared-FS verification (Phase 5 / Plan 05-04).
+        # ------------------------------------------------------------------
+        # On multi-host runs, verify the data-dir is the SAME shared
+        # filesystem on every participating host (REQUIREMENTS.md CAP-02).
+        # The probe is a silent no-op on single-host runs (SC#8). The
+        # `self._run_uuid` is the Pitfall-7 per-instance UUID, generated
+        # once in __init__ and passed through to mpirun argv verbatim
+        # (W-5 launcher pass-through contract). The destination reused
+        # here is the same path CAP-01 just statvfs'd.
+        hosts = getattr(self.args, 'hosts', None) or []
+        run_shared_fs_probe(
+            destination=destination,
+            hosts=hosts,
+            run_uuid=self._run_uuid,
+            logger=self.logger,
+            mpi_bin=getattr(self.args, 'mpi_bin', None),
+            allow_run_as_root=getattr(self.args, 'allow_run_as_root', False),
+            ssh_username=getattr(self.args, 'ssh_username', None),
+        )
 
     @abc.abstractmethod
     def _run(self) -> int:

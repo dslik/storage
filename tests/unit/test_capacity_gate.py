@@ -134,11 +134,20 @@ def _make_mock_benchmark(destination, required_bytes, logger=None):
     surface _pre_execution_gate touches. We bypass __init__ because the
     full Benchmark.__init__ has many side effects (run-dir reservation,
     code-image capture, etc.) unrelated to the gate's contract.
+
+    Plan 05-04 (CAP-02 wiring) note: _pre_execution_gate now also reads
+    self.args.hosts and self._run_uuid to invoke run_shared_fs_probe.
+    We provide an empty hosts list by default so the probe takes its
+    SC#8 single-host no-op short-circuit; tests that care about the
+    CAP-02 path can override args.hosts and patch run_shared_fs_probe.
     """
     bm = MagicMock(spec=Benchmark)
     bm._capacity_gate_destination = MagicMock(return_value=destination)
     bm.required_bytes_for_capacity_gate = MagicMock(return_value=required_bytes)
     bm.logger = logger or MagicMock()
+    bm.args = SimpleNamespace(hosts=[], mpi_bin=None,
+                              allow_run_as_root=False, ssh_username=None)
+    bm._run_uuid = "test-uuid-mock"
     # Bind the real method to the mock so it actually executes.
     bm._pre_execution_gate = Benchmark._pre_execution_gate.__get__(bm, MagicMock)
     return bm
