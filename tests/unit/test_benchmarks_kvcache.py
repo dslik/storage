@@ -727,7 +727,7 @@ class TestExecuteRun:
     - _execute_command called 3 times per run (once per option) with trials=1 (DIST-02, DIST-04)
     - mpirun command contains '--mca orte_abort_on_non_zero_status 0' (DIST-08)
     - mpirun command contains '--npernode N' (DIST-03)
-    - wrapper receives --option, --seed, --base-output-dir, --cache-dir (DIST-07)
+    - wrapper receives --seed-base, --rank-output-base, --rank-cache-base (DIST-07)
     - per-option/trial dirs created with correct naming (option_{N}/trial_{T}/)
     - _interruptible_sleep called 2 times (after options 1 and 2; not after 3) (DIST-05)
     - _aggregate_option_results called 3 times when what_if=False
@@ -879,7 +879,7 @@ class TestExecuteRun:
         assert option1_trial0.exists(), f"Expected {option1_trial0} to exist"
 
     def test_option_trial_dirs_in_command_path(self, bm, fake_agg_result):
-        """Command must reference option_N/trial_T subdirectory in --base-output-dir."""
+        """Command must reference option_N/trial_T subdirectory in --rank-output-base."""
         bm.args.trials = 1
         bm.args.inter_option_delay = 0
         executed_cmds = []
