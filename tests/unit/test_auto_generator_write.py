@@ -540,3 +540,354 @@ def test_writer_does_not_call_schema_validator_validate_file(args, cluster_info)
 def test_systemname_yaml_mode_is_0o644():
     """`_SYSTEMNAME_YAML_MODE` mirrors `sentinel.py:_SENTINEL_MODE` (LAY-03 parity)."""
     assert _SYSTEMNAME_YAML_MODE == 0o644
+
+
+# ===========================================================================
+# Phase 5 / Plan 05-02 — LIFE-02 / LIFE-03 / LIFE-04 wiring tests
+# ---------------------------------------------------------------------------
+# These tests exercise the new load-diff-raise branch inside
+# write_systemname_yaml that replaces the Phase-2 FileExistsError no-op. They
+# also lock parse_on_disk_systemname_yaml's structural-validation behavior on
+# malformed inputs. The fixtures (args / cluster_info / target_path / _make_host
+# / _make_cluster_info) are reused from the Phase-2 test infrastructure above.
+# ===========================================================================
+
+
+import hashlib  # noqa: E402 — placed near new test class for locality
+
+
+def _sha256(path: Path) -> str:
+    """Helper: SHA-256 of file contents for LIFE-04 byte-equality invariant."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class TestPhase5DriftWiring:
+    """LIFE-02 (load + diff), LIFE-03 (raise SystemDriftError before DLIO),
+    LIFE-04 (no-touch when diff empty + submitter hand-fills survive).
+
+    Naming convention: every test starts with `test_` and lives on this class
+    so the acceptance-criteria grep (`grep -c '    def test_'`) catches all
+    new tests in one count.
+    """
+
+    # ----- LIFE-01 regression (Phase 2 behavior preserved) -----------------
+
+    def test_first_run_against_empty_dir_writes_file(self, args, cluster_info, target_path):
+        """Phase 2 LIFE-01: first call against an empty results-dir writes the file."""
+        assert not target_path.exists()
+        returned = write_systemname_yaml(args, cluster_info, MagicMock())
+        assert returned == str(target_path)
+        assert target_path.exists()
+
+    # ----- LIFE-04 no-touch path -------------------------------------------
+
+    def test_second_run_against_unchanged_fleet_no_touch_mtime_invariant(
+        self, args, cluster_info, target_path,
+    ):
+        """LIFE-04 mtime invariant: re-run against unchanged fleet leaves
+        on-disk mtime AND sha256 unchanged. SC#1 lock."""
+        write_systemname_yaml(args, cluster_info, MagicMock())
+        assert target_path.exists()
+
+        mtime_before = target_path.stat().st_mtime_ns
+        sha_before = _sha256(target_path)
+
+        # Sleep just enough so mtime changes IF the file were re-written
+        # (filesystems with second-resolution mtime would otherwise hide a touch).
+        # 1.1s is the conservative cross-FS minimum.
+        import time
+        time.sleep(1.1)
+
+        result = write_systemname_yaml(args, cluster_info, MagicMock())
+        assert result is None  # no-touch path returns None per LIFE-04
+        assert target_path.stat().st_mtime_ns == mtime_before, "mtime changed — LIFE-04 violated"
+        assert _sha256(target_path) == sha_before, "sha256 changed — LIFE-04 violated"
+
+    def test_second_run_against_unchanged_fleet_no_touch_returns_none(
+        self, args, cluster_info, target_path,
+    ):
+        """LIFE-04: the no-touch path returns None (matches Phase-2
+        FileExistsError no-op return value)."""
+        write_systemname_yaml(args, cluster_info, MagicMock())
+        result = write_systemname_yaml(args, cluster_info, MagicMock())
+        assert result is None
+
+    # ----- LIFE-03 raise-before-DLIO path ----------------------------------
+
+    def test_second_run_against_drifted_cpu_model_raises_system_drift_error(
+        self, args, cluster_info, target_path,
+    ):
+        """LIFE-03: drifted cpu_model surfaces as fingerprint orphan (since
+        cpu_model is part of _FINGERPRINT_KEYS); the SystemDriftError message
+        contains the fingerprint orphan path."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        write_systemname_yaml(args, cluster_info, MagicMock())
+
+        # Build a drifted fleet with a different cpu_model.
+        drifted = _make_cluster_info(num_hosts=3, cpu_model="Different CPU")
+        with pytest.raises(SystemDriftError) as exc_info:
+            write_systemname_yaml(args, drifted, MagicMock())
+        message = str(exc_info.value)
+        assert "clients[fingerprint=" in message, (
+            f"expected fingerprint orphan path in drift report, got:\n{message}"
+        )
+
+    def test_second_run_against_drifted_sysctl_value_raises_system_drift_error(
+        self, args, target_path,
+    ):
+        """LIFE-03: a sysctl value-drift while fingerprint is stable surfaces
+        as a leaf-level diff. NOTE: sysctl_sig is part of _FINGERPRINT_KEYS in
+        Phase 4, so changing a sysctl value would change the fingerprint and
+        produce an orphan. We test the leaf-diff path indirectly by changing
+        ONLY the hostname (which is NOT in the fingerprint) — but hostnames
+        aren't in the emitted stanza either, so the diff should be empty.
+        Instead: change the friendly_description (which IS in the emitted
+        stanza but NOT in the fingerprint) — that triggers a leaf diff with
+        @@-style path."""
+        # First run: write the file.
+        ci_run1 = _make_cluster_info(num_hosts=2)
+        write_systemname_yaml(args, ci_run1, MagicMock())
+        assert target_path.exists()
+
+        # Patch the on-disk file's friendly_description to a non-empty value
+        # so the diff has something to surface (in-memory has '' per universal
+        # collection-failure rule; SER-02 blank-preservation skip applies only
+        # in the OTHER direction so disk-filled vs. in-memory-empty surfaces
+        # nothing per Pitfall 3(a) — therefore we modify on-disk to a different
+        # *fingerprint-affecting* sysctl value instead to force a drift hit).
+        from mlpstorage_py.errors import SystemDriftError
+        on_disk = yaml.safe_load(target_path.read_text())
+        on_disk["system_under_test"]["clients"][0]["sysctl"] = [
+            {"name": "net.core.rmem_max", "value": "16777216"}
+        ]
+        target_path.write_text(yaml.safe_dump(on_disk, default_flow_style=False))
+
+        # Re-run: the in-memory side still has sysctl=[] (Phase 2 stub),
+        # so the on-disk fingerprint (which includes sysctl_sig) differs from
+        # the in-memory fingerprint → fingerprint orphan diff.
+        with pytest.raises(SystemDriftError) as exc_info:
+            write_systemname_yaml(args, ci_run1, MagicMock())
+        message = str(exc_info.value)
+        # The drift report contains either "@@ " hunks or a fingerprint orphan path.
+        assert "@@ " in message or "clients[fingerprint=" in message, (
+            f"expected drift report markers, got:\n{message}"
+        )
+
+    def test_second_run_against_quantity_change_raises_system_drift_error(
+        self, args, target_path,
+    ):
+        """D-39: changing the fleet from 2 identical hosts to 3 identical hosts
+        produces a `quantity` field diff (fingerprint stable, quantity leaf changed)."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        ci_2hosts = _make_cluster_info(num_hosts=2)
+        write_systemname_yaml(args, ci_2hosts, MagicMock())
+
+        ci_3hosts = _make_cluster_info(num_hosts=3)
+        with pytest.raises(SystemDriftError) as exc_info:
+            write_systemname_yaml(args, ci_3hosts, MagicMock())
+        message = str(exc_info.value)
+        assert "quantity" in message, (
+            f"expected 'quantity' substring in drift report, got:\n{message}"
+        )
+
+    def test_drift_error_contains_remediation_block(
+        self, args, cluster_info, target_path,
+    ):
+        """D-40: the unified-diff report ends with a Remediation block listing
+        the rename and remove options."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        write_systemname_yaml(args, cluster_info, MagicMock())
+        drifted = _make_cluster_info(num_hosts=3, cpu_model="Different CPU")
+        with pytest.raises(SystemDriftError) as exc_info:
+            write_systemname_yaml(args, drifted, MagicMock())
+        message = str(exc_info.value)
+        assert "Remediation:" in message
+        assert "Rename" in message
+        assert "Remove" in message
+
+    def test_drift_logger_error_called_with_report(
+        self, args, cluster_info, target_path,
+    ):
+        """LIFE-03: logger.error fires with the unified-diff report BEFORE the
+        SystemDriftError raise (operator sees the report in the run log even
+        if the exception is swallowed somewhere upstream)."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        write_systemname_yaml(args, cluster_info, MagicMock())
+        drifted = _make_cluster_info(num_hosts=3, cpu_model="Different CPU")
+        logger = MagicMock()
+        with pytest.raises(SystemDriftError):
+            write_systemname_yaml(args, drifted, logger)
+        assert logger.error.called, "logger.error must be called with the drift report"
+        error_messages = " ".join(str(c) for c in logger.error.call_args_list)
+        assert "--- on-disk" in error_messages
+
+    # ----- D-48 malformed YAML / structural validation ---------------------
+
+    def test_malformed_yaml_raises_system_description_parse_error(
+        self, args, cluster_info, target_path,
+    ):
+        """D-48: garbage YAML at the on-disk path surfaces SystemDescriptionParseError
+        with 'malformed' in the message — NOT SystemDriftError."""
+        from mlpstorage_py.errors import SystemDescriptionParseError
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("not: valid: yaml: : : :\n")
+
+        with pytest.raises(SystemDescriptionParseError) as exc_info:
+            write_systemname_yaml(args, cluster_info, MagicMock())
+        assert "malformed" in str(exc_info.value).lower()
+
+    def test_missing_system_under_test_raises_parse_error(
+        self, args, cluster_info, target_path,
+    ):
+        """D-48: valid YAML but missing top-level system_under_test key."""
+        from mlpstorage_py.errors import SystemDescriptionParseError
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("some_other_key:\n  foo: bar\n")
+
+        with pytest.raises(SystemDescriptionParseError) as exc_info:
+            write_systemname_yaml(args, cluster_info, MagicMock())
+        assert "system_under_test" in str(exc_info.value)
+
+    def test_missing_clients_raises_parse_error(
+        self, args, cluster_info, target_path,
+    ):
+        """D-48: valid YAML with system_under_test but no clients key."""
+        from mlpstorage_py.errors import SystemDescriptionParseError
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(
+            "system_under_test:\n  solution:\n    foo: bar\n"
+        )
+
+        with pytest.raises(SystemDescriptionParseError) as exc_info:
+            write_systemname_yaml(args, cluster_info, MagicMock())
+        assert "clients" in str(exc_info.value)
+
+    def test_clients_not_a_list_raises_parse_error(
+        self, args, cluster_info, target_path,
+    ):
+        """D-48: clients key present but not a list."""
+        from mlpstorage_py.errors import SystemDescriptionParseError
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(
+            "system_under_test:\n  clients: not a list\n"
+        )
+
+        with pytest.raises(SystemDescriptionParseError) as exc_info:
+            write_systemname_yaml(args, cluster_info, MagicMock())
+        assert "clients" in str(exc_info.value)
+
+    def test_yaml_error_problem_mark_in_message_when_available(
+        self, args, cluster_info, target_path,
+    ):
+        """When yaml.YAMLError surfaces a problem_mark, the parse error message
+        contains '(line N, column M)'."""
+        from mlpstorage_py.errors import SystemDescriptionParseError
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        # Trigger a parse error with positional info: unclosed quote on line 2.
+        target_path.write_text('key1: value1\nkey2: "unclosed\nkey3: value3\n')
+
+        with pytest.raises(SystemDescriptionParseError) as exc_info:
+            write_systemname_yaml(args, cluster_info, MagicMock())
+        message = str(exc_info.value)
+        # The problem_mark may not be available on every parser path, but for
+        # this triggering shape PyYAML reliably exposes it.
+        assert "(line " in message, (
+            f"expected '(line ' in message when problem_mark available, got:\n{message}"
+        )
+
+    # ----- D-12 carry-forward (datagen never triggers the branch) ----------
+
+    def test_datagen_command_does_not_trigger_diff_branch(
+        self, args, cluster_info, target_path,
+    ):
+        """D-12 + Phase-2: datagen's writer-side gate returns None BEFORE
+        reaching the FileExistsError branch. Even with garbage at the on-disk
+        path, datagen returns None without raising SystemDescriptionParseError."""
+        from mlpstorage_py.errors import SystemDescriptionParseError
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("not: valid: yaml: : : :\n")
+
+        args.command = "datagen"
+        # Should return None without raising — the D-12 gate fires before
+        # the os.open / FileExistsError / load-diff branch is reached.
+        result = write_systemname_yaml(args, cluster_info, MagicMock())
+        assert result is None
+
+    # ----- LIFE-04 hand-fill survival (SC#1 hard requirement) --------------
+
+    def test_submitter_hand_fills_survive_unchanged(
+        self, args, cluster_info, target_path,
+    ):
+        """LIFE-04 SC#1: submitter hand-fills SER-02 blanks; re-run against
+        unchanged fleet leaves those hand-fills in place. The friendly_description
+        field is a SER-02 blank (in-memory side emits '' per universal
+        collection-failure rule); Pitfall 3(a) skips the diff when in-memory
+        is empty and disk is filled."""
+        write_systemname_yaml(args, cluster_info, MagicMock())
+
+        # Submitter hand-fills friendly_description on disk.
+        on_disk = yaml.safe_load(target_path.read_text())
+        on_disk["system_under_test"]["clients"][0]["friendly_description"] = "Acme-rack-7"
+        target_path.write_text(yaml.safe_dump(on_disk, default_flow_style=False))
+
+        # Re-run with the same fleet — must NOT raise SystemDriftError.
+        result = write_systemname_yaml(args, cluster_info, MagicMock())
+        assert result is None  # LIFE-04 no-touch path
+
+        # The hand-fill survives on disk because the no-touch path doesn't
+        # rewrite the file.
+        re_loaded = yaml.safe_load(target_path.read_text())
+        assert re_loaded["system_under_test"]["clients"][0]["friendly_description"] == "Acme-rack-7"
+
+    # ----- main.py dispatch contract smoke test ----------------------------
+
+    def test_smoke_drift_error_inherits_mlpstorage_exception_for_main_dispatch(
+        self, args, cluster_info, target_path,
+    ):
+        """The contract main.py:262 depends on: SystemDriftError caught as
+        MLPStorageException by the top-level handler."""
+        from mlpstorage_py.errors import MLPStorageException, SystemDriftError
+
+        write_systemname_yaml(args, cluster_info, MagicMock())
+        drifted = _make_cluster_info(num_hosts=3, cpu_model="Different CPU")
+        with pytest.raises(MLPStorageException) as exc_info:
+            write_systemname_yaml(args, drifted, MagicMock())
+        assert isinstance(exc_info.value, SystemDriftError)
+
+    # ----- B-5 stub-splice symmetry lock -----------------------------------
+
+    def test_in_memory_passes_through_splice_stub_lists_before_diff(
+        self, args, cluster_info, target_path,
+    ):
+        """B-5 LIFE-04 stub-splice symmetry: the in-memory comparison subject
+        must pass through BOTH copy.deepcopy AND _splice_stub_lists before
+        entering diff_node_dict_lists. Otherwise the on-disk side (which went
+        through _splice_stub_lists during the original write) and the in-memory
+        side would compare asymmetrically — the on-disk side has D-33
+        drives-omitted treatment baked in; the in-memory pre-splice side has
+        the raw empty drives list. If the symmetry copy is removed from the
+        FileExistsError branch, the second run would surface a spurious diff
+        between `drives: []` (in-memory pre-splice) and the omitted-drives
+        on-disk shape.
+
+        This test writes the file via the Phase-2 emit path, then re-runs with
+        the IDENTICAL cluster_info, and asserts no SystemDriftError. If the
+        symmetry copy in write_systemname_yaml is removed, this test fires."""
+        write_systemname_yaml(args, cluster_info, MagicMock())
+        # Identical re-run: no drift expected, no raise expected.
+        result = write_systemname_yaml(args, cluster_info, MagicMock())
+        assert result is None, (
+            "B-5 symmetry violation: identical re-run produced non-None — "
+            "in-memory side likely missing _splice_stub_lists pass through "
+            "before diff_node_dict_lists"
+        )
