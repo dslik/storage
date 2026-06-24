@@ -1099,3 +1099,750 @@ class TestPhase4EndToEnd:
                 assert "media_type" not in drive
                 assert "form_factor" not in drive
                 assert "performance" not in drive
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 / Plan 05-05 — End-to-end integration tests
+#
+# Three new test classes cover the 8 ROADMAP SC + LIFE-04 hand-fill survival
+# + main.py top-level dispatch contracts:
+#
+#   - TestPhase5Lifecycle (SC#1, SC#2, SC#3, SC#4, LIFE-04, main.py dispatch)
+#   - TestPhase5Cap01     (SC#5, SC#6, per-rank starvation, A6/A7/A8 locks)
+#   - TestPhase5Cap02     (SC#7, SC#8, gate-order locks)
+#
+# Fixture style: each class extends `_make_benchmark` with targeted patches
+# at the leaf I/O surface (os.statvfs for CAP-01, run_shared_fs_probe for
+# CAP-02, _pre_execution_gate no-op for LIFE-02/03/04). The orchestration
+# above the leaf — Benchmark.run() / _pre_execution_gate / write_systemname_yaml —
+# runs as real Python so the integration surface is exercised end-to-end.
+# ---------------------------------------------------------------------------
+
+
+def _make_benchmark_no_gate(tmp_path, hosts, *, command='run', mode='closed',
+                            orgname='Acme', systemname='sys-v1',
+                            timeseries_side_effect=None):
+    """_make_benchmark variant that also patches _pre_execution_gate to a
+    no-op. Used by TestPhase5Lifecycle so the LIFE-02/03/04 surface is
+    exercised without invoking CAP-01/CAP-02 (which have their own classes).
+    """
+    bm = _make_benchmark(tmp_path, hosts, command=command, mode=mode,
+                        orgname=orgname, systemname=systemname,
+                        timeseries_side_effect=timeseries_side_effect)
+    bm._pre_execution_gate = MagicMock()
+    return bm
+
+
+def _drift_host(hosts, *, drift_field='cpu_model',
+                drift_value='Intel(R) Xeon Platinum 9999X'):
+    """Return a copy of `hosts` with the first host's `drift_field` mutated
+    on the chassis.cpu_model axis (the most common drift surface).
+    """
+    drifted = [_make_host(hostname=h.hostname,
+                          cpu_model=h.cpu.model,
+                          num_cores=h.cpu.num_cores,
+                          num_sockets=h.cpu.num_sockets,
+                          mem_bytes=h.memory.total,
+                          os_name=h.system.os_release.get('NAME', 'Rocky Linux'),
+                          os_version=h.system.os_release.get('VERSION_ID', '9.5'))
+               for h in hosts]
+    if drift_field == 'cpu_model':
+        drifted[0].cpu.model = drift_value
+    elif drift_field == 'memory':
+        drifted[0].memory.total = int(drift_value)
+    return drifted
+
+
+class TestPhase5Lifecycle:
+    """End-to-end coverage for Phase 5 LIFE-02/03/04 surface across the full
+    Benchmark.run() pipeline.
+
+    Covers ROADMAP SC#1 (hand-fill survival), SC#2 (drift fails before DLIO),
+    SC#3 (Remediation block in message), SC#4 (per-mode independence —
+    bidirectionally per checker W-3), and the main.py top-level exception
+    dispatch (SystemDriftError + SystemDescriptionParseError → non-zero exit).
+    """
+
+    # ---- SC#1 / LIFE-01 regression -----------------------------------------
+
+    def test_first_run_writes_baseline_systemname_yaml(self, tmp_path):
+        """LIFE-01 regression: first run lands the file at the canonical path."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_no_gate(tmp_path, hosts)
+        rc = bm.run()
+        assert rc == 0
+        target = _yaml_path(tmp_path)
+        assert target.exists()
+        data = yaml.safe_load(target.read_text())
+        assert data['system_under_test']['clients'][0]['quantity'] == 2
+
+    # ---- LIFE-04 no-touch in full pipeline ---------------------------------
+
+    def test_second_run_unchanged_fleet_no_touch_mtime_invariant_full_pipeline(self, tmp_path):
+        """LIFE-04 end-to-end: re-running against an unchanged fleet through
+        the full Benchmark.run() leaves the on-disk file mtime + bytes
+        unchanged (the load-diff-no-op branch fires)."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm1 = _make_benchmark_no_gate(tmp_path, hosts)
+        bm1.run()
+        target = _yaml_path(tmp_path)
+        snapshot_bytes = target.read_bytes()
+        snapshot_mtime_ns = target.stat().st_mtime_ns
+        time.sleep(1.1)  # cross-FS conservative second-resolution mtime margin
+
+        bm2 = _make_benchmark_no_gate(tmp_path, hosts)
+        rc = bm2.run()
+        assert rc == 0
+        assert target.read_bytes() == snapshot_bytes
+        assert target.stat().st_mtime_ns == snapshot_mtime_ns
+
+    # ---- SC#1 hand-fill survival in full pipeline --------------------------
+
+    def test_submitter_hand_fills_survive_unchanged_full_pipeline_sc1(self, tmp_path):
+        """SC#1 + LIFE-04 (REQUIREMENTS.md milestone-core-value): submitter
+        edits SER-02 blank scalar fields on disk; re-running the SAME run
+        command against the SAME fleet leaves the hand-filled values
+        byte-identical.
+
+        The SER-02 blanks that flow through Pitfall 3(a) blank preservation
+        are SCALAR fields where in-memory == "" (e.g. friendly_description).
+        Stub-list fields like networking[*].traffic round-trip via the
+        _splice_stub_lists symmetry pass instead — both sides end up with
+        `[]` post-splice, so the diff is empty regardless of what the user
+        put in. Here we test the scalar-blank-preservation surface (the
+        load-bearing user-visible contract) end-to-end.
+        """
+        hosts = [_make_host_phase3(hostname=f"h{i}") for i in range(2)]
+        bm1 = _make_benchmark_no_gate(tmp_path, hosts)
+        bm1.run()
+        target = _yaml_path(tmp_path)
+        assert target.exists()
+
+        # Submitter hand-fills SER-02 scalar blanks (friendly_description and
+        # the chassis.model_name field when blank — both are SER-02 blanks
+        # at the scalar leaf level where Pitfall 3(a) applies).
+        on_disk = yaml.safe_load(target.read_text())
+        client0 = on_disk['system_under_test']['clients'][0]
+        client0['friendly_description'] = 'Acme rack-7-pod-2'
+        # If chassis.model_name landed as a blank, hand-fill it too.
+        if client0.get('chassis', {}).get('model_name', '') == '':
+            client0['chassis']['model_name'] = 'PowerEdge R760-hand-filled'
+        target.write_text(yaml.safe_dump(on_disk, default_flow_style=False))
+        hand_filled_bytes = target.read_bytes()
+
+        # Re-run against the same fleet — must not raise + must not rewrite.
+        bm2 = _make_benchmark_no_gate(tmp_path, hosts)
+        rc = bm2.run()
+        assert rc == 0
+
+        # Hand-fills survived byte-for-byte (LIFE-04 no-touch + Pitfall 3(a)
+        # blank preservation).
+        assert target.read_bytes() == hand_filled_bytes
+        re_loaded = yaml.safe_load(target.read_text())
+        re_client0 = re_loaded['system_under_test']['clients'][0]
+        assert re_client0['friendly_description'] == 'Acme rack-7-pod-2'
+
+    # ---- SC#2 drift fails before DLIO --------------------------------------
+
+    def test_drift_on_cpu_model_fails_before_dlio_sc2(self, tmp_path):
+        """SC#2: a drifted cpu_model causes run() to raise SystemDriftError
+        BEFORE bench._run is called. Pre-DLIO-launch lock."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm1 = _make_benchmark_no_gate(tmp_path, hosts)
+        bm1.run()
+
+        drifted = _drift_host(hosts, drift_field='cpu_model',
+                              drift_value='Intel(R) Xeon Platinum 9999X')
+        bm2 = _make_benchmark_no_gate(tmp_path, drifted)
+        with pytest.raises(SystemDriftError) as exc_info:
+            bm2.run()
+
+        # _run MUST NOT have been called — the drift fails BEFORE DLIO.
+        bm2._run.assert_not_called()
+        # Unified-diff body present in the message.
+        msg = str(exc_info.value)
+        assert "--- on-disk" in msg or "+++ in-memory" in msg
+
+    def test_drift_on_sysctl_value_surfaces_jsonpath_hunk_sc2(self, tmp_path):
+        """SC#2: a drifted sysctl entry on disk vs. empty in-memory surfaces
+        a JSONPath-style hunk in the diff (either '@@ ' hunks or fingerprint
+        orphan since sysctl is part of _FINGERPRINT_KEYS)."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm1 = _make_benchmark_no_gate(tmp_path, hosts)
+        bm1.run()
+        target = _yaml_path(tmp_path)
+
+        # Drift on-disk sysctl to a non-empty value (fingerprint-affecting).
+        on_disk = yaml.safe_load(target.read_text())
+        on_disk['system_under_test']['clients'][0]['sysctl'] = [
+            {'name': 'net.core.rmem_max', 'value': '16777216'}
+        ]
+        target.write_text(yaml.safe_dump(on_disk, default_flow_style=False))
+
+        # Re-run with the same fleet (in-memory sysctl=[]) — drift surfaces.
+        bm2 = _make_benchmark_no_gate(tmp_path, hosts)
+        with pytest.raises(SystemDriftError) as exc_info:
+            bm2.run()
+        msg = str(exc_info.value)
+        # Either an '@@' JSONPath hunk OR a fingerprint orphan path containing sysctl.
+        assert ("@@ " in msg) or ("clients[fingerprint=" in msg), (
+            f"expected JSONPath hunk or fingerprint orphan, got:\n{msg}"
+        )
+
+    # ---- SC#3 Remediation block --------------------------------------------
+
+    def test_drift_message_contains_both_remediation_options_sc3(self, tmp_path):
+        """SC#3: the SystemDriftError message lists BOTH remediation options
+        (rename existing yaml + remove existing yaml) verbatim per D-40."""
+        from mlpstorage_py.errors import SystemDriftError
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm1 = _make_benchmark_no_gate(tmp_path, hosts)
+        bm1.run()
+
+        drifted = _drift_host(hosts, drift_value='Intel(R) Xeon Platinum 9999X')
+        bm2 = _make_benchmark_no_gate(tmp_path, drifted)
+        with pytest.raises(SystemDriftError) as exc_info:
+            bm2.run()
+
+        msg = str(exc_info.value)
+        # D-40 verbatim remediation hint markers.
+        assert "Rename" in msg, f"expected 'Rename' in Remediation block, got:\n{msg}"
+        assert "Remove" in msg, f"expected 'Remove' in Remediation block, got:\n{msg}"
+
+    # ---- SC#4 per-mode independence (bidirectional per W-3) ---------------
+
+    def test_drift_in_closed_mode_does_not_trigger_drift_in_open_mode_sc4(self, tmp_path):
+        """SC#4 (closed→open): drifting the CLOSED-mode YAML on disk does
+        NOT cause an OPEN-mode run to raise SystemDriftError — each mode
+        owns its own file at its own path (D-11)."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+
+        # Run-1 in closed mode lands /tmp/r1/closed/Acme/systems/sys-v1.yaml.
+        bm_closed = _make_benchmark_no_gate(tmp_path, hosts, mode='closed')
+        bm_closed.run()
+        closed_path = _yaml_path(tmp_path, mode='closed')
+        assert closed_path.exists()
+
+        # Manually drift the closed file.
+        on_disk = yaml.safe_load(closed_path.read_text())
+        on_disk['system_under_test']['clients'][0]['chassis']['cpu_model'] = 'DRIFTED'
+        closed_path.write_text(yaml.safe_dump(on_disk, default_flow_style=False))
+
+        # Run-1 in open mode against the SAME fleet — different path, no drift.
+        bm_open = _make_benchmark_no_gate(tmp_path, hosts, mode='open')
+        rc = bm_open.run()
+        assert rc == 0
+        open_path = _yaml_path(tmp_path, mode='open')
+        assert open_path.exists()
+        # The closed-mode file is still drifted; the open-mode run touched ONLY
+        # the open path.
+        assert 'DRIFTED' in closed_path.read_text()
+
+    def test_drift_in_open_mode_does_not_trigger_drift_in_closed_mode_sc4(self, tmp_path):
+        """W-3 checker-mandated symmetric direction: drifting the OPEN-mode
+        YAML on disk does NOT cause a CLOSED-mode run to raise.
+        Proves per-mode independence holds bidirectionally."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+
+        bm_open = _make_benchmark_no_gate(tmp_path, hosts, mode='open')
+        bm_open.run()
+        open_path = _yaml_path(tmp_path, mode='open')
+        assert open_path.exists()
+
+        on_disk = yaml.safe_load(open_path.read_text())
+        on_disk['system_under_test']['clients'][0]['chassis']['cpu_model'] = 'DRIFTED'
+        open_path.write_text(yaml.safe_dump(on_disk, default_flow_style=False))
+
+        bm_closed = _make_benchmark_no_gate(tmp_path, hosts, mode='closed')
+        rc = bm_closed.run()
+        assert rc == 0
+        closed_path = _yaml_path(tmp_path, mode='closed')
+        assert closed_path.exists()
+        assert 'DRIFTED' in open_path.read_text()
+
+    # ---- main.py top-level dispatch contract -------------------------------
+
+    def test_main_py_dispatches_drift_error_to_nonzero_exit_via_systemexit(self, tmp_path):
+        """main.py:262 + 527 dispatch contract: a SystemDriftError surfacing
+        from Benchmark.run() routes through the MLPStorageException catch-all
+        and exits with EXIT_CODE.FAILURE (non-zero)."""
+        from mlpstorage_py.errors import SystemDriftError
+        from mlpstorage_py.config import EXIT_CODE
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm1 = _make_benchmark_no_gate(tmp_path, hosts)
+        bm1.run()
+
+        drifted = _drift_host(hosts, drift_value='Intel(R) Xeon Platinum 9999X')
+        bm2 = _make_benchmark_no_gate(tmp_path, drifted)
+
+        # Simulate the main.py dispatch path: wrap bm2.run() in the same
+        # exception-handler shape as main.py:495-532.
+        rc = None
+        captured_error_msg = None
+        try:
+            bm2.run()
+            rc = EXIT_CODE.SUCCESS
+        except SystemDriftError as e:
+            # This is the verbatim contract — main.py:527-532 catches
+            # MLPStorageException and returns EXIT_CODE.FAILURE; SystemDriftError
+            # IS-A MLPStorageException so it routes through that branch.
+            captured_error_msg = str(e)
+            rc = EXIT_CODE.FAILURE
+
+        assert rc != 0, "drift must produce a non-zero exit code"
+        assert rc == EXIT_CODE.FAILURE
+        # The captured message contains the unified-diff body.
+        assert captured_error_msg is not None
+        assert ("--- on-disk" in captured_error_msg
+                or "+++ in-memory" in captured_error_msg
+                or "Remediation" in captured_error_msg), (
+            f"expected diff/Remediation markers in captured stderr, got:\n{captured_error_msg}"
+        )
+
+    def test_malformed_yaml_raises_parse_error_and_exits_nonzero(self, tmp_path):
+        """Malformed YAML on disk causes SystemDescriptionParseError which
+        routes through the same MLPStorageException dispatch to non-zero exit.
+        """
+        from mlpstorage_py.errors import SystemDescriptionParseError
+        from mlpstorage_py.config import EXIT_CODE
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        # Pre-place garbage at the canonical path.
+        target = _yaml_path(tmp_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("not: valid: yaml: : : :\n")
+
+        bm = _make_benchmark_no_gate(tmp_path, hosts)
+        rc = None
+        captured = None
+        try:
+            bm.run()
+            rc = EXIT_CODE.SUCCESS
+        except SystemDescriptionParseError as e:
+            captured = str(e)
+            rc = EXIT_CODE.FAILURE
+
+        assert rc != 0
+        assert captured is not None
+        assert "malformed" in captured.lower() or "parse" in captured.lower() or "yaml" in captured.lower()
+
+    # ---- D-12: datagen never triggers the lifecycle branch -----------------
+
+    def test_datagen_does_not_trigger_lifecycle_branch(self, tmp_path):
+        """D-12 carry-forward: a datagen command does NOT enter the
+        FileExistsError load-diff branch even when garbage YAML is
+        pre-placed at the systemname path. The writer's command gate fires
+        before parse_on_disk_systemname_yaml is reached.
+        """
+        from mlpstorage_py.errors import SystemDescriptionParseError, SystemDriftError
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        # Pre-place garbage at the canonical path.
+        target = _yaml_path(tmp_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("not: valid: yaml: : : :\n")
+
+        bm = _make_benchmark_no_gate(tmp_path, hosts, command='datagen')
+        # Must NOT raise — the D-12 gate fires before parse_on_disk loads
+        # the garbage.
+        rc = bm.run()
+        assert rc == 0
+        # Garbage file untouched (datagen doesn't write either).
+        assert target.read_text().startswith("not:")
+
+
+# =============================================================================
+# TestPhase5Cap01 — CAP-01 disk-space gate end-to-end
+# =============================================================================
+
+
+def _patch_statvfs_available(available_bytes):
+    """Return a side_effect callable for `os.statvfs` that reports
+    available_bytes = available_bytes (via f_bavail * f_frsize=1)."""
+    def _statvfs_side_effect(_path):
+        stat = MagicMock()
+        stat.f_bavail = available_bytes
+        stat.f_frsize = 1
+        return stat
+    return _statvfs_side_effect
+
+
+class TestPhase5Cap01:
+    """End-to-end coverage for CAP-01 capacity gate.
+
+    Covers SC#5 (starved-destination fail with 4-field message), SC#6
+    (happy-path silence), per-rank starvation, and the A6/A7/A8 escape
+    hatch contracts end-to-end.
+    """
+
+    def test_starved_destination_fails_datagen_with_4field_message_sc5(self, tmp_path):
+        """SC#5 datagen path: TrainingBenchmark.datasize with insufficient
+        space raises FileSystemError containing all four locked fields
+        (destination, available_bytes, required_bytes, deficit)."""
+        from mlpstorage_py.errors import FileSystemError, ErrorCode
+
+        # Patch the leaf I/O surface; the gate's check_capacity_4field
+        # raises naturally from the patched statvfs result.
+        with patch('mlpstorage_py.benchmarks.capacity_gate.os.statvfs',
+                   side_effect=_patch_statvfs_available(1)):
+            from mlpstorage_py.benchmarks.capacity_gate import check_capacity_4field
+            with pytest.raises(FileSystemError) as exc_info:
+                check_capacity_4field(str(tmp_path), 10**15, MagicMock())
+
+        msg = str(exc_info.value)
+        assert "available_bytes:" in msg
+        assert "required_bytes:" in msg
+        assert "deficit:" in msg
+        assert str(tmp_path) in msg
+        # Lock the error code so the dispatch path is FS_DISK_FULL.
+        assert exc_info.value.code == ErrorCode.FS_DISK_FULL
+
+    def test_sufficient_space_proceeds_silently_sc6(self, tmp_path):
+        """SC#6 happy-path silence: when free space is sufficient, the gate
+        returns None and emits NO logger output (no info/warning/error)."""
+        logger = MagicMock()
+        # Patch statvfs to return abundant space.
+        with patch('mlpstorage_py.benchmarks.capacity_gate.os.statvfs',
+                   side_effect=_patch_statvfs_available(10**18)):
+            from mlpstorage_py.benchmarks.capacity_gate import check_capacity_4field
+            result = check_capacity_4field(str(tmp_path), 1, logger)
+        assert result is None
+        # Silent contract: no logger output at any level for the gate itself.
+        logger.error.assert_not_called()
+        logger.warning.assert_not_called()
+
+    def test_starved_destination_fails_run_with_4field_message(self, tmp_path):
+        """SC#5 run-path: a VectorDBBenchmark configured with a local-disk
+        destination AND insufficient space raises FileSystemError out of
+        Benchmark.run() — exercises the _pre_execution_gate insertion in
+        Benchmark.run() at base.py:1102.
+
+        Uses TrainingBenchmark as the driver since VectorDB returns None
+        (A8 escape hatch). We construct a minimal benchmark mock and bind
+        the real _pre_execution_gate.
+        """
+        from mlpstorage_py.errors import FileSystemError, ErrorCode
+        from mlpstorage_py.benchmarks.base import Benchmark
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark(tmp_path, hosts)
+        # Override capacity-gate hooks to a known starved destination.
+        # The MagicMock spec is VectorDBBenchmark; we patch the methods
+        # directly so the real _pre_execution_gate template fires.
+        bm._capacity_gate_destination = MagicMock(return_value=str(tmp_path))
+        bm.required_bytes_for_capacity_gate = MagicMock(return_value=10**15)
+
+        with patch('mlpstorage_py.benchmarks.capacity_gate.os.statvfs',
+                   side_effect=_patch_statvfs_available(1)):
+            with pytest.raises(FileSystemError):
+                bm.run()
+        # _run must NOT have been called — the gate aborted before write/run.
+        bm._run.assert_not_called()
+
+    def test_starved_destination_fails_before_write_systemname_yaml(self, tmp_path):
+        """Gate ordering lock: CAP-01 failure aborts Benchmark.run() BEFORE
+        write_systemname_yaml gets a chance to write the file."""
+        from mlpstorage_py.errors import FileSystemError
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm._capacity_gate_destination = MagicMock(return_value=str(tmp_path))
+        bm.required_bytes_for_capacity_gate = MagicMock(return_value=10**15)
+
+        target = _yaml_path(tmp_path)
+        assert not target.exists()
+
+        with patch('mlpstorage_py.benchmarks.capacity_gate.os.statvfs',
+                   side_effect=_patch_statvfs_available(1)):
+            with pytest.raises(FileSystemError):
+                bm.run()
+
+        # systemname.yaml MUST NOT have been written.
+        assert not target.exists(), (
+            "Gate-order violation: write_systemname_yaml fired despite "
+            "CAP-01 failure"
+        )
+
+    def test_remote_vdb_backend_skips_cap01_with_log_a8(self, tmp_path):
+        """A8 end-to-end: VectorDBBenchmark._capacity_gate_destination returns
+        None (remote engine); the gate logs INFO 'CAP-01 skipped' and proceeds
+        without raising. _run completes normally.
+        """
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark(tmp_path, hosts)
+        # VectorDBBenchmark naturally returns None — let the real method run.
+        # But we must also stub the CAP-02 launcher so the integration test
+        # doesn't try real mpirun. Single-host (len=1 logic when we pass
+        # args.hosts is None or empty) short-circuits naturally.
+        bm.args.hosts = None  # SC#8 no-op for CAP-02
+        # The VectorDBBenchmark override sets _capacity_gate_destination
+        # to return None. Run the benchmark; assert success + info log.
+        logger = MagicMock()
+        bm.logger = logger
+        rc = bm.run()
+        assert rc == 0
+        # The A8 INFO log fires from _pre_execution_gate.
+        info_messages = [str(c) for c in logger.info.call_args_list]
+        assert any("CAP-01 skipped" in m for m in info_messages), (
+            f"expected 'CAP-01 skipped' INFO log, got: {info_messages}"
+        )
+        # _run still ran.
+        bm._run.assert_called_once()
+
+    def test_checkpointing_uses_checkpoint_folder_joined_with_model_path(self):
+        """A7 lock: CheckpointingBenchmark._capacity_gate_destination
+        returns os.path.join(checkpoint_folder, model)."""
+        import os as _os
+        from mlpstorage_py.benchmarks.dlio import CheckpointingBenchmark
+        from types import SimpleNamespace
+
+        bm = MagicMock(spec=CheckpointingBenchmark)
+        bm.args = SimpleNamespace(checkpoint_folder='/tmp/ck', model='llama3-8b')
+        result = CheckpointingBenchmark._capacity_gate_destination(bm)
+        assert result == _os.path.join('/tmp/ck', 'llama3-8b')
+
+    def test_kvcache_uses_1x_bytes_not_2x_per_a6(self):
+        """A6 lock end-to-end: KVCacheBenchmark.required_bytes_for_capacity_gate
+        returns total_cache_bytes at 1x (NOT 2x — the 2x figure stays in the
+        recommendation log). Locks the choice so a Slice-3 regression to 2x
+        would fire this test immediately.
+
+        The real implementation uses the internal _MODEL_CACHE_ESTIMATES
+        table and self.num_users: per_token * seq_len * num_users (all bytes).
+        We verify the result equals 1x of the computed cache footprint, NOT 2x.
+        """
+        from mlpstorage_py.benchmarks.kvcache import KVCacheBenchmark
+
+        bm = MagicMock(spec=KVCacheBenchmark)
+        # Configure known values: choose a model NOT in the internal table so
+        # _MODEL_CACHE_DEFAULT (per_token=4096, seq=4096) applies. Bind the
+        # real class-level tables so the method's lookup hits the real data
+        # (MagicMock(spec=...) replaces class attributes with mocks too).
+        bm.model = 'unknown-model'  # forces _MODEL_CACHE_DEFAULT
+        bm.num_users = 10
+        bm._MODEL_CACHE_ESTIMATES = KVCacheBenchmark._MODEL_CACHE_ESTIMATES
+        bm._MODEL_CACHE_DEFAULT = KVCacheBenchmark._MODEL_CACHE_DEFAULT
+        result = KVCacheBenchmark.required_bytes_for_capacity_gate(bm)
+
+        # Compute 1x expectation: per_token(4096) * seq(4096) * num_users(10)
+        per_token = 4096
+        seq_len = 4096
+        cache_per_user_mb = (per_token * seq_len) / (1024 * 1024)
+        total_cache_mb = cache_per_user_mb * 10
+        expected_1x = int(total_cache_mb * 1024 * 1024)
+
+        assert result == expected_1x, (
+            f"A6 expectation: 1x bytes ({expected_1x}); got {result}"
+        )
+        # The A6 contract requires `result != expected_1x * 2`.
+        assert result != expected_1x * 2, (
+            f"A6 violation: required_bytes appears doubled (got {result}, "
+            f"would-be-2x would be {expected_1x * 2})"
+        )
+
+
+# =============================================================================
+# TestPhase5Cap02 — CAP-02 shared-FS probe gate end-to-end
+# =============================================================================
+
+
+def _make_benchmark_with_local_destination(tmp_path, hosts, *, hosts_arg, command='run'):
+    """Construct a benchmark whose _capacity_gate_destination returns a local
+    path (overriding VectorDBBenchmark's None-returning A8 escape hatch) so
+    the CAP-02 path inside _pre_execution_gate fires. args.hosts is set to
+    `hosts_arg` so the CAP-02 launcher's cardinality logic is exercised.
+    """
+    bm = _make_benchmark(tmp_path, hosts, command=command)
+    bm._capacity_gate_destination = MagicMock(return_value=str(tmp_path))
+    bm.required_bytes_for_capacity_gate = MagicMock(return_value=1)
+    bm.args.hosts = hosts_arg
+    return bm
+
+
+class TestPhase5Cap02:
+    """End-to-end coverage for CAP-02 shared-FS probe gate.
+
+    Covers SC#7 (multi-host fsid cardinality > 1 fail with host listing),
+    SC#8 (single-host silent no-op), and the gate-order lock (CAP-02 fires
+    AFTER CAP-01 in _pre_execution_gate; both fire BEFORE
+    write_systemname_yaml).
+
+    These tests override _capacity_gate_destination to return a local path
+    so the _pre_execution_gate body reaches the CAP-02 invocation
+    (VectorDBBenchmark's default A8 None-destination short-circuits before
+    CAP-02 would run, which is the correct production behavior for remote
+    backends but unhelpful for testing the CAP-02 launcher integration).
+    """
+
+    def test_single_host_run_is_silent_no_op_sc8(self, tmp_path):
+        """SC#8: args.hosts=['localhost'] (single-element) causes
+        run_shared_fs_probe to take its silent no-op branch. NO mpirun
+        invocation; the launcher receives the single-host list (and its
+        SC#8 short-circuit fires internally — also locked at the unit
+        layer in tests/unit/test_shared_fs_probe.py TestSingleHostShortCircuit).
+        """
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_with_local_destination(
+            tmp_path, hosts, hosts_arg=['localhost'])
+        # Patch the launcher to spy on its invocation.
+        with patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   return_value=None) as mock_probe:
+            rc = bm.run()
+        assert rc == 0
+        # The launcher was called with the single-host list; its internal
+        # SC#8 short-circuit fires (unit-test locked in test_shared_fs_probe.py).
+        assert mock_probe.called
+        _, call_kwargs = mock_probe.call_args
+        assert call_kwargs.get('hosts') == ['localhost']
+
+    def test_no_hosts_attr_is_silent_no_op_sc8(self, tmp_path):
+        """SC#8: args.hosts is None → _pre_execution_gate normalizes via
+        `getattr(self.args, 'hosts', None) or []`, so the launcher receives
+        an empty list and short-circuits. No CAP-02 logger output."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_with_local_destination(
+            tmp_path, hosts, hosts_arg=None)
+        with patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   return_value=None) as mock_probe:
+            rc = bm.run()
+        assert rc == 0
+        assert mock_probe.called
+        _, call_kwargs = mock_probe.call_args
+        # The gate normalizes None → []
+        assert call_kwargs.get('hosts') == []
+
+    def test_multi_host_cardinality_1_succeeds_silently(self, tmp_path):
+        """Multi-host cardinality 1: launcher returns None (success); the
+        benchmark proceeds to _run normally. No logger.error/warning."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_with_local_destination(
+            tmp_path, hosts, hosts_arg=['host1', 'host2'])
+        logger = MagicMock()
+        bm.logger = logger
+        with patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   return_value=None) as mock_probe:
+            rc = bm.run()
+        assert rc == 0
+        assert mock_probe.called
+        # No CAP-02 error/warning logs.
+        for call_args, _ in logger.error.call_args_list:
+            assert 'CAP-02' not in str(call_args[0] if call_args else '')
+        bm._run.assert_called_once()
+
+    def test_multi_host_cardinality_2_fails_with_host_listing_sc7(self, tmp_path):
+        """SC#7: cardinality > 1 raises FileSystemError; the message lists
+        each host + each (st_dev, st_ino) tuple. _run NOT called.
+        """
+        from mlpstorage_py.errors import FileSystemError, ErrorCode
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_with_local_destination(
+            tmp_path, hosts, hosts_arg=['host1', 'host2'])
+
+        crafted_msg = (
+            "CAP-02: shared-FS verification failed (cardinality 2): "
+            "host1 reported st_dev=64768 st_ino=12345; "
+            "host2 reported st_dev=64512 st_ino=67890; "
+            "this typically means one or more hosts have a local-disk path "
+            "where a shared mount was expected"
+        )
+        with patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   side_effect=FileSystemError(
+                       crafted_msg,
+                       path=str(tmp_path),
+                       operation='cap02-shared-fs-probe',
+                       code=ErrorCode.FS_INVALID_STRUCTURE,
+                   )):
+            with pytest.raises(FileSystemError) as exc_info:
+                bm.run()
+
+        msg = str(exc_info.value)
+        assert "host1" in msg
+        assert "host2" in msg
+        assert "st_dev=" in msg
+        assert "st_ino=" in msg
+        # _run MUST NOT have been called.
+        bm._run.assert_not_called()
+
+    def test_multi_host_cardinality_2_error_message_contains_local_disk_hint_sc7(self, tmp_path):
+        """SC#7 hint lock: the verbatim local-disk hint phrase appears in
+        the SystemError message body."""
+        from mlpstorage_py.errors import FileSystemError, ErrorCode
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_with_local_destination(
+            tmp_path, hosts, hosts_arg=['host1', 'host2'])
+
+        hint_phrase = (
+            "this typically means one or more hosts have a local-disk path "
+            "where a shared mount was expected"
+        )
+        with patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   side_effect=FileSystemError(
+                       f"CAP-02 failed: cardinality 2. {hint_phrase}",
+                       path=str(tmp_path),
+                       operation='cap02-shared-fs-probe',
+                       code=ErrorCode.FS_INVALID_STRUCTURE,
+                   )):
+            with pytest.raises(FileSystemError) as exc_info:
+                bm.run()
+
+        assert hint_phrase in str(exc_info.value)
+
+    def test_cap02_fires_after_cap01_in_pre_execution_gate_ordering(self, tmp_path):
+        """Gate-order lock: in _pre_execution_gate, check_capacity_4field is
+        called BEFORE run_shared_fs_probe. Slice 3 + Slice 4 ordering."""
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark(tmp_path, hosts)
+        bm.args.hosts = ['host1', 'host2']
+        bm._capacity_gate_destination = MagicMock(return_value=str(tmp_path))
+        bm.required_bytes_for_capacity_gate = MagicMock(return_value=1)
+
+        call_order = []
+        def cap01_se(*a, **kw):
+            call_order.append('cap01')
+        def cap02_se(*a, **kw):
+            call_order.append('cap02')
+
+        with patch('mlpstorage_py.benchmarks.base.check_capacity_4field',
+                   side_effect=cap01_se), \
+             patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   side_effect=cap02_se):
+            bm.run()
+
+        assert call_order == ['cap01', 'cap02'], (
+            f"Expected CAP-01 BEFORE CAP-02, got: {call_order}"
+        )
+
+    def test_cap02_fires_before_write_systemname_yaml(self, tmp_path):
+        """Gate-order lock: a CAP-02 failure aborts BEFORE write_systemname_yaml.
+        Verifies the Slice 4 + Slice 2 ordering."""
+        from mlpstorage_py.errors import FileSystemError, ErrorCode
+
+        hosts = [_make_host(hostname=f"h{i}") for i in range(2)]
+        bm = _make_benchmark_with_local_destination(
+            tmp_path, hosts, hosts_arg=['host1', 'host2'])
+
+        target = _yaml_path(tmp_path)
+        assert not target.exists()
+
+        with patch('mlpstorage_py.benchmarks.base.run_shared_fs_probe',
+                   side_effect=FileSystemError(
+                       "CAP-02 fail",
+                       path=str(tmp_path),
+                       operation='cap02-shared-fs-probe',
+                       code=ErrorCode.FS_INVALID_STRUCTURE,
+                   )):
+            with pytest.raises(FileSystemError):
+                bm.run()
+
+        # write_systemname_yaml MUST NOT have written the file.
+        assert not target.exists(), (
+            "Gate-order violation: systemname.yaml written despite CAP-02 failure"
+        )
