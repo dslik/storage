@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Phase 5 Plan 05 (integration tests) complete — 3 new test classes (TestPhase5Lifecycle, TestPhase5Cap01, TestPhase5Cap02) appended to test_systemname_yaml_end_to_end.py (25 new tests covering all 8 ROADMAP SC + LIFE-04 hand-fill survival + main.py top-level MLPStorageException dispatch) + new tests/integration/test_shared_fs_probe_real_mpi.py (3 tests, real-mpirun B-3 Option A coverage with skip-if-no-mpirun discipline). Full Phase 5 regression suite: 572 passed, 3 skipped (real-MPI tests on dev env without mpi4py). Phase 5 vertical end-to-end COMPLETE — ready for /gsd-verify-phase 05."
-last_updated: "2026-06-24T05:40:00Z"
+status: verifying
+stopped_at: Phase 5.1 context gathered
+last_updated: "2026-06-24T23:53:53.185Z"
 last_activity: 2026-06-24 -- Phase 05 Plan 05 (integration tests) complete; Phase 5 vertical end-to-end COMPLETE
 progress:
-  total_phases: 5
-  completed_phases: 4
+  total_phases: 6
+  completed_phases: 5
   total_plans: 26
   completed_plans: 26
-  percent: 100
+  percent: 83
 ---
 
 # Project State
@@ -207,9 +207,9 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T03:48:04Z
-Stopped at: Phase 5 Plan 03 (CAP-01 capacity gate) complete — capacity_gate.py + Benchmark._pre_execution_gate + 4 subclass overrides; 29 unit tests + 401 regression tests green
-Resume file: .planning/phases/05-logical-diff-lifecycle-capacity-gate/05-03-SUMMARY.md
+Last session: 2026-06-24T23:53:53.177Z
+Stopped at: Phase 5.1 context gathered
+Resume file: .planning/phases/05.1-phase-5-hardening-uat-closeout/05.1-CONTEXT.md
 Next-session options:
   (z) Continue Phase 5: `/gsd-execute-phase 05` — execute the remaining wave-2 plan 05-02 (LIFE-02 SystemDriftError + diff-and-raise on re-write), then wave-3 plan 05-04 (CAP-02 shared-FS probe — builds on the `_pre_execution_gate` body this plan landed), then wave-4 plan 05-05 (end-to-end integration tests).
   (a) Verify Phase 4: `/gsd-verify-phase 04` — flip Phase 4 status from `executing` to `verified`. Standard Phase 2/3-style verification: re-run the full Phase 4 target slice (`tests/unit/test_cluster_collector.py tests/unit/test_auto_generator.py tests/integration/test_systemname_yaml_end_to_end.py`), check ROADMAP SC #1-5 coverage, generate 04-VERIFICATION.md.
