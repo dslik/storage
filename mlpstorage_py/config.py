@@ -144,10 +144,21 @@ ALLOW_RUN_AS_ROOT = True
 
 MAX_NUM_FILES_TRAIN = 128*1024
 
-DEFAULT_RESULTS_DIR = os.environ.get(
-    "MLPERF_RESULTS_DIR",
-    os.path.join(tempfile.gettempdir(), "mlperf_storage_results"),
-)
+def _resolve_default_results_dir() -> str:
+    """Resolve DEFAULT_RESULTS_DIR from MLPERF_RESULTS_DIR or tempdir.
+
+    Extracted so tests can exercise the env-driven branch without
+    reloading this module — reload re-creates the PARAM_VALIDATION enum
+    class, which then fails `in`-checks against any pre-imported copy
+    held by other modules (notably the rules verifier).
+    """
+    return os.environ.get(
+        "MLPERF_RESULTS_DIR",
+        os.path.join(tempfile.gettempdir(), "mlperf_storage_results"),
+    )
+
+
+DEFAULT_RESULTS_DIR = _resolve_default_results_dir()
 
 import enum
 

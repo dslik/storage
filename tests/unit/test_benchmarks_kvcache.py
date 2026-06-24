@@ -18,9 +18,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock, call
 from argparse import Namespace
 
-# Stub out optional heavy deps so benchmark imports succeed without the full ML stack
+# Stub out optional heavy deps so benchmark imports succeed without the full
+# ML stack. Use importlib.util.find_spec — checking sys.modules alone would
+# install a MagicMock for a perfectly importable module that just hasn't been
+# imported yet, which then poisons later test collections (e.g. test_parquet_reader).
+import importlib.util as _ilu
 for _dep in ('pyarrow', 'pyarrow.ipc', 'psutil'):
-    if _dep not in sys.modules:
+    if _ilu.find_spec(_dep) is None and _dep not in sys.modules:
         sys.modules[_dep] = MagicMock()
 
 from mlpstorage_py.config import BENCHMARK_TYPES, EXEC_TYPE
