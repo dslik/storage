@@ -434,6 +434,9 @@ class TestKVCacheBenchmarkRequiredBytes:
         from mlpstorage_py.benchmarks.kvcache import KVCacheBenchmark
 
         bm = MagicMock(spec=KVCacheBenchmark)
+        # Bind the real class-level tables so .get() returns real values.
+        bm._MODEL_CACHE_ESTIMATES = KVCacheBenchmark._MODEL_CACHE_ESTIMATES
+        bm._MODEL_CACHE_DEFAULT = KVCacheBenchmark._MODEL_CACHE_DEFAULT
         bm.model = "llama3.1-8b"  # per_token=4096, seq=8192
         bm.num_users = 10
 
@@ -465,6 +468,8 @@ class TestKVCacheBenchmarkRequiredBytes:
         from mlpstorage_py.benchmarks.kvcache import KVCacheBenchmark
 
         bm = MagicMock(spec=KVCacheBenchmark)
+        bm._MODEL_CACHE_ESTIMATES = KVCacheBenchmark._MODEL_CACHE_ESTIMATES
+        bm._MODEL_CACHE_DEFAULT = KVCacheBenchmark._MODEL_CACHE_DEFAULT
         # An unknown model name MUST fall through to the inline default,
         # NOT raise (i.e., the impl does NOT route through LLM_SIZE_BY_RANK).
         bm.model = "totally-made-up-model"

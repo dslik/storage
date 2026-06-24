@@ -497,7 +497,49 @@ class TrainingBenchmark(DLIOBenchmark):
         return " ".join(parts)
 
 
+    # ------------------------------------------------------------------
+    # CAP-01 capacity-gate hooks (Phase 5 / Plan 05-03)
+    # ------------------------------------------------------------------
+
+    def required_bytes_for_capacity_gate(self) -> int:
+        """Return total bytes needed for the training dataset (CAP-01).
+
+        Delegates to ``calculate_training_data_size`` and returns the
+        ``total_disk_bytes`` element of the (num_files_train,
+        num_subfolders_train, total_disk_bytes) tuple — the same value
+        ``TrainingBenchmark.datasize`` reports on the result line at
+        ``dlio.py:515``. SC#6 silence is preserved by routing the helper's
+        logger output to a NullHandler logger so the happy-path emits
+        nothing user-visible (the size calc's own .result/.warning calls
+        are deliberately suppressed at the gate site; the user-facing
+        path in ``datasize`` still gets the real logger).
+        """
+        import logging as _logging
+        _silent = _logging.getLogger("mlpstorage_py.capacity_gate.silent")
+        if not _silent.handlers:
+            _silent.addHandler(_logging.NullHandler())
+        _silent.setLevel(_logging.CRITICAL + 1)
+        _silent.propagate = False
+        _, _, total_disk_bytes = calculate_training_data_size(
+            self.args,
+            self.cluster_information,
+            self.combined_params['dataset'],
+            self.combined_params['reader'],
+            _silent,
+        )
+        return int(total_disk_bytes)
+
+    def _capacity_gate_destination(self) -> str:
+        """Return ``args.data_dir`` — the training dataset destination per
+        REQUIREMENTS.md CAP-01.
+        """
+        return self.args.data_dir
+
     def datasize(self):
+        # CAP-01: fail fast BEFORE the size calc prints its results so a
+        # starved disk surfaces with the locked four-field message rather
+        # than after the user has scrolled past the size summary.
+        self._pre_execution_gate()
         num_files_train, num_subfolders_train, total_disk_bytes = calculate_training_data_size(
             self.args, self.cluster_information, self.combined_params['dataset'], self.combined_params['reader'], self.logger
         )
@@ -590,7 +632,55 @@ class CheckpointingBenchmark(DLIOBenchmark):
             return EXIT_CODE.FAILURE
         return EXIT_CODE.SUCCESS
 
+    # ------------------------------------------------------------------
+    # CAP-01 capacity-gate hooks (Phase 5 / Plan 05-03)
+    # ------------------------------------------------------------------
+
+    def required_bytes_for_capacity_gate(self) -> int:
+        """Return total bytes needed for the checkpoint dataset (CAP-01).
+
+        Mirrors the per-rank GiB math at ``CheckpointingBenchmark.datasize``
+        (dlio.py:593-625) WITHOUT the logger.debug/verbose calls so the
+        happy path stays silent per SC#6. The total is multiplied by
+        ``self.args.num_checkpoints_write`` because each checkpoint is
+        written in full to the destination.
+
+        A7 lock: same math as datasize at dlio.py:593.
+        """
+        min_procs, zero_level, GPUpDP, ClosedGPUs = LLM_ALLOWED_VALUES.get(self.args.model)
+        model_gb, optimizer_gb = LLM_SIZE_BY_RANK.get(self.args.model)
+        rank_gb = []
+        for rank in range(self.args.num_processes):
+            rank_gb.append(0)
+            if zero_level == 1:
+                rank_gb[rank] = optimizer_gb / self.args.num_processes
+                if rank < GPUpDP:
+                    rank_gb[rank] += model_gb / GPUpDP
+            elif zero_level == 3:
+                rank_gb[rank] = (model_gb + optimizer_gb) / self.args.num_processes
+            else:
+                raise ValueError("Invalid zero_level")
+        total_bytes = int(sum(rank_gb) * 1024**3 * self.args.num_checkpoints_write)
+        return total_bytes
+
+    def _capacity_gate_destination(self):
+        """Return the checkpoint destination as
+        ``os.path.join(args.checkpoint_folder, args.model)`` — mirrors the
+        join at dlio.py:562 in ``add_checkpoint_params`` (A7 lock).
+
+        If ``args.checkpoint_folder`` is None or empty, returns ``None`` so
+        the ``_pre_execution_gate`` A8 escape hatch fires cleanly. The
+        upstream CLI validation already requires checkpoint_folder for
+        real runs; this is defensive.
+        """
+        cf = getattr(self.args, "checkpoint_folder", None)
+        if not cf:
+            return None
+        return os.path.join(cf, self.args.model)
+
     def datasize(self):
+        # CAP-01: fail fast BEFORE the rank-by-rank size table prints.
+        self._pre_execution_gate()
         self.logger.verbose(f'Running datasize for {self.args.model}...')
         # Calculate the total writes per rank which equates to memory required per rank
         # If zero_level is 1, then rank 0 writes the entire model,
