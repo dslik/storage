@@ -65,6 +65,7 @@ from mlpstorage_py.cluster_collector import (
 )
 from mlpstorage_py.progress import create_stage_progress, progress_context
 from mlpstorage_py.system_description.auto_generator import write_systemname_yaml
+from mlpstorage_py.benchmarks.capacity_gate import check_capacity_4field
 
 if TYPE_CHECKING:
     import logging
@@ -933,6 +934,70 @@ class Benchmark(BenchmarkInterface, abc.ABC):
                 self.logger.warning(f'Parameters allowed for open but not closed. Use --open and rerun the benchmark.')
                 sys.exit(1)
 
+    def required_bytes_for_capacity_gate(self) -> int:
+        """Return bytes needed for the dataset destination (CAP-01).
+
+        Subclasses MUST override. Each benchmark's required-bytes math
+        already lives inline in its ``datasize``/``execute_datasize``
+        method (per-benchmark — see 05-RESEARCH.md §"Per-benchmark
+        required_bytes sources (CAP-01)"). The override mirrors that math
+        WITHOUT calling the user-facing logger so the happy path can stay
+        silent per REQUIREMENTS.md SC#6.
+
+        Raises:
+            NotImplementedError: Always, on the base class.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must override "
+            f"required_bytes_for_capacity_gate() for CAP-01"
+        )
+
+    def _capacity_gate_destination(self) -> Optional[str]:
+        """Return the filesystem path the gate runs statvfs against (CAP-01).
+
+        Return ``None`` to skip the local statvfs — used by the A8 remote-
+        backend escape hatch (e.g., VectorDB pointed at a remote milvus
+        URI). The skip is logged at INFO level by ``_pre_execution_gate``.
+
+        Raises:
+            NotImplementedError: Always, on the base class.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must override "
+            f"_capacity_gate_destination() for CAP-01"
+        )
+
+    def _pre_execution_gate(self) -> None:
+        """Run all pre-execution capacity/environment gates (CAP-01 in
+        Slice 3; CAP-02 shared-FS verification is appended in Slice 4 of
+        Phase 5; LIFE-02 stays on the run-only path via the existing
+        ``write_systemname_yaml`` try/except).
+
+        Called from BOTH ``Benchmark.run()`` AND each subclass's datagen
+        entry point (TrainingBenchmark.datasize, CheckpointingBenchmark.
+        datasize, VectorDBBenchmark.execute_datagen, KVCacheBenchmark's
+        kvcache datagen branch in ``_run``). Per REQUIREMENTS.md CAP-01 +
+        RESEARCH Pitfall 5 the gate runs per-rank so a single starved node
+        in a heterogeneous fleet fails fast with its own destination
+        identified in the error.
+
+        Happy path: returns ``None`` silently (no logger output) per SC#6.
+        """
+        destination = self._capacity_gate_destination()
+        if destination is None:
+            # A8 escape hatch: remote vector-DB backend (milvus/elasticsearch/
+            # pgvector), or any other engine whose data lands behind a network
+            # boundary where local statvfs is meaningless. Log INFO so the
+            # operator sees the skip; do not raise.
+            self.logger.info(
+                "CAP-01 skipped: destination not local "
+                "(e.g., remote vector-DB backend)"
+            )
+            return
+        required_bytes = self.required_bytes_for_capacity_gate()
+        check_capacity_4field(destination, required_bytes, self.logger)
+        # Slice 4 / CAP-02: shared-FS verification appended here in plan 05-04.
+
     @abc.abstractmethod
     def _run(self) -> int:
         """Run the actual benchmark execution.
@@ -1000,6 +1065,13 @@ class Benchmark(BenchmarkInterface, abc.ABC):
 
             # Stage 2: Cluster collection
             self._collect_cluster_start()
+
+            # Phase 5 CAP-01 pre-execution gate (Slice 3 of Phase 5; Slice 4
+            # extends the body with CAP-02 shared-FS probe). Fires AFTER
+            # cluster collection so a per-rank destination check has the
+            # cluster context available, BEFORE write_systemname_yaml so a
+            # starved disk fails fast BEFORE any on-disk artifact is created.
+            self._pre_execution_gate()
 
             # Phase 2 LIFE-01 write hook. Fires AFTER cluster collection so the
             # write can consume self._cluster_info_start; BEFORE DLIO launch so
