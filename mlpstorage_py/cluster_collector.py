@@ -1197,14 +1197,33 @@ _ENV_PREFIXES: Final[Tuple[str, ...]] = (
     "NCCL_",
 )
 
+# Runtime-volatile launcher metadata that matches the OMPI_ allowlist prefix
+# but changes on every mpirun invocation (PIDs, TCP sockets, jobids, crypto
+# tokens, session dirs, command-line). Must be excluded from the fingerprint
+# or SystemDriftError fires on every legitimate re-run (Phase 5 UAT Test 3,
+# LIFE-04). Phase 5.1 will broaden this to other launchers
+# (.planning/todos/pending/phase-5.1-env-sysctl-fingerprint-audit.md).
+_ENV_RUNTIME_DENYLIST: Final[frozenset] = frozenset({
+    "OMPI_ARGV",
+    "OMPI_FILE_LOCATION",
+    "OMPI_MCA_ess_base_jobid",
+    "OMPI_MCA_orte_hnp_uri",
+    "OMPI_MCA_orte_jobfam_session_dir",
+    "OMPI_MCA_orte_local_daemon_uri",
+    "OMPI_MCA_orte_precondition_transports",
+})
+
 
 def _env_allowlist_match(name: str) -> bool:
     """Return True iff `name` is in `_ENV_LITERALS` or starts with any
-    element of `_ENV_PREFIXES` (D-26).
+    element of `_ENV_PREFIXES`, AND `name` is not in
+    `_ENV_RUNTIME_DENYLIST` (D-26 + runtime-volatile guard).
 
     Case-sensitive (matches POSIX env-var convention; `bucket` is NOT a
     BUCKET match).
     """
+    if name in _ENV_RUNTIME_DENYLIST:
+        return False
     return name in _ENV_LITERALS or name.startswith(_ENV_PREFIXES)
 
 
@@ -2158,6 +2177,19 @@ _ENV_LITERALS = ("BUCKET",)
 
 _ENV_PREFIXES = ("AWS_", "STORAGE_", "OMPI_", "UCX_", "NCCL_")
 
+# Runtime-volatile launcher metadata (mirror of module copy, see UAT Test 3
+# / LIFE-04). Must match the module-level _ENV_RUNTIME_DENYLIST byte-for-byte
+# or TestEnvironmentMPIScriptParity will trip.
+_ENV_RUNTIME_DENYLIST = (
+    "OMPI_ARGV",
+    "OMPI_FILE_LOCATION",
+    "OMPI_MCA_ess_base_jobid",
+    "OMPI_MCA_orte_hnp_uri",
+    "OMPI_MCA_orte_jobfam_session_dir",
+    "OMPI_MCA_orte_local_daemon_uri",
+    "OMPI_MCA_orte_precondition_transports",
+)
+
 
 def _redact_secret(val):
     """Length-only credential redactor (mirror of storage_config copy, D-24)."""
@@ -2180,7 +2212,10 @@ def _mask_credential_id(val):
 
 
 def _env_allowlist_match(name):
-    """Prefix-or-literal allowlist match (mirror of module copy, D-26)."""
+    """Prefix-or-literal allowlist match + runtime-volatile denylist (mirror
+    of module copy, D-26 + Phase 5 UAT Test 3 fix)."""
+    if name in _ENV_RUNTIME_DENYLIST:
+        return False
     return name in _ENV_LITERALS or name.startswith(_ENV_PREFIXES)
 
 
