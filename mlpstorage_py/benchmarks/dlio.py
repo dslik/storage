@@ -520,9 +520,18 @@ class TrainingBenchmark(DLIOBenchmark):
             _silent.addHandler(_logging.NullHandler())
         _silent.setLevel(_logging.CRITICAL + 1)
         _silent.propagate = False
+        # Lazy-collect cluster_information for the datagen/configview paths,
+        # where Benchmark._collect_cluster_start short-circuits but
+        # Benchmark.run() still fires _pre_execution_gate (Phase 5 wiring).
+        # The run-command path pre-collects via _collect_cluster_start, so the
+        # attribute is already set and we leave it alone — never double-collect.
+        cluster_info = getattr(self, "cluster_information", None)
+        if cluster_info is None:
+            cluster_info = self.accumulate_host_info(self.args)
+            self.cluster_information = cluster_info
         _, _, total_disk_bytes = calculate_training_data_size(
             self.args,
-            self.cluster_information,
+            cluster_info,
             self.combined_params['dataset'],
             self.combined_params['reader'],
             _silent,
