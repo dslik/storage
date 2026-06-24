@@ -1345,3 +1345,138 @@ class TestWrapperCommandForwardsPerOptionArgs:
         # And the wrapper-adjacent default must NOT also be present.
         assert 'kv_cache_benchmark/config.yaml' not in cmd0, \
             f"Default config path leaked into cmd alongside user override: {cmd0}"
+
+
+class TestResolveRankLayout:
+    """Tests for KVCacheBenchmark._resolve_rank_layout (issue #500).
+
+    --num-processes was previously a dead flag — registered on the kvcache
+    distributed-execution group but never read by _execute_run. Total ranks
+    were computed solely from npernode * len(hosts), so a user passing
+    --num-processes 2 with the default --npernode 1 still got one rank per
+    host. This class covers the new resolver semantics:
+
+      - --num-processes is total cluster ranks (matches the flag's help
+        text and DLIO's --num-accelerators convention).
+      - --npernode is ranks per host.
+      - When only one is set, the other is derived.
+      - When both are set, they must be consistent.
+      - --num-processes must divide evenly across the host list.
+    """
+
+    def test_only_npernode_uses_today_behavior(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = None
+        bm.args.npernode = 4
+        npn, total = bm._resolve_rank_layout(['h1', 'h2'])
+        assert npn == 4
+        assert total == 8
+
+    def test_only_num_processes_single_host(self, tmp_path):
+        """The exact scenario dslik reproduced in issue #500."""
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = 2
+        bm.args.npernode = 1  # the CLI default — treated as 'not explicitly set'
+        npn, total = bm._resolve_rank_layout(['localhost'])
+        assert total == 2, "num_processes=2 with one host must produce 2 total ranks"
+        assert npn == 2
+
+    def test_only_num_processes_multi_host_even_divide(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = 8
+        bm.args.npernode = 1
+        npn, total = bm._resolve_rank_layout(['h1', 'h2', 'h3', 'h4'])
+        assert total == 8
+        assert npn == 2
+
+    def test_num_processes_not_divisible_by_hosts_fails(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = 5
+        bm.args.npernode = 1
+        npn, total = bm._resolve_rank_layout(['h1', 'h2'])
+        assert (npn, total) == (None, None)
+
+    def test_both_set_consistent(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = 6
+        bm.args.npernode = 3
+        npn, total = bm._resolve_rank_layout(['h1', 'h2'])
+        assert npn == 3
+        assert total == 6
+
+    def test_both_set_inconsistent_fails(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = 5
+        bm.args.npernode = 3
+        npn, total = bm._resolve_rank_layout(['h1', 'h2'])
+        assert (npn, total) == (None, None)
+
+    def test_neither_set_defaults_one_per_host(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = None
+        bm.args.npernode = None
+        npn, total = bm._resolve_rank_layout(['h1', 'h2', 'h3'])
+        assert npn == 1
+        assert total == 3
+
+    def test_negative_num_processes_fails(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.num_processes = -1
+        bm.args.npernode = 1
+        npn, total = bm._resolve_rank_layout(['h1'])
+        assert (npn, total) == (None, None)
+
+
+class TestExecuteRunHonorsNumProcesses:
+    """End-to-end check that _execute_run actually uses --num-processes.
+
+    Repro of issue #500: with --num-processes 2 on a single host, the
+    wrapper-launch mpirun command must request 2 ranks (not 1)."""
+
+    def _capture_first_cmd(self, bm):
+        executed = []
+        def fake_execute(cmd, **kwargs):
+            executed.append(cmd)
+            return ('', '', 0)
+        agg = {
+            'option': 1, 'aggregated_read_bandwidth_gbps': 0.0,
+            'aggregated_write_bandwidth_gbps': 0.0,
+            'aggregated_avg_throughput_tokens_per_sec': 0.0,
+            'aggregated_storage_throughput_tokens_per_sec': 0.0,
+            'aggregated_p95_latency_ms': 0.0,
+            'rank_count': 1, 'trial_count': 1,
+            'partial_failure': False, 'missing_files': [], 'cpu_tier_ranks': [],
+        }
+        with patch.object(bm, '_execute_command', side_effect=fake_execute), \
+             patch.object(bm, '_interruptible_sleep'), \
+             patch.object(bm, '_aggregate_option_results', return_value=agg), \
+             patch.object(bm, '_write_run_summary'), \
+             patch.object(bm, 'write_metadata'):
+            bm._execute_run()
+        return executed[0] if executed else None
+
+    def test_num_processes_2_single_host_launches_2_ranks(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.trials = 1
+        bm.args.inter_option_delay = 0
+        bm.args.num_processes = 2
+        bm.args.hosts = ['localhost']
+        cmd = self._capture_first_cmd(bm)
+        assert cmd is not None, "Expected at least one wrapper command"
+        assert '-n 2 ' in cmd, f"Expected '-n 2' in mpirun cmd, got: {cmd}"
+        assert '--npernode 2' in cmd, f"Expected '--npernode 2' in mpirun cmd, got: {cmd}"
+
+    def test_num_processes_inconsistent_fails_run(self, tmp_path):
+        bm = _make_run_benchmark(tmp_path)
+        bm.args.trials = 1
+        bm.args.inter_option_delay = 0
+        bm.args.num_processes = 5  # not divisible by 2 hosts
+        bm.args.hosts = ['h1', 'h2']
+        with patch.object(bm, '_execute_command') as mock_exec, \
+             patch.object(bm, '_interruptible_sleep'), \
+             patch.object(bm, '_aggregate_option_results'), \
+             patch.object(bm, '_write_run_summary'), \
+             patch.object(bm, 'write_metadata'):
+            rc = bm._execute_run()
+        assert rc == 1
+        mock_exec.assert_not_called()

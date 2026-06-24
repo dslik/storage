@@ -260,8 +260,9 @@ class KVCacheBenchmark(Benchmark):
         config = config_arg
 
         hosts = getattr(self.args, 'hosts', None) or ['localhost']
-        npernode = getattr(self.args, 'npernode', 1)
-        total_ranks = npernode * len(hosts)
+        npernode, total_ranks = self._resolve_rank_layout(hosts)
+        if total_ranks is None:
+            return 1  # error already logged
         cache_dir = (
             getattr(self.args, 'cache_dir', None)
             or str(Path(self.run_result_output) / 'kvcache_cache')
@@ -374,6 +375,63 @@ class KVCacheBenchmark(Benchmark):
         for key, value in params.items():
             out.extend([f'--{key}', str(value)])
         return out
+
+    def _resolve_rank_layout(self, hosts):
+        """Resolve (npernode, total_ranks) from user-supplied --num-processes and
+        --npernode, given the host list. Issue #500.
+
+        Semantics:
+          - `--num-processes` is total ranks across the cluster (matches the flag's
+            existing help text and DLIO's `--num-accelerators` convention).
+          - `--npernode` is ranks per host.
+          - If only `--num-processes` is set, `npernode = num_processes // len(hosts)`;
+            num_processes must divide evenly across hosts.
+          - If only `--npernode` is set, `total_ranks = npernode * len(hosts)`
+            (today's behavior — preserves backward compat for existing users).
+          - If both are set, they must be consistent
+            (`num_processes == npernode * len(hosts)`); otherwise the run fails.
+          - If neither is set, defaults to one rank per host.
+
+        Returns:
+            (npernode, total_ranks) on success, or (None, None) after logging
+            an error on inconsistent / non-divisible input.
+        """
+        host_count = len(hosts)
+        np_arg = getattr(self.args, 'num_processes', None)
+        npn_arg = getattr(self.args, 'npernode', None)
+
+        if np_arg is not None and npn_arg is not None and npn_arg != 1:
+            # Both explicitly set — require consistency. npn_arg defaults to 1
+            # in the CLI builder, so we only treat npernode as "explicitly set"
+            # when it diverges from the default to keep CLI default behavior
+            # backward-compatible.
+            if np_arg != npn_arg * host_count:
+                self.logger.error(
+                    f"--num-processes ({np_arg}) and --npernode ({npn_arg}) are "
+                    f"inconsistent for {host_count} host(s): "
+                    f"expected num_processes == npernode * len(hosts) "
+                    f"({npn_arg * host_count}). Pass only one of the two, or "
+                    f"set them to consistent values."
+                )
+                return None, None
+            return npn_arg, np_arg
+
+        if np_arg is not None:
+            if np_arg <= 0:
+                self.logger.error(f"--num-processes must be positive, got {np_arg}")
+                return None, None
+            if np_arg % host_count != 0:
+                self.logger.error(
+                    f"--num-processes ({np_arg}) must divide evenly across "
+                    f"--hosts ({host_count} host(s)). Adjust --num-processes or "
+                    f"the host list so num_processes %% len(hosts) == 0."
+                )
+                return None, None
+            return np_arg // host_count, np_arg
+
+        # np_arg is None: fall back to --npernode (default 1)
+        npernode = npn_arg if npn_arg is not None else 1
+        return npernode, npernode * host_count
 
     def _execute_datasize(self) -> int:
         """Calculate memory requirements for KV cache.
