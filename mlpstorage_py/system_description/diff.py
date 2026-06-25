@@ -67,14 +67,53 @@ Architecture notes:
 
 Slice 2 (next plan) will import `diff_node_dict_lists` and
 `format_unified_diff` from this module — the public API is now LOCKED.
+
+Phase 5.2 / HANDFILL-01 extension (D-60..D-66):
+
+- `diff_node_dict_lists` gains a soft-pair pre-pass (`_soft_pair_orphans`)
+  that runs between the existing exact-match indexing (pass-1) and the
+  D-46/D-47 orphan emission (pass-3). For each in-memory orphan whose
+  fingerprint has at least one '' position in the 7 scalar dotted-key
+  positions, the pre-pass looks for the unique on-disk orphan whose
+  non-empty scalar positions all align AND whose 4 signature positions
+  match exactly (D-61). When the candidate is unique, the two stanzas
+  fall through to the leaf-comparison branch and the existing Pitfall
+  3(a) SER-02 rule preserves the submitter's hand-filled value. When
+  the candidate is ambiguous (D-63), neither side is paired and both
+  flow through to orphan emission — never silently conflate distinct
+  machines.
+
+- A new module-level `logger = logging.getLogger(__name__)` emits the
+  D-60 reverse-direction INFO log: when on-disk is '' at a scalar
+  position and the collector finally resolves a non-empty value, the
+  diff layer logs `collector resolved <field>=<value>` and emits NO
+  DiffEntry. The on-disk file stays unchanged per LIFE-04; the operator
+  may hand-edit the YAML to lock the resolved value.
+
+- Public API (`DiffEntry`, `DiffResult`, `diff_node_dict_lists`,
+  `format_unified_diff`) is unchanged. `_compute_fingerprint`'s identity
+  contract is unchanged. The Pitfall 3(a) SER-02 block is unchanged —
+  it now fires on fingerprint-scalar-position cases via the soft-pair
+  fall-through, which is the entire point of HANDFILL-01.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 from mlpstorage_py.system_description.auto_generator import _FINGERPRINT_KEYS, _resolve_fingerprint_key
+
+
+# ---------------------------------------------------------------------------
+# Module-level logger — added Phase 5.2 / HANDFILL-01 for D-60 reverse-
+# direction INFO emission. The logger name resolves to
+# `mlpstorage_py.system_description.diff` and matches the existing
+# `logging.getLogger(__name__)` convention used elsewhere in the project
+# (e.g. mlpstorage_py/mlps_logging.py:130).
+# ---------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +251,176 @@ def _render_fingerprint(fp: tuple) -> str:
 
 
 # ---------------------------------------------------------------------------
+# _soft_pair_orphans — Phase 5.2 / HANDFILL-01 hand-fill affordance.
+# ---------------------------------------------------------------------------
+
+
+def _soft_pair_orphans(
+    in_memory_orphans_by_fp: dict[tuple, dict],
+    on_disk_orphans_by_fp: dict[tuple, dict],
+) -> tuple[list[tuple[tuple, tuple]], list[tuple], list[tuple]]:
+    """Soft-pair leftover orphans across hand-filled scalar fingerprint positions.
+
+    Per D-62 pass-2 of `diff_node_dict_lists`:
+
+    For each in-memory orphan whose fingerprint has at least one '' position
+    in the 7 SCALAR positions, find the unique on-disk orphan whose
+    NON-EMPTY scalar positions all align AND whose 4 SIGNATURE positions
+    match exactly (per D-61). If exactly one such on-disk orphan exists AND
+    it has not yet been soft-paired, treat the two stanzas as the same
+    client.
+
+    Returns:
+        (paired_fp_pairs, remaining_in_memory_fps, remaining_on_disk_fps)
+        where `paired_fp_pairs` is a list of `(in_memory_fp, on_disk_fp)`
+        tuples to feed into the leaf-comparison branch, and the two
+        `remaining_*_fps` lists hold the leftover orphans for the existing
+        D-46 / D-47 emission path.
+
+    D-63 ambiguity rule: if two or more on-disk orphans qualify as
+    candidates for the same in-memory orphan, NEITHER is paired and BOTH
+    sides stay in the remaining-orphan lists. Conservative — never
+    silently conflate distinct machines.
+
+    D-61 signature-position rule: the 4 callable signature positions
+    (positions 7-10 of the fingerprint tuple) require EXACT equality.
+    Empty signature `()` does NOT count as wildcard.
+    """
+    scalar_positions = [i for i, k in enumerate(_FINGERPRINT_KEYS) if isinstance(k, str)]
+    signature_positions = [i for i, k in enumerate(_FINGERPRINT_KEYS) if not isinstance(k, str)]
+
+    paired_fp_pairs: list[tuple[tuple, tuple]] = []
+    paired_on_disk_fps: set[tuple] = set()
+    paired_in_memory_fps: set[tuple] = set()
+
+    # D-22 mixed-type defense: sort by repr so DiffEntry path ordering
+    # remains deterministic across runs (matches the all_fps sort in
+    # diff_node_dict_lists).
+    for mem_fp in sorted(in_memory_orphans_by_fp.keys(), key=repr):
+        candidates: list[tuple] = []
+        for disk_fp in sorted(on_disk_orphans_by_fp.keys(), key=repr):
+            if disk_fp in paired_on_disk_fps:
+                continue
+
+            # D-61 STRICT-SIGNATURE GATE: signatures must match exactly,
+            # including the () empty-tuple case (NOT a wildcard).
+            if any(mem_fp[i] != disk_fp[i] for i in signature_positions):
+                continue
+
+            # SCALAR ALIGNMENT (D-62 forward + D-60 reverse): positions
+            # where EITHER side is '' are ignored in the comparison
+            # (soft-pair semantics, symmetric). All other scalar positions
+            # must match exactly. Locks against pairing two stanzas whose
+            # fingerprints disagree on non-empty values.
+            scalar_ok = True
+            at_least_one_empty = False
+            for i in scalar_positions:
+                if mem_fp[i] == "" or disk_fp[i] == "":
+                    at_least_one_empty = True
+                    continue
+                if mem_fp[i] != disk_fp[i]:
+                    scalar_ok = False
+                    break
+            if not scalar_ok:
+                continue
+
+            # Eligibility: only consider soft-pair when at least one
+            # scalar position is empty on at least one side. If every
+            # scalar position is non-empty AND aligned, the stanzas
+            # would have hashed to the same exact-match fingerprint
+            # already.
+            if not at_least_one_empty:
+                continue
+
+            candidates.append(disk_fp)
+
+        # D-63: only a UNIQUE candidate counts as a soft-pair. Ambiguous
+        # candidates fall back to orphan emission.
+        if len(candidates) == 1:
+            disk_fp = candidates[0]
+            paired_fp_pairs.append((mem_fp, disk_fp))
+            paired_on_disk_fps.add(disk_fp)
+            paired_in_memory_fps.add(mem_fp)
+
+    remaining_in_memory_fps = [
+        fp for fp in in_memory_orphans_by_fp if fp not in paired_in_memory_fps
+    ]
+    remaining_on_disk_fps = [
+        fp for fp in on_disk_orphans_by_fp if fp not in paired_on_disk_fps
+    ]
+
+    return paired_fp_pairs, remaining_in_memory_fps, remaining_on_disk_fps
+
+
+# ---------------------------------------------------------------------------
+# _emit_leaf_diffs — extracted from diff_node_dict_lists for reuse across
+# exact-match pairs (pass-1) and soft-paired orphans (pass-2). Phase 5.2.
+# ---------------------------------------------------------------------------
+
+
+def _emit_leaf_diffs(
+    on_disk_stanza: dict,
+    in_memory_stanza: dict,
+    entries: list[DiffEntry],
+) -> None:
+    """Flatten both stanzas to paths and append a DiffEntry per differing leaf.
+
+    Implements the two empty-side rules:
+
+    - D-60 reverse-direction (Phase 5.2): on-disk == '' and in-memory holds
+      a non-empty scalar string. Collector finally learned a value the
+      submitter did NOT hand-fill. Emit an INFO log; NO DiffEntry; the
+      on-disk file stays unchanged per LIFE-04.
+
+    - Pitfall 3(a) SER-02 (Phase 5): in-memory == '' and on-disk holds a
+      non-empty filled value. Submitter hand-filled the value; collector
+      returned blank. Silently keep the submitter's value; NO DiffEntry.
+
+    Otherwise any disk_v != mem_v emits a DiffEntry.
+    """
+    disk_paths = dict(_flatten_to_paths(on_disk_stanza))
+    mem_paths = dict(_flatten_to_paths(in_memory_stanza))
+
+    for path in sorted(set(disk_paths) | set(mem_paths), key=repr):
+        disk_v = disk_paths.get(path, _SENTINEL_ABSENT)
+        mem_v = mem_paths.get(path, _SENTINEL_ABSENT)
+
+        # D-60 reverse-direction (Phase 5.2 / HANDFILL-01): the collector
+        # finally learned a value the user did not hand-fill. On-disk is
+        # '', in-memory is non-empty. Emit INFO log; NO DiffEntry; the
+        # on-disk file stays unchanged per LIFE-04.
+        if (
+            disk_v == ""
+            and mem_v is not _SENTINEL_ABSENT
+            and mem_v != ""
+            and isinstance(mem_v, str)
+        ):
+            logger.info(
+                f"collector resolved {path}={mem_v!r} (was \"\" on disk; "
+                f"on-disk file unchanged per LIFE-04 — manually update the "
+                f"YAML if you want to lock this value)"
+            )
+            continue
+
+        # Pitfall 3(a) SER-02 blank preservation: in-memory empty string +
+        # on-disk filled non-empty value means the submitter filled it in
+        # by hand; the collector returning blank is NOT drift.
+        if (
+            mem_v == ""
+            and disk_v is not _SENTINEL_ABSENT
+            and disk_v != ""
+        ):
+            continue
+
+        if disk_v != mem_v:
+            entries.append(DiffEntry(
+                path=path,
+                old=("<absent>" if disk_v is _SENTINEL_ABSENT else disk_v),
+                new=("<absent>" if mem_v is _SENTINEL_ABSENT else mem_v),
+            ))
+
+
+# ---------------------------------------------------------------------------
 # diff_node_dict_lists — public diff function.
 # ---------------------------------------------------------------------------
 
@@ -219,72 +428,66 @@ def _render_fingerprint(fp: tuple) -> str:
 def diff_node_dict_lists(on_disk: list[dict], in_memory: list[dict]) -> DiffResult:
     """Compare two lists of client stanzas and return a structured DiffResult.
 
-    Algorithm:
+    Algorithm (D-62 two-pass pairing):
       1. Index each side by fingerprint (`_compute_fingerprint`).
-      2. Sort the union of fingerprints by `repr` (D-22 mixed-type defense).
-      3. For each fingerprint:
-         - on-disk only → DiffEntry(path=f"clients[fingerprint={fp!r}]",
-           old="<present>", new="<absent>")  (D-47)
-         - in-memory only → DiffEntry(path=f"clients[fingerprint={fp!r}]",
-           old="<absent>", new="<present>")  (D-46)
-         - present on both → flatten BOTH sides; for each path in the union:
-            - Pitfall 3(a) SER-02: if mem_v == '' and disk_v is present and
-              non-empty, skip (submitter-filled value is sacred).
-            - else if disk_v != mem_v, emit DiffEntry.
+      2. PASS 1 — exact fingerprint match: for each fingerprint present on
+         BOTH sides, flatten and compare leaf-by-leaf (existing behavior
+         unchanged).
+      3. PASS 2 (Phase 5.2 / HANDFILL-01) — soft-pair the leftover orphans
+         via `_soft_pair_orphans`. Soft-paired stanzas fall through to the
+         same `_emit_leaf_diffs` branch so the existing Pitfall 3(a) SER-02
+         rule (in-memory '' + on-disk filled → submitter's value preserved)
+         and the new D-60 reverse-direction INFO log both fire.
+      4. PASS 3 — surviving orphans (no exact match AND no soft-pair) emit
+         the existing D-46 / D-47 `<present>` / `<absent>` entries.
+
+    D-22 mixed-type defense (`key=repr` sort) applied at every layer so
+    DiffEntry path ordering remains deterministic across runs.
     """
     on_disk_by_fp: dict[tuple, dict] = {_compute_fingerprint(s): s for s in on_disk}
     in_memory_by_fp: dict[tuple, dict] = {_compute_fingerprint(s): s for s in in_memory}
 
-    all_fps = sorted(set(on_disk_by_fp) | set(in_memory_by_fp), key=repr)
+    common_fps = set(on_disk_by_fp) & set(in_memory_by_fp)
+    on_disk_orphan_fps = set(on_disk_by_fp) - common_fps
+    in_memory_orphan_fps = set(in_memory_by_fp) - common_fps
+    on_disk_orphans_by_fp = {fp: on_disk_by_fp[fp] for fp in on_disk_orphan_fps}
+    in_memory_orphans_by_fp = {fp: in_memory_by_fp[fp] for fp in in_memory_orphan_fps}
+
+    paired_fp_pairs, remaining_in_memory_fps, remaining_on_disk_fps = _soft_pair_orphans(
+        in_memory_orphans_by_fp, on_disk_orphans_by_fp,
+    )
 
     entries: list[DiffEntry] = []
 
-    for fp in all_fps:
-        if fp not in in_memory_by_fp:
-            # D-47: present only on disk. The fingerprint tuple is rendered
-            # via `_render_fingerprint` (not `repr(fp)`) so multi-value sysctl
-            # leaves like `4096\t87380\t16777216` survive verbatim in the path
-            # string — repr() would escape the literal tabs to `\\t` and trip
-            # the D-41 round-trip lock.
-            entries.append(DiffEntry(
-                path=f"clients[fingerprint={_render_fingerprint(fp)}]",
-                old="<present>",
-                new="<absent>",
-            ))
-            continue
-        if fp not in on_disk_by_fp:
-            # D-46: present only in memory. See D-41 note above.
-            entries.append(DiffEntry(
-                path=f"clients[fingerprint={_render_fingerprint(fp)}]",
-                old="<absent>",
-                new="<present>",
-            ))
-            continue
+    # PASS 1: exact-match pairs fall through to leaf comparison.
+    for fp in sorted(common_fps, key=repr):
+        _emit_leaf_diffs(on_disk_by_fp[fp], in_memory_by_fp[fp], entries)
 
-        # Both sides have this fingerprint — flatten and walk path union.
-        disk_paths = dict(_flatten_to_paths(on_disk_by_fp[fp]))
-        mem_paths = dict(_flatten_to_paths(in_memory_by_fp[fp]))
+    # PASS 2: soft-paired orphans fall through to the same branch so
+    # Pitfall 3(a) and D-60 fire on hand-fill cases.
+    for mem_fp, disk_fp in sorted(paired_fp_pairs, key=lambda p: repr(p[0])):
+        _emit_leaf_diffs(on_disk_by_fp[disk_fp], in_memory_by_fp[mem_fp], entries)
 
-        for path in sorted(set(disk_paths) | set(mem_paths), key=repr):
-            disk_v = disk_paths.get(path, _SENTINEL_ABSENT)
-            mem_v = mem_paths.get(path, _SENTINEL_ABSENT)
+    # PASS 3a: D-46 — in-memory orphans (no exact match, no soft-pair).
+    # The fingerprint tuple is rendered via `_render_fingerprint` (not
+    # `repr(fp)`) so multi-value sysctl leaves like
+    # `4096\t87380\t16777216` survive verbatim in the path string —
+    # repr() would escape the literal tabs to `\\t` and trip the D-41
+    # round-trip lock.
+    for fp in sorted(remaining_in_memory_fps, key=repr):
+        entries.append(DiffEntry(
+            path=f"clients[fingerprint={_render_fingerprint(fp)}]",
+            old="<absent>",
+            new="<present>",
+        ))
 
-            # Pitfall 3(a) SER-02 blank preservation: in-memory empty string +
-            # on-disk filled non-empty value means the submitter filled it in
-            # by hand; the collector returning blank is NOT drift.
-            if (
-                mem_v == ""
-                and disk_v is not _SENTINEL_ABSENT
-                and disk_v != ""
-            ):
-                continue
-
-            if disk_v != mem_v:
-                entries.append(DiffEntry(
-                    path=path,
-                    old=("<absent>" if disk_v is _SENTINEL_ABSENT else disk_v),
-                    new=("<absent>" if mem_v is _SENTINEL_ABSENT else mem_v),
-                ))
+    # PASS 3b: D-47 — on-disk orphans. See D-41 note above.
+    for fp in sorted(remaining_on_disk_fps, key=repr):
+        entries.append(DiffEntry(
+            path=f"clients[fingerprint={_render_fingerprint(fp)}]",
+            old="<present>",
+            new="<absent>",
+        ))
 
     return DiffResult(entries=entries)
 
