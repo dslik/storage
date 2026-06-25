@@ -383,3 +383,125 @@ class TestUninitializedErrorMessage:
         )
         # Non-zero exit (gate raises ConfigurationError → handled by main()).
         assert proc.returncode != 0
+
+
+# ---------------------------------------------------------------------- #
+# HARDEN-03: full main._main_impl dispatch consumes args.orgname (LAY-03)
+# ---------------------------------------------------------------------- #
+
+
+class TestInitThenRunFullCliDispatch:
+    """HARDEN-03: full main._main_impl dispatch after `mlpstorage init`
+    must NOT require MLPSTORAGE_ORGNAME. The sentinel written by init
+    is consumed by main.py's LAY-03 gate (main.py:356-389) which
+    populates args.orgname, and capture_or_verify_code_image must
+    accept args.orgname as the primary source per HARDEN-03.
+
+    Drives parse_arguments → _main_impl → run_benchmark →
+    capture_or_verify_code_image WITHOUT subprocess so the test
+    runs on any dev box (does not require DLIO/openmpi).
+    """
+
+    def test_init_then_closed_datagen_no_env_var(self, tmp_path, monkeypatch):
+        """RED today: the second invocation raises ConfigurationError E101
+        even though `mlpstorage init` wrote a valid sentinel.
+        GREEN after HARDEN-03: the second invocation gets PAST the
+        env-var gate (may still exit later for DLIO/MPI reasons; we
+        only assert E101 is NOT raised)."""
+        # Stub heavy deps the import chain needs but the test does not exercise.
+        from unittest.mock import MagicMock
+        for _dep in ("pyarrow", "pyarrow.ipc", "psutil", "mpi4py", "mpi4py.MPI"):
+            if _dep not in sys.modules:
+                sys.modules[_dep] = MagicMock()
+
+        # Strip every MLPSTORAGE_* env var for the duration of the test.
+        for _k in [k for k in os.environ if k.startswith("MLPSTORAGE_")]:
+            monkeypatch.delenv(_k, raising=False)
+
+        # Step 1: drive `mlpstorage init BigCo <rd>` via the in-process
+        # dispatcher. run_init writes the sentinel.
+        rd = tmp_path / "rd"
+        from mlpstorage_py.results_dir.init import run_init
+        run_init(Namespace(mode="init", orgname="BigCo", path=str(rd)))
+        assert (rd / "mlperf-results.yaml").is_file()
+
+        # Step 2: drive the closed/training/datagen path through
+        # main._main_impl via monkeypatched sys.argv. We intercept
+        # capture_or_verify_code_image to record the args it saw, then
+        # short-circuit benchmark instantiation so we don't launch DLIO.
+        import mlpstorage_py.main as _main_mod
+        called = {"capture_or_verify_invoked": False, "args_at_capture": None}
+
+        original_capture = _main_mod.capture_or_verify_code_image
+
+        def _spy_capture(args, env, logger):
+            called["capture_or_verify_invoked"] = True
+            called["args_at_capture"] = args
+            return original_capture(args, env, logger)
+        monkeypatch.setattr(_main_mod, "capture_or_verify_code_image", _spy_capture)
+
+        # Short-circuit benchmark construction AFTER the helper has been
+        # consulted so we exit without launching DLIO. The exact attribute
+        # to patch depends on how run_benchmark is wired; patch the
+        # registry-level lookup via the BenchmarkRegistry the dispatcher
+        # uses. If the registry's `get_benchmark_class` returns our stub,
+        # benchmark instantiation raises _ShortCircuit and main catches it.
+        class _ShortCircuit(Exception):
+            pass
+
+        def _short_circuit_factory(*a, **kw):
+            raise _ShortCircuit("short-circuit after env-var gate")
+
+        from mlpstorage_py.registry import BenchmarkRegistry
+
+        # Replace the registry's class lookup with a function that raises.
+        def _stub_get_class(*a, **kw):
+            return _short_circuit_factory
+        if hasattr(BenchmarkRegistry, "get_benchmark_class"):
+            monkeypatch.setattr(
+                BenchmarkRegistry, "get_benchmark_class", _stub_get_class, raising=False
+            )
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["mlpstorage", "closed", "training", "unet3d", "datagen", "file",
+             "-rd", str(rd),
+             "-np", "4",
+             "-sn", "BigMachine",
+             "-dd", str(tmp_path / "data")],
+        )
+
+        # The test passes when _ShortCircuit is raised (means we got
+        # past capture_or_verify_code_image without E101). It FAILS RED
+        # today because ConfigurationError E101 is raised at code_image.py:554
+        # BEFORE _ShortCircuit can fire.
+        from mlpstorage_py.errors import ConfigurationError
+        try:
+            _main_mod._main_impl()
+        except _ShortCircuit:
+            # GREEN: env-var gate passed; benchmark was about to start.
+            pass
+        except ConfigurationError as e:
+            if "MLPSTORAGE_ORGNAME" in str(e):
+                pytest.fail(
+                    f"HARDEN-03 regression: E101 raised even though "
+                    f"`mlpstorage init` wrote a valid sentinel. "
+                    f"args.orgname was not consulted before env fallback. "
+                    f"Error: {e}"
+                )
+            raise  # other ConfigurationError — not our concern
+        except SystemExit:
+            # main._main_impl may sys.exit() from history or other branches.
+            # That's fine — what matters is no E101 was raised.
+            pass
+
+        # Assert the helper was invoked with args.orgname populated by LAY-03 gate.
+        assert called["capture_or_verify_invoked"], (
+            "capture_or_verify_code_image was not invoked — main._main_impl "
+            "exited before reaching run_benchmark. Likely the LAY-03 gate or "
+            "earlier validation raised first."
+        )
+        assert getattr(called["args_at_capture"], "orgname", None) == "BigCo", (
+            "args.orgname was not populated by the LAY-03 gate (main.py:360). "
+            f"Got: {getattr(called['args_at_capture'], 'orgname', '<absent>')!r}"
+        )
