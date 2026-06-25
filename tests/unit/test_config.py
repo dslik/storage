@@ -332,24 +332,20 @@ class TestDefaultResultsDir:
             assert DEFAULT_RESULTS_DIR == expected
 
     def test_env_var_overrides_tempdir_default(self, monkeypatch):
-        """When MLPERF_RESULTS_DIR is set, DEFAULT_RESULTS_DIR uses that value."""
-        import mlpstorage_py.config as cfg_mod
+        """When MLPERF_RESULTS_DIR is set, the resolver returns that value.
+
+        Calls the helper directly rather than reloading mlpstorage_py.config:
+        reload would rebuild the PARAM_VALIDATION enum class, breaking
+        identity comparisons in modules that already imported the original.
+        """
+        from mlpstorage_py.config import _resolve_default_results_dir
         monkeypatch.setenv('MLPERF_RESULTS_DIR', '/custom/mlperf/results')
-        importlib.reload(cfg_mod)
-        try:
-            assert cfg_mod.DEFAULT_RESULTS_DIR == '/custom/mlperf/results'
-        finally:
-            monkeypatch.delenv('MLPERF_RESULTS_DIR', raising=False)
-            importlib.reload(cfg_mod)  # restore original state for other tests
+        assert _resolve_default_results_dir() == '/custom/mlperf/results'
 
     def test_falls_back_to_tempdir_when_env_not_set(self, monkeypatch):
-        """When MLPERF_RESULTS_DIR is absent, DEFAULT_RESULTS_DIR is under tempdir."""
-        import mlpstorage_py.config as cfg_mod
+        """When MLPERF_RESULTS_DIR is absent, the resolver uses tempdir."""
+        from mlpstorage_py.config import _resolve_default_results_dir
         monkeypatch.delenv('MLPERF_RESULTS_DIR', raising=False)
-        importlib.reload(cfg_mod)
-        try:
-            expected = os.path.join(tempfile.gettempdir(), 'mlperf_storage_results')
-            assert cfg_mod.DEFAULT_RESULTS_DIR == expected
-        finally:
-            importlib.reload(cfg_mod)  # restore original state for other tests
+        expected = os.path.join(tempfile.gettempdir(), 'mlperf_storage_results')
+        assert _resolve_default_results_dir() == expected
 
