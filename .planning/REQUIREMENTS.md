@@ -60,6 +60,12 @@ Added by Phase 5.1 (closeout phase for v1.0). Two new requirement IDs that captu
 
 - [x] **HARDEN-02**: The CAP-02 shared-FS probe transmits its rank-0 result via stdout (mpirun `--tag-output` + `__CAP02_RESULT_BEGIN__` / `__CAP02_RESULT_END__` framing), not via a launch-host-local file. The launcher therefore succeeds at parsing the rank-0 payload even when the launch host is outside `--hosts` and rank 0 lands on a remote host (the REVIEW-CR-02 submitter-laptop scenario in `05-REVIEW.md`). The launcher never raises a misleading `"mpi4py not installed on all hosts"` error when the probe semantically succeeded. Non-rank-0 processes are silent on stdout, enforced by a structural unit test that runs the probe-script entry point with `MPI_COMM_WORLD.Get_rank` mocked to non-zero values and asserts captured stdout is empty. The pre-existing file-based transport (`tempfile.mkstemp` at `cluster_collector.py:3348`, `argv[3]=output_file` plumbing, write/read sites at lines 2689 / 2813 / 3505) is removed in the same plan as the fix — argv signature reduces from three positional args to two (`argv[1]=data_dir argv[2]=run_uuid`). Closes REVIEW-CR-02 from `05-REVIEW.md`.
 
+### Hand-Fill Affordance (HANDFILL)
+
+Added by Phase 5.2 (INSERTED 2026-06-25) to close the LIFE-04 hand-fill survival gap surfaced during Phase 5 UAT Test 3: today, leaf-level Pitfall 3(a) SER-02 at `diff.py:272-280` correctly preserves the submitter's value for any field where the in-memory image is `""` and the on-disk YAML is non-empty — but the rule never fires for the 7 scalar fingerprint positions because fingerprint-level orphan-pairing at `diff.py:235-238` orphans the on-disk and recomputed stanzas as DIFFERENT clients before leaf comparison ever runs.
+
+- [ ] **HANDFILL-01**: When the in-memory image has `""` at a scalar fingerprint position (one of the 7 `_FINGERPRINT_KEYS` dotted-key entries: `chassis.cpu_model`, `chassis.cpu_qty`, `chassis.cpu_cores`, `chassis.memory_capacity`, `chassis.model_name`, `operating_system.name`, `operating_system.version`) and the on-disk YAML has a non-empty value at that same position (a submitter hand-fill), the diff layer MUST NOT orphan the two stanzas as different clients. Instead, `diff_node_dict_lists` runs a two-pass pairing (D-62): pass 1 indexes both sides by exact fingerprint and pairs identical fingerprints (existing behavior preserved); pass 2 (NEW) "soft-pairs" any remaining in-memory orphan with at least one `""` scalar position against an on-disk orphan whose NON-EMPTY scalar positions all align AND whose 4 callable signature positions (`networking_sig`, `sysctl_sig`, `environment_sig`, `drives_sig`) match exactly (D-61 — signatures stay strict-match because users do not hand-edit them). If exactly one such on-disk orphan exists, the two are treated as the same client and fall through to leaf-level Pitfall 3(a) SER-02. If MORE than one on-disk orphan qualifies (D-63 ambiguous case), both sides emit `<absent>`/`<present>` DiffEntries per D-46/D-47 (conservative fallback — never silently conflate distinct machines). Reverse direction (recomputed non-empty + on-disk `""` — the collector finally learned a value the user did not hand-fill, D-60): the diff layer emits a one-time INFO log on the operator's terminal naming the field path, the resolved value, the previous on-disk value (`""`), and a hint that the on-disk file is intentionally unchanged per LIFE-04; NO DiffEntry is appended; NO SystemDriftError is raised. Real drift (recomputed non-empty value X disagrees with on-disk non-empty value Y, both `!= ""`) STILL raises `SystemDriftError E404` per existing LIFE-02/LIFE-03 contracts (SC#4) — the hand-fill affordance is strictly empty-side adopt-on-empty; never silences a non-empty disagreement. Scope is limited to `mlpstorage_py/system_description/diff.py` — no change to `_FINGERPRINT_KEYS` composition (`auto_generator.py:184`), no change to `_compute_fingerprint` (`diff.py:176`), no change to the on-disk format, no change to LIFE-04 no-touch (diff layer is read-only). Phase: 5.2.
+
 ## v2 Requirements
 
 Deferred — not in current milestone, but flagged for future consideration.
@@ -121,13 +127,16 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 | LIFE-04 | Phase 5 | Complete |
 | CAP-01  | Phase 5 / Plan 05-03 + 05-05 | Complete |
 | CAP-02  | Phase 5 / Plan 05-04 | Complete |
-| HARDEN-01 | Phase 5.1 | Pending — E201 regression guard for CAP-01 datagen path (fix shipped 754763a + 29f1062; 5.1 retroactively locks with RED-first test) |
-| HARDEN-02 | Phase 5.1 | Pending — REVIEW-CR-02 stdout-transport fix for CAP-02 launcher (rank 0 may land remote when launch host is outside `--hosts`) |
+| HARDEN-01 | Phase 5.1 | Complete (05.1-01) — E201 regression guard for CAP-01 datagen path (RED `d13b418` + GREEN `e5b7b8b`; original fix `754763a` + `29f1062`) |
+| HARDEN-02 | Phase 5.1 | Complete (05.1-02) — REVIEW-CR-02 stdout-transport fix for CAP-02 launcher (RED `f55fd5d` + GREEN `086b2a9`) |
+| HARDEN-03 | Phase 5.1 | Complete (05.1-03) — `capture_or_verify_code_image` args.orgname-first precedence (RED `795a088` + GREEN `3dbc2d3`); closes UAT Test 1 init↔env-validator gap |
+| HARDEN-04 | Phase 5.1 | Complete (05.1-04) — OpenMPI 4.x tag-strip regex fix + `_strip_tag_output_prefix` helper (RED `5682e60` + GREEN `362cffa` + REFACTOR `b8e5eea`); closes UAT Test 2 tag-format regression |
+| HANDFILL-01 | Phase 5.2 | Pending — diff-layer soft-pair pre-pass; hand-filled scalar fingerprint positions survive re-run with empty-collector; reverse-direction INFO log; real drift still raises |
 
 **Coverage:**
 
-- v1 requirements: 26 total (24 original + 2 HARDEN from Phase 5.1)
-- Mapped to phases: 26
+- v1 requirements: 27 total (24 original + 2 HARDEN from Phase 5.1 + 1 HANDFILL from Phase 5.2; HARDEN-03/04 are gap-closure for HARDEN-01/02 inside Phase 5.1, not new top-level scope)
+- Mapped to phases: 27
 - Unmapped: 0
 
 **Per-phase totals:**
@@ -137,8 +146,9 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for fu
 - Phase 3 (Chassis Model + Networking Coverage): 2 requirements — COLL-03, COLL-04
 - Phase 4 (Sysctl, Environment, and Drives Coverage): 3 requirements — COLL-05, COLL-06, COLL-07
 - Phase 5 (Logical Diff Lifecycle + Capacity Gate): 5 requirements — LIFE-02, LIFE-03, LIFE-04, CAP-01, CAP-02
-- Phase 5.1 (Phase 5 Hardening & UAT Closeout): 2 requirements — HARDEN-01, HARDEN-02
+- Phase 5.1 (Phase 5 Hardening & UAT Closeout): 4 requirements — HARDEN-01, HARDEN-02, HARDEN-03, HARDEN-04 (HARDEN-03/04 are gap-closure for the original HARDEN-01/02 fix trains, added 2026-06-24 after Phase 5.1's own UAT surfaced the secondary regressions)
+- Phase 5.2 (Diff-Layer Hand-Fill Affordance): 1 requirement — HANDFILL-01
 
 ---
 *Requirements defined: 2026-06-18*
-*Last updated: 2026-06-24 — Phase 5.1 (INSERTED) added HARDEN-01 (E201 regression guard for CAP-01 datagen path) and HARDEN-02 (REVIEW-CR-02 stdout-transport fix for CAP-02 launcher); 2026-06-22 added CAP-02 (shared-filesystem verification) to Phase 5 scope per submitter clarification on multi-host datagen / run gating.*
+*Last updated: 2026-06-25 — Phase 5.2 (INSERTED) added HANDFILL-01 (diff-layer soft-pair pre-pass for hand-filled scalar fingerprint positions); HARDEN-03 + HARDEN-04 retroactively added 2026-06-24 as gap-closure inside Phase 5.1 after Phase 5.1's own UAT surfaced secondary regressions in the original HARDEN-01/02 fix trains; 2026-06-24 added HARDEN-01 (E201 regression guard) and HARDEN-02 (REVIEW-CR-02 stdout-transport fix); 2026-06-22 added CAP-02 to Phase 5 scope.*
