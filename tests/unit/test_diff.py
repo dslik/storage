@@ -662,3 +662,85 @@ class TestDiffHandFillAffordance:
             "topologies must pair correctly without conflating Intel-A "
             "or Intel-B."
         )
+
+    # --- (h) CR-01 / WR-02 partial-ambiguity regression lock -------------
+
+    def test_partial_ambiguity_unique_then_ambiguous_does_not_greedily_conflate(self):
+        # CR-01 / WR-02 regression: a single-pass greedy pairing consumes
+        # disks as it walks the sorted mem fingerprints. When the FIRST
+        # mem (by repr sort) uniquely matches a disk that a LATER mem
+        # would also have considered a candidate against the original
+        # pool, the greedy pass quietly conflates the later mem with the
+        # leftover disk. Per the reviewer's two-phase fix (CR-01), a pair
+        # is committed only when (a) the mem has exactly one candidate
+        # AND (b) that candidate's claim_count is 1 across all mems.
+        #
+        # Construction (engineered so the unique mem sorts BEFORE the
+        # ambiguous mem under key=repr — which requires the unique mem
+        # to have "" at the FIRST scalar position, since "" < any
+        # non-empty string in repr ordering):
+        #   - DiskA: cpu_model="A", model_name="P"
+        #   - DiskB: cpu_model="A", model_name="Q"
+        #   - Mem_X: cpu_model="", model_name="P"
+        #       fp[0]="" sorts first. Uniquely matches DiskA (model "P"
+        #       pins it; DiskB fails non-empty mismatch on model).
+        #   - Mem_Y: cpu_model="A", model_name=""
+        #       fp[0]="A" sorts after Mem_X. Candidates against ORIGINAL
+        #       pool = {DiskA, DiskB} (cpu_model "A" matches both;
+        #       model_name="" wildcards). Genuinely ambiguous.
+        #
+        # Greedy: Mem_X consumes DiskA, then Mem_Y sees only {DiskB}
+        # remaining → unique → silently pairs Mem_Y↔DiskB. WRONG.
+        # Two-phase: claim_count[DiskA]=2 (Mem_X and Mem_Y both list it);
+        # Mem_X's unique cand is contested → does not pair. Mem_Y has 2
+        # cands → does not pair. Both fall through to orphan emission.
+        on_disk = [
+            _make_node_dict(cpu_model="A", model_name="P"),
+            _make_node_dict(cpu_model="A", model_name="Q"),
+        ]
+        in_mem = [
+            _make_node_dict(cpu_model="", model_name="P"),
+            _make_node_dict(cpu_model="A", model_name=""),
+        ]
+        r = diff_node_dict_lists(on_disk, in_mem)
+        assert r.empty is False, (
+            "CR-01: greedy soft-pair consumption MUST NOT convert genuine "
+            "D-63 ambiguity into silent conflation. Mem_Y originally "
+            "matched both DiskA and DiskB on the unconsumed pool; the "
+            "two-phase algorithm must reject Mem_Y's pairing (and "
+            "Mem_X's contested pairing) and surface both as orphans."
+        )
+        assert any("fingerprint=" in e.path for e in r.entries), (
+            "CR-01 fallback must emit fingerprint-level orphan entries "
+            "when the two-phase algorithm rejects contested pairings."
+        )
+
+    # --- (i) WR-01 D-60 scope regression lock ----------------------------
+
+    def test_d60_does_not_swallow_non_fingerprint_leaf_changes(self):
+        # WR-01 regression: Phase 5.2's D-60 reverse-direction INFO log
+        # was wired into the every-leaf comparison loop in
+        # `_emit_leaf_diffs`, which silently swallows ANY on-disk "" →
+        # in-memory non-empty string change — including non-fingerprint
+        # leaves like friendly_description. Pre-Phase-5.2 such a change
+        # was a DiffEntry (drift). The fix scopes D-60 to the 7 scalar
+        # fingerprint positions only.
+        #
+        # Both stanzas share the default fingerprint (exact-match pass-1)
+        # so they fall into `_emit_leaf_diffs` via the common-fp branch.
+        # The reverse-direction "" → non-empty change is on
+        # `friendly_description`, which is NOT a fingerprint position.
+        on_disk = [_make_node_dict(friendly_description="")]
+        in_mem = [_make_node_dict(friendly_description="Login Node 0")]
+        r = diff_node_dict_lists(on_disk, in_mem)
+        assert r.empty is False, (
+            "WR-01: D-60 must scope to the 7 scalar fingerprint "
+            "positions only. Non-fingerprint leaves (e.g. "
+            "friendly_description) that change from '' to non-empty "
+            "must still surface as DiffEntries per pre-Phase-5.2 "
+            "drift semantics."
+        )
+        assert any("friendly_description" in e.path for e in r.entries), (
+            "WR-01: the friendly_description '' → 'Login Node 0' "
+            "change must be the surfaced DiffEntry path."
+        )
