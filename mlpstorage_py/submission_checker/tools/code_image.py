@@ -717,7 +717,7 @@ def capture_or_verify_code_image(args, env, log):
         matched = verify_source_against_image(source_root, code_dir, log)
     except (MissingHashFile, MalformedHashFile) as e:
         log.error(str(e))
-        log.error(f"code image at: {code_dir}")
+        log.error(f"affected code image at: {code_dir}")
         log.error(
             "either delete `code/` and re-run to re-capture, "
             "or restore the original capture."
@@ -734,5 +734,5 @@ def capture_or_verify_code_image(args, env, log):
     else:  # mode == "open"
         msg = "all runs of this type must use the same codebase"
     log.error(msg)
-    log.error(f"code image at: {code_dir}")
+    log.error(f"the running code does not match the captured code image at: {code_dir}")
     raise CodeImageError(msg)
