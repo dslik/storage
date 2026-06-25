@@ -33,9 +33,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-# Stub heavy deps the benchmark imports expect (matches kvcache test file pattern).
+# Stub heavy deps the benchmark imports expect. Use importlib.util.find_spec —
+# checking sys.modules alone would install a MagicMock for a perfectly
+# importable module that just hasn't been imported yet, which then poisons
+# later test collections by causing find_spec to raise ValueError on the
+# Mock's __spec__. Matches the safe pattern in tests/unit/test_benchmarks_kvcache.py.
+import importlib.util as _ilu
 for _dep in ('pyarrow', 'pyarrow.ipc', 'psutil'):
-    if _dep not in sys.modules:
+    if _ilu.find_spec(_dep) is None and _dep not in sys.modules:
         sys.modules[_dep] = MagicMock()
 
 from mlpstorage_py.cluster_collector import HostSystemInfo

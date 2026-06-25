@@ -501,6 +501,14 @@ class TrainingBenchmark(DLIOBenchmark):
             parts.append(f"--data-dir={self.args.data_dir}")
         else:
             parts.append("--data-dir=<INSERT_DATA_DIR>")
+        # --systemname is required on emitting subcommands (LAY-04); propagate
+        # the datasize-side value so the emitted datagen string round-trips
+        # through parse_arguments() without --systemname-required rejection.
+        systemname = getattr(self.args, "systemname", None)
+        if systemname:
+            parts.append(f"--systemname={systemname}")
+        else:
+            parts.append("--systemname=<INSERT_SYSTEMNAME>")
 
         if params_kv:
             params_str = " ".join(f"{k}={v}" for k, v in params_kv.items())

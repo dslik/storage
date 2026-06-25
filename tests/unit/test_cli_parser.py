@@ -516,16 +516,18 @@ class TestSystemname:
         requirement and the parsed namespace carries that value.
         """
         monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys-v1')
-        # Re-import config so DEFAULT_SYSTEMNAME picks up the env value, then
-        # re-import the modules that captured it at import time.
+        # Patch DEFAULT_SYSTEMNAME in place — do NOT reload mlpstorage_py.config.
+        # Reloading config re-mints PARAM_VALIDATION (and other enums), breaking
+        # `enum_instance in [enum_class.MEMBER, ...]` checks in any module that
+        # already imported them (notably mlpstorage_py.rules.*). Downstream CLI
+        # builders captured DEFAULT_SYSTEMNAME by name at import time, so reload
+        # them so they pick up the patched value.
         import importlib
         import mlpstorage_py.config as cfg_mod
         import mlpstorage_py.cli.common_args as common_args_mod
-        importlib.reload(cfg_mod)
+        saved_systemname = cfg_mod.DEFAULT_SYSTEMNAME
+        cfg_mod.DEFAULT_SYSTEMNAME = 'env-sys-v1'
         importlib.reload(common_args_mod)
-        # Re-importing common_args invalidates downstream builders that
-        # captured DEFAULT_SYSTEMNAME by name — reload the cli_parser
-        # chain so the new default propagates.
         import mlpstorage_py.cli as cli_mod
         importlib.reload(cli_mod)
         import mlpstorage_py.cli_parser as cli_parser_mod
@@ -540,7 +542,7 @@ class TestSystemname:
             )
         finally:
             monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
-            importlib.reload(cfg_mod)
+            cfg_mod.DEFAULT_SYSTEMNAME = saved_systemname
             importlib.reload(common_args_mod)
             importlib.reload(cli_mod)
             importlib.reload(cli_parser_mod)
@@ -555,10 +557,17 @@ class TestSystemname:
         """
         monkeypatch.setenv('MLPERF_RESULTS_DIR', '/env/results')
         monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys')  # so systemname check passes
+        # Patch DEFAULT_RESULTS_DIR + DEFAULT_SYSTEMNAME in place — do NOT
+        # reload mlpstorage_py.config (see sibling test for the enum-identity
+        # rationale). Reload the downstream CLI builders so the patched values
+        # propagate into argparse defaults.
         import importlib
         import mlpstorage_py.config as cfg_mod
         import mlpstorage_py.cli.common_args as common_args_mod
-        importlib.reload(cfg_mod)
+        saved_results_dir = cfg_mod.DEFAULT_RESULTS_DIR
+        saved_systemname = cfg_mod.DEFAULT_SYSTEMNAME
+        cfg_mod.DEFAULT_RESULTS_DIR = '/env/results'
+        cfg_mod.DEFAULT_SYSTEMNAME = 'env-sys'
         importlib.reload(common_args_mod)
         import mlpstorage_py.cli as cli_mod
         importlib.reload(cli_mod)
@@ -581,7 +590,8 @@ class TestSystemname:
         finally:
             monkeypatch.delenv('MLPERF_RESULTS_DIR', raising=False)
             monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
-            importlib.reload(cfg_mod)
+            cfg_mod.DEFAULT_RESULTS_DIR = saved_results_dir
+            cfg_mod.DEFAULT_SYSTEMNAME = saved_systemname
             importlib.reload(common_args_mod)
             importlib.reload(cli_mod)
             importlib.reload(cli_parser_mod)
@@ -612,12 +622,8 @@ class TestSystemname:
         the slice-3 / slice-4 generate_output_location path, not the parser.
         """
         monkeypatch.setenv('MLPERF_SYSTEMNAME', 'env-sys')
-        # Reload config so DEFAULT_SYSTEMNAME picks up the env value.
-        import importlib
+        # Call the env-resolver helper directly — reloading mlpstorage_py.config
+        # re-mints PARAM_VALIDATION and corrupts enum-identity in downstream
+        # tests (see _resolve_default_systemname docstring in config.py).
         import mlpstorage_py.config as cfg_mod
-        importlib.reload(cfg_mod)
-        try:
-            assert cfg_mod.DEFAULT_SYSTEMNAME == 'env-sys'
-        finally:
-            monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
-            importlib.reload(cfg_mod)
+        assert cfg_mod._resolve_default_systemname() == 'env-sys'

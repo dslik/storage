@@ -13,6 +13,20 @@ collect_ignore_glob = [
     "integration/test_s3_connectivity.py",  # argparse.parse_args() at module level
     "integration/test_compat_runtime.py",   # full S3 smoke-test at module level
     "integration/test_dlio_storage.py",     # standalone script; StorageType.S3DLIO not in installed package
+    # Standalone mpirun launcher scripts (per tests/README.md §"MPI tests").
+    # Importing them at collection time runs `from mpi4py import MPI;
+    # MPI.COMM_WORLD.Get_rank()` in the pytest interpreter, leaving MPI in a
+    # half-initialized state that later corrupts the spawned-mpirun probe
+    # tests in test_shared_fs_probe_real_mpi.py (silent returncode=1).
+    "integration/test_mpi_basic.py",        # standalone script: mpirun -np 8 python ...
+    "integration/test_dlio_mpi.py",         # standalone script: mpirun -np 8 python ...
+    "integration/test_multi_endpoint_integration.py",  # standalone DLIO MPI script (was module-level pytest.mark.skip)
+    # Standalone diagnostic scripts: print + return True/False + __main__ driver,
+    # no pytest assertions. Documented in tests/README.md for direct python
+    # invocation. Pytest collection silently "passes" them with
+    # PytestReturnNotNoneWarning regardless of internal outcome (false-pass).
+    "integration/test_storage_library.py",
+    "integration/test_ab_comparison.py",
 ]
 
 import json

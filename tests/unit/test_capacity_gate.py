@@ -32,10 +32,15 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 # Stub heavy deps the benchmark imports expect (pre-existing dev-env psutil gap
-# documented in STATE.md Deferred Items; matches the kvcache + integration test
-# pattern at tests/integration/test_systemname_yaml_end_to_end.py:36-39).
+# documented in STATE.md Deferred Items). Use importlib.util.find_spec — checking
+# sys.modules alone would install a MagicMock for a perfectly importable module
+# that just hasn't been imported yet, which then poisons later test collections
+# (e.g. test_parquet_reader, test_dlio_object_storage) by causing find_spec to
+# raise ValueError on the Mock's __spec__. Matches the safe pattern in
+# tests/unit/test_benchmarks_kvcache.py.
+import importlib.util as _ilu
 for _dep in ("pyarrow", "pyarrow.ipc", "psutil"):
-    if _dep not in sys.modules:
+    if _ilu.find_spec(_dep) is None and _dep not in sys.modules:
         sys.modules[_dep] = MagicMock()
 
 from mlpstorage_py.benchmarks.base import Benchmark

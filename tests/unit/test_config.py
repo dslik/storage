@@ -8,7 +8,6 @@ Tests cover:
 - DEFAULT_RESULTS_DIR env-var override
 """
 
-import importlib
 import os
 import tempfile
 import pytest
@@ -361,19 +360,13 @@ class TestDefaultSystemname:
         """DEFAULT_SYSTEMNAME reflects MLPERF_SYSTEMNAME env var when set, empty otherwise."""
         import mlpstorage_py.config as cfg_mod
 
-        # Env var set → constant reflects the value
+        # Call the helper directly — reloading mlpstorage_py.config re-mints
+        # PARAM_VALIDATION (and other enums), breaking enum-identity in
+        # already-imported modules like mlpstorage_py.rules.* and corrupting
+        # downstream integration tests.
         monkeypatch.setenv('MLPERF_SYSTEMNAME', 'sys-v1')
-        importlib.reload(cfg_mod)
-        try:
-            assert cfg_mod.DEFAULT_SYSTEMNAME == 'sys-v1'
-        finally:
-            monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
-            importlib.reload(cfg_mod)
+        assert cfg_mod._resolve_default_systemname() == 'sys-v1'
 
-        # Env var unset → empty string default
-        importlib.reload(cfg_mod)
-        try:
-            assert cfg_mod.DEFAULT_SYSTEMNAME == ''
-        finally:
-            importlib.reload(cfg_mod)  # restore original state for other tests
+        monkeypatch.delenv('MLPERF_SYSTEMNAME', raising=False)
+        assert cfg_mod._resolve_default_systemname() == ''
 

@@ -908,15 +908,15 @@ class Benchmark(BenchmarkInterface, abc.ABC):
         self.verification = self.benchmark_run_verifier.verify()
         self.logger.verboser(f'Benchmark verification result: {self.verification}')
 
-        # Source of truth is ``args.mode`` (post-PR #412 modal CLI:
-        # closed|open|whatif as the first positional). The legacy bool
-        # pair ``args.closed``/``args.open`` is kept as a fallback so
-        # pre-#412 test fixtures and any external callers building
-        # Namespaces by hand still work — fixes regression where the
-        # #349 dispatch was never migrated to the new mode string.
-        mode = getattr(self.args, 'mode', None)
-        closed_mode = (mode == 'closed') or getattr(self.args, 'closed', False)
-        open_mode = (mode == 'open') or getattr(self.args, 'open', False)
+        # ``args.mode`` is the source of truth (post-PR #412 modal CLI:
+        # closed|open|whatif as the first positional, argparse-enforced).
+        # The ``not closed_mode and not open_mode`` branch below is the
+        # explicit short-circuit for ``mode == 'whatif'``: whatif runs
+        # without verification by design. Do not delete it — whatif is a
+        # supported execution mode.
+        mode = self.args.mode
+        closed_mode = (mode == 'closed')
+        open_mode = (mode == 'open')
 
         if not closed_mode and not open_mode:
             self.logger.warning(f'Running the benchmark without verification for open or closed configurations. These results are not valid for submission. Use closed or open as the first positional argument to specify a configuration.')

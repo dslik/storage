@@ -304,11 +304,12 @@ class TestGenerateOutputLocation:
         mock_benchmark.args.orgname = 'Acme'
         mock_benchmark.args.systemname = 'sys-v1'
         mock_benchmark.args.vdb_engine = 'milvus'
+        mock_benchmark.args.vdb_index = 'diskann'
         mock_benchmark.args.command = 'run'
 
         result = generate_output_location(mock_benchmark, datetime_str='20250111_143022')
 
-        assert '/results/open/Acme/results/sys-v1/vector_database/milvus/run/20250111_143022' == result
+        assert '/results/open/Acme/results/sys-v1/vector_database/milvus/diskann/run/20250111_143022' == result
 
     def test_kvcache_benchmark_output_location(self, mock_logger):
         """generate_output_location creates correct canonical path for kv_cache benchmarks."""
@@ -343,7 +344,7 @@ class TestGenerateOutputLocation:
 
     @pytest.mark.parametrize('benchmark_type, model_or_engine_field, model_or_engine, expected_segment', [
         (BENCHMARK_TYPES.training, 'model', 'unet3d', 'training/unet3d/run/'),
-        (BENCHMARK_TYPES.vector_database, 'vdb_engine', 'milvus', 'vector_database/milvus/run/'),
+        (BENCHMARK_TYPES.vector_database, 'vdb_engine', 'milvus', 'vector_database/milvus/diskann/run/'),
         (BENCHMARK_TYPES.kv_cache, 'model', 'llama3.1-8b', 'kv_cache/llama3.1-8b/run/'),
     ])
     def test_canonical_prefix_all_benchmark_types(
@@ -358,6 +359,10 @@ class TestGenerateOutputLocation:
         mock_benchmark.args.orgname = 'Acme'
         mock_benchmark.args.systemname = 'sys-v1'
         mock_benchmark.args.command = 'run'
+        # vector_database also requires --vdb-index per Rules.md §2.1.27 split
+        # (AISAQ vs DISKANN/HNSW must live in separate trees). Harmless for
+        # other benchmark types since they don't read this attribute.
+        mock_benchmark.args.vdb_index = 'diskann'
         setattr(mock_benchmark.args, model_or_engine_field, model_or_engine)
 
         result = generate_output_location(mock_benchmark, datetime_str='20250111_143022')
