@@ -19,6 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
 - [ ] **Phase 5: Logical Diff Lifecycle + Capacity Gate** — On re-runs, diff the in-memory image against the on-disk YAML for collector-owned fields and fail on drift; preserve user-filled blanks when unchanged; refuse to start `datagen` if the dataset destination directory lacks free space.
 - [x] **Phase 5.1: Phase 5 Hardening & UAT Closeout** *(INSERTED, RE-OPENED 2026-06-24)* — Originally shipped 2026-06-25 with HARDEN-01 + HARDEN-02 (Plans 05.1-01 + 05.1-02); Phase 5.1 UAT (2026-06-24) surfaced two additional regressions inside the HARDEN-01/HARDEN-02 fix trains. (a) HARDEN-03: `capture_or_verify_code_image` at `code_image.py:552` reads MLPSTORAGE_ORGNAME from env only and never consults `args.orgname` (which the LAY-03 gate populates from the sentinel) — so `mlpstorage init` + `closed training datagen` still fails E101, blocking HARDEN-01 from being exercised end-to-end. (b) HARDEN-04: the tag-strip regex shipped in HARDEN-02 GREEN (086b2a9) assumed OpenMPI emits `[host:rank] ` prefixes; the actual OpenMPI 4.x format is `[rank,jobid]<channel>:` (verified on 4.1.6); the broken regex leaves `<stdout>:` glued to the JSON; `json.loads` raises JSONDecodeError. Both regressions are blockers. Plans 05.1-03 (HARDEN-03) + 05.1-04 (HARDEN-04) close them via the RED-first discipline per `feedback_tdd_red_first_even_for_shipped_fixes`. (completed 2026-06-25)
+- [ ] **Phase 5.2: Diff-Layer Hand-Fill Affordance** *(INSERTED 2026-06-25)* — Phase 5 UAT Test 3 surfaced an asymmetry: `friendly_description` (NOT in the D-38 11-tuple fingerprint) survives hand-edits across re-runs as designed by LIFE-04, but fingerprint fields that legitimately default to `""` from the auto-collector (e.g. `chassis.model_name` on generic Linux without parseable DMI) are *de facto* hand-fillable — yet hand-filling them changes the client's fingerprint identity and triggers SystemDriftError on the next run. Today: a leaf-level Pitfall 3(a) SER-02 rule already implements "in-memory empty + on-disk non-empty → keep submitter's value" at `diff.py:272-280`, but it never fires for fingerprint fields because fingerprint-level pairing at `diff.py:235-238` orphans the on-disk-vs-recomputed stanzas as different clients before leaf comparison runs. Phase 5.2 adds a "soft-pair" pass that, before declaring fingerprint orphans, attempts to match recomputed↔on-disk clients by their non-empty fingerprint positions; if a unique pair exists, treat as same client and let leaf-level Pitfall 3(a) handle the empty-vs-filled cases. Net result: empty-from-collector becomes a hand-fill affordance even for fingerprint fields; real hardware drift (collector returns a NEW non-empty value that differs from the on-disk hand-fill) still raises legitimately.
 
 ## Phase Details
 
@@ -228,6 +229,39 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] 05.1-02-PLAN.md — HARDEN-02: replace CAP-02 launcher file transport with stdout markers + --tag-output; delete file-based code; add silence test + localhost real-mpirun integration test; add 05.1-UAT.md Test 2
 
+### Phase 5.2: Diff-Layer Hand-Fill Affordance (INSERTED)
+
+**Goal:**
+**As a** submitter who hand-fills a value into the auto-generated `systemname.yaml`
+for a field the collector returned `""` for on the previous run (e.g.
+`chassis.model_name` on a generic Linux host without parseable DMI strings),
+**I want to** be able to re-run the benchmark against the same results-dir
+WITHOUT triggering `SystemDriftError E404`,
+**so that** I can enrich the auto-detected client identity with human-known
+context (model nicknames, hand-resolved chassis models, friendly hostnames)
+while still being protected against real hardware drift (collector returns a
+NEW, non-empty value that disagrees with my hand-fill).
+
+**Mode:** mvp
+**Depends on:** Phase 5 (LIFE-04 hand-fill survival rule + D-38 fingerprint composition)
+**Requirements:** HANDFILL-01
+**Success Criteria** (what must be TRUE):
+
+  1. `_compute_fingerprint(stanza)` semantics unchanged — the IDENTITY fingerprint is still the D-38 11-tuple of the stanza's own values; no behavior change for general-purpose callers (dedup, sort, render).
+  2. A new helper (call site internal to `diff_node_dict_lists`) does a "soft-pair" pass BEFORE the orphan-emission loop: for each in-memory stanza whose fingerprint has at least one `""` position, look for an on-disk stanza whose NON-EMPTY fingerprint positions all match the in-memory stanza at the same positions. If exactly one such on-disk stanza exists AND it has not already been paired, treat them as the same client.
+  3. Soft-paired clients fall through to existing leaf-level Pitfall 3(a) SER-02 logic (`diff.py:272-280`) — in-memory `""` + on-disk non-empty → silently keep submitter's value; in-memory non-empty + on-disk `""` → emit a diff entry recording the collector finally learned the value (NOT an error).
+  4. Real drift still raises: when soft-paired stanzas have a fingerprint-key field with non-empty values that DIFFER (`recomputed="X"` vs `on_disk="Y"`, both `!= ""`), `diff_node_dict_lists` emits a `DiffEntry` for that path and the surrounding lifecycle still raises `SystemDriftError`. The hand-fill affordance is strictly empty-side adopt-on-empty; never silences a non-empty disagreement.
+  5. Multi-client topologies pair correctly without conflating distinct machines: soft-pair requires at least one non-empty fingerprint position to match, AND uniqueness; ambiguous pairs (two on-disk candidates match) fall back to orphan-emission for safety.
+  6. New tests in `tests/unit/test_diff.py` lock the contract: (a) hand-filled fingerprint field survives a re-run when collector still returns `""`; (b) real drift still raises when collector returns a different non-empty value; (c) multi-client topology with one ambiguous soft-pair falls back cleanly to orphans, not silently conflated.
+  7. RED-first per `feedback_tdd_red_first_even_for_shipped_fixes`: failing tests committed before the production-code edit.
+  8. `pytest tests/unit -v` is GREEN modulo the documented pre-existing failures (test_datagen_command_generation.py, test_rules_calculations.py, test_benchmarks_base.py, test_generate_output_location.py, test_open_closed_flag_recognition.py). No NEW failures introduced.
+  9. Phase 5 success criteria #1-#8 unchanged — the existing LIFE-04 `friendly_description` survival case continues to work; nothing in this phase regresses Phase 5 behavior.
+
+**Plans:** 0/1 plans complete *(plan list filled in by `/gsd-plan-phase 5.2`)*
+**Wave 1**
+
+*(plan list pending — populated by /gsd-plan-phase 5.2 after /gsd-discuss-phase 5.2 scopes the work)*
+
 ## Progress
 
 **Execution Order:**
@@ -241,3 +275,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
 | 5. Logical Diff Lifecycle + Capacity Gate | 5/5 | Plans complete; awaiting verify | - |
 | 5.1. Phase 5 Hardening & UAT Closeout | 4/4 | Complete    | 2026-06-25 |
+| 5.2. Diff-Layer Hand-Fill Affordance | 0/? | Inserted; awaiting discuss → plan → execute | - |

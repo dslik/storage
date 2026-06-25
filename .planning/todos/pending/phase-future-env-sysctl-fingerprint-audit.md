@@ -1,10 +1,18 @@
 ---
-title: Phase 5.2 — audit environment + kernel sysctl values in client-identity fingerprint
+title: Future — audit environment + kernel sysctl values in client-identity fingerprint
 created: 2026-06-24
 status: pending
 severity: major
 resolves_phase: ""
-proposed_for: phase 5.2 (decimal/polish phase)
+proposed_for: post-v1.0 (deferred 2026-06-25 — does NOT block codebase freeze 2026-06-26)
+demoted_from: phase 5.2 (decimal slot reassigned to diff-layer hand-fill enhancement)
+demotion_reason: |
+  Immediate OMPI denylist is already shipped (commits 2bb8a38 RED + 0822c81 GREEN; lines
+  1207-1213 and 2184-2190 of mlpstorage_py/cluster_collector.py). The broader audit
+  (PMI_*, SLURM_*, PALS_*, HYDRA_*, PBS_*, LSB_*, KUBE_* + sysctl auto-tune curation +
+  D-38 re-think) is non-blocking for v1.0 freeze — only known-harmful identity-noise is
+  filtered today; cross-launcher submitters are out of scope for this freeze. Re-promote
+  to phase 5.3 or v1.1 milestone planning when ready.
 source: phase-05 UAT Test 3 (LIFE-04 hand-fill survival, OMPI env bug)
 ---
 
