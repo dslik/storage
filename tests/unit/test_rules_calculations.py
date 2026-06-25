@@ -191,6 +191,20 @@ class TestCalculateTrainingDataSize:
                 logger=mock_logger
             )
 
+    def test_raises_value_error_when_both_args_and_cluster_info_are_none(
+            self, mock_logger, sample_dataset_params, sample_reader_params):
+        """Issue #503 bug 1: with args=None and cluster_information=None the
+        function must raise ValueError instead of AttributeError. This is the
+        reportgen-loaded-from-disk path; the caller catches and skips."""
+        with pytest.raises(ValueError, match="cluster_information"):
+            calculate_training_data_size(
+                args=None,
+                cluster_information=None,
+                dataset_params=sample_dataset_params,
+                reader_params=sample_reader_params,
+                logger=mock_logger,
+            )
+
 
 class TestGenerateOutputLocation:
     """Tests for generate_output_location function."""
