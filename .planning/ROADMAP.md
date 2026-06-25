@@ -209,10 +209,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. `05-UAT.md` is updated: the failed gap (E201) is marked resolved with the fixing commit, and Test 4 transitions from `pending` to `passed` (or to an explicit hardware-blocked status with rationale — not left dangling as `pending`).
   6. No regression in Phase 5 success criteria #1-#8 — the existing diff-lifecycle and capacity-gate behaviors continue to hold after the fixes.
 
-**Plans:** 0 plans
-
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] TBD (run `/gsd-plan-phase 5.1` to break down)
+**Wave 1**
+
+- [x] 05.1-01-PLAN.md — HARDEN-01: lock E201 (cluster_information AttributeError) regression via RED/GREEN pair; mutate 05-UAT.md Resolutions + create 05.1-UAT.md Test 1
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 05.1-02-PLAN.md — HARDEN-02: replace CAP-02 launcher file transport with stdout markers + --tag-output; delete file-based code; add silence test + localhost real-mpirun integration test; add 05.1-UAT.md Test 2
 
 ## Progress
 
@@ -226,4 +231,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
 | 5. Logical Diff Lifecycle + Capacity Gate | 5/5 | Plans complete; awaiting verify | - |
-| 5.1. Phase 5 Hardening & UAT Closeout | 0/0 | Pending | - |
+| 5.1. Phase 5 Hardening & UAT Closeout | 1/2 | In Progress|  |

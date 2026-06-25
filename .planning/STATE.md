@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
+status: executing
 stopped_at: Phase 5.1 context gathered
-last_updated: "2026-06-24T23:53:53.185Z"
-last_activity: 2026-06-24 -- Phase 05 Plan 05 (integration tests) complete; Phase 5 vertical end-to-end COMPLETE
+last_updated: "2026-06-25T01:06:18.991Z"
+last_activity: 2026-06-25 -- Phase 05.1 execution started
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 26
-  completed_plans: 26
+  total_plans: 28
+  completed_plans: 27
   percent: 83
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-18)
 
 **Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
-**Current focus:** Phase 05 — logical-diff-lifecycle-capacity-gate
+**Current focus:** Phase 05.1 — phase-5-hardening-uat-closeout
 
 ## Current Position
 
-Phase: 05 (logical-diff-lifecycle-capacity-gate) — EXECUTING → ready for /gsd-verify-phase 05
-Plan: 5 of 5 COMPLETE (05-01 diff core + 05-02 LIFE-02/03/04 wiring + 05-03 CAP-01 capacity gate + 05-04 CAP-02 shared-FS probe + 05-05 integration tests all complete)
-Status: All 5 plans executed; awaiting verification
-Last activity: 2026-06-24 -- Phase 05 Plan 05 (integration tests) complete; Phase 5 vertical end-to-end COMPLETE
+Phase: 05.1 (phase-5-hardening-uat-closeout) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-06-25 -- Phase 05.1 execution started
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
@@ -65,6 +65,7 @@ Progress (Phase 5): [██████████] 100% (5/5 plans complete; P
 | Phase 05 P02 | 12 | 2 tasks | 4 files (1 created + 3 modified) |
 | Phase 05 P04 | 12 | 2 tasks | 4 files (1 created + 3 modified) |
 | Phase 05 P05 | 18 | 2 tasks | 2 files (1 created + 1 modified) |
+| Phase 05.1 P01 | 5min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -182,6 +183,8 @@ Recent decisions affecting current work:
 - Execute 05-05 deviation (Rule 3 - Blocking Issue): KVCache MagicMock(spec=KVCacheBenchmark) breaks class-attribute lookups — bind real _MODEL_CACHE_ESTIMATES + _MODEL_CACHE_DEFAULT to the mock instance before invoking required_bytes_for_capacity_gate. Same pattern as 05-03 KVCache fixture. Folded into Task 1 commit (1def795).
 - Execute 05-05 deviation (Rule 3 - Blocking Issue): real-mpirun tests need skipif(not mpi4py_importable) in addition to skipif(not shutil.which('mpirun')) — on systems with mpirun-but-no-mpi4py the original plan tests would run the script and hit the Pitfall 8 ImportError path (exit 1 with _mpi_import_error marker), which is NOT what B-3 Option A success locks. Adding the mpi4py skip honors the project's "UAT defer pattern for hardware" memory: SKIPPED-not-FAILED for missing real-hardware dependencies. Folded into Task 2 commit (347459a).
 - Execute 05-05 process: NO `git stash` used. Two-commit cadence: 1def795 (Task 1 — integration tests append) → 347459a (Task 2 — real-mpirun test file). Phase 5 vertical end-to-end COMPLETE; awaiting /gsd-verify-phase 05 to flip status from `executing` to `verified` and then /gsd-transition to advance to milestone close (v1 milestone shipping).
+- [Phase ?]: Phase 5.1 Plan 01: Adopted PATTERNS.md path (a) — extended existing tests/unit/test_capacity_gate.py::TestTrainingBenchmarkRequiredBytes (HARDEN-01 traceability comment) rather than creating the non-existent tests/unit/test_benchmarks_dlio.py named in CONTEXT D-51.
+- [Phase ?]: Phase 5.1 Plan 01: GREEN commit was --allow-empty per planner resolution; must_haves require dlio.py byte-identical pre/post.
 
 ### Pending Todos
 
@@ -207,7 +210,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-24T23:53:53.177Z
+Last session: 2026-06-25T01:06:04.356Z
 Stopped at: Phase 5.1 context gathered
 Resume file: .planning/phases/05.1-phase-5-hardening-uat-closeout/05.1-CONTEXT.md
 Next-session options:
