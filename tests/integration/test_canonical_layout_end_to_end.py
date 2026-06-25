@@ -471,11 +471,19 @@ class TestInitThenRunFullCliDispatch:
              "-dd", str(tmp_path / "data")],
         )
 
-        # The test passes when _ShortCircuit is raised (means we got
-        # past capture_or_verify_code_image without E101). It FAILS RED
-        # today because ConfigurationError E101 is raised at code_image.py:554
-        # BEFORE _ShortCircuit can fire.
-        from mlpstorage_py.errors import ConfigurationError
+        # The test passes when the env-var gate is cleared (i.e., the helper
+        # was invoked with args.orgname populated). It FAILS RED today
+        # because ConfigurationError E101 is raised at code_image.py:554
+        # BEFORE the helper can stash args._validated_orgname.
+        #
+        # POST-GATE exits we treat as "gate passed":
+        #   - _ShortCircuit (if our registry-stub fires)
+        #   - SystemExit (main's normal error handling for any downstream)
+        #   - DependencyError (DLIO not installed — main.py wraps it)
+        #   - Any non-ConfigurationError exception that occurs AFTER the
+        #     helper has been invoked (called["capture_or_verify_invoked"]
+        #     becomes True)
+        from mlpstorage_py.errors import ConfigurationError, DependencyError
         try:
             _main_mod._main_impl()
         except _ShortCircuit:
@@ -490,6 +498,12 @@ class TestInitThenRunFullCliDispatch:
                     f"Error: {e}"
                 )
             raise  # other ConfigurationError — not our concern
+        except DependencyError:
+            # GREEN: env-var gate passed; DLIO is not installed in the dev
+            # shell, which is fine. The contract under test is "the gate
+            # at code_image.py:552 consults args.orgname"; the helper
+            # already ran (captured the code image) before DLIO was checked.
+            pass
         except SystemExit:
             # main._main_impl may sys.exit() from history or other branches.
             # That's fine — what matters is no E101 was raised.
