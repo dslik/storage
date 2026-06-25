@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Phase 5.2 context gathered
-last_updated: "2026-06-25T15:37:23.361Z"
-last_activity: 2026-06-25
+last_updated: "2026-06-25T16:09:14.019Z"
+last_activity: 2026-06-25 -- Phase 05.2 execution started
 progress:
   total_phases: 7
-  completed_phases: 6
-  total_plans: 30
-  completed_plans: 30
-  percent: 86
+  completed_phases: 7
+  total_plans: 31
+  completed_plans: 31
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-18)
 
 **Core value:** A storage submitter can hand a benchmark result directory to the MLCommons submission checker and have it pass — without hand-tuning the submission package against a moving target.
-**Current focus:** Phase 05.1 — phase-5-hardening-uat-closeout
+**Current focus:** Phase 05.2 — diff-layer-hand-fill-affordance-inserted
 
 ## Current Position
 
-Phase: 05.1
-Plan: Not started
+Phase: 05.2 (diff-layer-hand-fill-affordance-inserted) — EXECUTING
+Plan: 1 of 1
 Status: Phase complete — ready for verification
-Last activity: 2026-06-25
+Last activity: 2026-06-25 -- Phase 05.2 execution started
 
 Progress (Phase 1): [██████████] 100%
 Progress (Phase 2): [██████████] 100% (6/6 plans complete; verification 7/7 passed; UAT 4/4 passed)
@@ -69,6 +69,7 @@ Progress (Phase 5): [██████████] 100% (5/5 plans complete; P
 | Phase 05.1 P01 | 5min | 3 tasks | 3 files |
 | Phase 05.1 P02 | 15min | 3 tasks | 5 files |
 | Phase 05.1 P04 | 36min | 4 tasks | 4 files |
+| Phase 05.2 P01 | 25 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -190,6 +191,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 5.1 Plan 01: GREEN commit was --allow-empty per planner resolution; must_haves require dlio.py byte-identical pre/post.
 - [Phase ?]: HARDEN-02: stdout-marker transport replaces file transport (D-54); --tag-output + BEGIN/END markers + parametrized silence test as belt-and-suspenders (D-55); file-based code DELETED in same commit (D-57)
 - [Phase ?]: HARDEN-04: Extracted _strip_tag_output_prefix helper as single source of truth for OpenMPI 4.x tag-strip regex; consumed by production launcher + 4 integration tests + 2 unit tests
+- [Phase ?]: D-60 reverse-direction (Phase 5.2): on-disk empty + in-memory non-empty scalar emits INFO log (no DiffEntry, no drift); LIFE-04 keeps on-disk file unchanged.
+- [Phase ?]: D-62 two-pass pairing in diff_node_dict_lists: exact-match (pass-1), soft-pair the orphans across hand-filled scalar positions (pass-2), surviving D-46/D-47 orphan emission (pass-3).
+- [Phase ?]: D-63 ambiguous soft-pair candidates fall back to orphan emission; never silently conflate distinct machines.
 
 ### Pending Todos
 
@@ -215,7 +219,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-25T15:37:23.353Z
+Last session: 2026-06-25T16:08:46.156Z
 Stopped at: Phase 5.2 context gathered
 Resume file: .planning/phases/05.2-diff-layer-hand-fill-affordance-inserted/05.2-CONTEXT.md
 Next-session options:
