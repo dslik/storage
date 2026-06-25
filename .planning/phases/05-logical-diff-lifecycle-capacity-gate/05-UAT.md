@@ -79,6 +79,7 @@ expected: |
   CR-02) and tracked into Phase 6 / defect backlog, OR a fix is staged before phase sign-off.
 why_human: Requires a multi-host deployment where the launch host is outside the rank list — not testable from the local dev shell.
 result: [pending]
+carry_forward: carried forward to a separate hardware-verification cycle; re-run via /gsd-verify-work .planning/phases/05.1-phase-5-hardening-uat-closeout/05.1-UAT.md once multi-host hardware is available (D-58, D-59).
 
 ## Summary
 
@@ -92,7 +93,8 @@ blocked: 0
 ## Gaps
 
 - truth: "`mlpstorage training unet3d datagen` completes the CAP-01 capacity check and proceeds to data generation."
-  status: failed
+  status: resolved
+  resolved_by: 754763a, 29f1062, d13b418, e5b7b8b
   reason: |
     User reported: TrainingBenchmark crashes during datagen with E201 — `'TrainingBenchmark' object has no attribute 'cluster_information'`.
     Repro: `./mlpstorage init BigCo /tmp/nerf-results && ./mlpstorage closed training unet3d datagen file -rd /tmp/nerf-results -np 4 -sn BigMachine -dd /tmp/nerf-data`.
@@ -133,3 +135,14 @@ blocked: 0
   back from rank 0's host before reading.
 
 These are flagged for awareness during UAT — Test #4 may surface CR-02 directly.
+
+## Resolutions
+
+### HARDEN-01 / E201 cluster_information AttributeError on datagen path
+
+- 754763a fix(05-fix): GREEN — TrainingBenchmark CAP-01 lazy-collects cluster_information for datagen path
+- 29f1062 fix(05-fix): degrade CAP-01 gracefully when system memory is undeterminable
+- d13b418 test(05.1-fix-cap01-datagen): RED — locks the AttributeError-free contract via tests/unit/test_capacity_gate.py::TestTrainingBenchmarkRequiredBytes (HARDEN-01)
+- e5b7b8b fix(05.1-fix-cap01-datagen): GREEN — re-apply confirmed; tests pass against the in-place fix
+
+Closes 05-UAT.md Gap "mlpstorage training unet3d datagen completes the CAP-01 capacity check". HARDEN-01 verification owned by 05.1-UAT.md Test 1.
