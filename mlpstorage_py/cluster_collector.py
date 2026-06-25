@@ -3547,7 +3547,7 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
 
     # Strip a single leading [host:rank] tag from --tag-output if present.
     _payload_raw = _m.group("payload").strip()
-    _payload = re.sub(r"^\[[^\]]+\]\s*", "", _payload_raw)
+    _payload = re.sub(r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*", "", _payload_raw)
 
     try:
         probe_output = json.loads(_payload)

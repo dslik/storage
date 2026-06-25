@@ -135,7 +135,7 @@ class TestSharedFsProbeRealMpi:
             result.stdout, re.DOTALL,
         )
         assert m is not None, f"no marker payload extractable: {result.stdout!r}"
-        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        payload = re.sub(r'^\[[^\]]+\](?:<[a-z]+>:?)?\s*', '', m.group(1).strip())
         parsed = json.loads(payload)
         assert parsed.get('status') == 'ok', f"expected status='ok', got {parsed!r}"
 
@@ -203,7 +203,7 @@ class TestSharedFsProbeRealMpi:
             result.stdout, re.DOTALL,
         )
         assert m is not None, f"no marker payload extractable: {result.stdout!r}"
-        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        payload = re.sub(r'^\[[^\]]+\](?:<[a-z]+>:?)?\s*', '', m.group(1).strip())
         parsed = json.loads(payload)
         assert parsed.get('status') == 'ok'
 
@@ -277,7 +277,7 @@ class TestSharedFsProbeRealMpi:
         assert m is not None, (
             f"regex failed to extract payload between markers: {result.stdout!r}"
         )
-        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        payload = re.sub(r'^\[[^\]]+\](?:<[a-z]+>:?)?\s*', '', m.group(1).strip())
         parsed = json.loads(payload)
         assert parsed.get('status') == 'ok', (
             f"expected status='ok' in rank-0 payload, got {parsed!r}"
@@ -320,7 +320,7 @@ class TestSharedFsProbeRealMpi:
             result.stdout, re.DOTALL,
         )
         assert m is not None, f"no marker payload extractable: {result.stdout!r}"
-        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        payload = re.sub(r'^\[[^\]]+\](?:<[a-z]+>:?)?\s*', '', m.group(1).strip())
         parsed = json.loads(payload)
         # Success → UUID was consumed identically by both ranks.
         assert parsed.get('status') == 'ok'
