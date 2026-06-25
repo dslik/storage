@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Chassis Model + Networking Coverage** — Extend the auto-filled YAML with DMI chassis `model_name` and a `networking[]` block sourced from sysfs.
 - [x] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
 - [ ] **Phase 5: Logical Diff Lifecycle + Capacity Gate** — On re-runs, diff the in-memory image against the on-disk YAML for collector-owned fields and fail on drift; preserve user-filled blanks when unchanged; refuse to start `datagen` if the dataset destination directory lacks free space.
-- [x] **Phase 5.1: Phase 5 Hardening & UAT Closeout** *(INSERTED)* — Fix two regressions blocking Phase 5 sign-off: the CAP-01 `cluster_information` E201 crash on the `datagen` path, and the CAP-02 shared-FS probe's launch-host-local `output_file` defect that misleads when rank 0 lands on a remote host (REVIEW-CR-02). (completed 2026-06-25)
+- [ ] **Phase 5.1: Phase 5 Hardening & UAT Closeout** *(INSERTED, RE-OPENED 2026-06-24)* — Originally shipped 2026-06-25 with HARDEN-01 + HARDEN-02 (Plans 05.1-01 + 05.1-02); Phase 5.1 UAT (2026-06-24) surfaced two additional regressions inside the HARDEN-01/HARDEN-02 fix trains. (a) HARDEN-03: `capture_or_verify_code_image` at `code_image.py:552` reads MLPSTORAGE_ORGNAME from env only and never consults `args.orgname` (which the LAY-03 gate populates from the sentinel) — so `mlpstorage init` + `closed training datagen` still fails E101, blocking HARDEN-01 from being exercised end-to-end. (b) HARDEN-04: the tag-strip regex shipped in HARDEN-02 GREEN (086b2a9) assumed OpenMPI emits `[host:rank] ` prefixes; the actual OpenMPI 4.x format is `[rank,jobid]<channel>:` (verified on 4.1.6); the broken regex leaves `<stdout>:` glued to the JSON; `json.loads` raises JSONDecodeError. Both regressions are blockers. Plans 05.1-03 (HARDEN-03) + 05.1-04 (HARDEN-04) close them via the RED-first discipline per `feedback_tdd_red_first_even_for_shipped_fixes`.
 
 ## Phase Details
 
@@ -197,6 +197,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 ### Phase 5.1: Phase 5 Hardening & UAT Closeout (INSERTED)
 
 **Goal:** Phase 5's UAT (deferred 2026-06-24) surfaced two regressions that block phase sign-off. (a) The CAP-01 capacity gate crashes during `datagen` with E201 `'TrainingBenchmark' object has no attribute 'cluster_information'` because `TrainingBenchmark.__init__` collects host info only when `args.command != "datagen"`, but `_pre_execution_gate` is now wired into `datasize()` for datagen and reads `self.cluster_information` in `required_bytes_for_capacity_gate`. (b) The CAP-02 shared-FS probe writes its result to a launch-host-local `output_file`, but rank 0 of the mpirun job may land on a remote host (typical submitter-laptop deployment where the launch host is outside `--hosts`), causing the launcher to read a non-existent local path and raise a misleading `"mpi4py not installed on all hosts"` error even when the probe semantically succeeded (REVIEW-CR-02). After this phase, both regressions are fixed across all affected benchmark subclasses, and UAT Test 4 (multi-host CAP-02 reproduction on a submitter laptop) can be re-run on real hardware to validate CR-02 closure.
+
+**Re-opened 2026-06-24** after Phase 5.1's own UAT (Tests 1 + 2) surfaced two secondary regressions:
+  - **HARDEN-03**: `capture_or_verify_code_image` at `code_image.py:552` reads MLPSTORAGE_ORGNAME from env only and never consults `args.orgname` (which the LAY-03 gate populates from the sentinel). So `mlpstorage init` writes the sentinel, but the very next `mlpstorage closed training ... datagen` still raises E101 — HARDEN-01's CAP-01 path could never be exercised end-to-end via the CLI.
+  - **HARDEN-04**: the tag-strip regex shipped in HARDEN-02 GREEN (commit `086b2a9`) assumed OpenMPI emits `[host:rank] ` (space-separated) prefixes. The actual OpenMPI 4.x format (verified on 4.1.6) is `[rank,jobid]<channel>:` (channel = `<stdout>`/`<stderr>`/`<stddiag>`). The broken regex strips `[1,0]` but leaves `<stdout>:` glued to the JSON; `json.loads('<stdout>:{...}')` raises JSONDecodeError. All four integration tests in `test_shared_fs_probe_real_mpi.py` fail on dev box with OpenMPI 4.x; a real multi-host production CAP-02 would also fail.
 **Mode:** mvp
 **Depends on:** Phase 5
 **Requirements:** HARDEN-01, HARDEN-02
@@ -208,12 +212,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. UAT Test 4 (submitter-laptop deployment for CAP-02, REVIEW-CR-02 reproduction) re-runs against the fixed launcher and either passes silently on the happy path or fails with an accurate diagnostic that names the real cause — the misleading mpi4py message is gone from the CR-02 code path.
   5. `05-UAT.md` is updated: the failed gap (E201) is marked resolved with the fixing commit, and Test 4 transitions from `pending` to `passed` (or to an explicit hardware-blocked status with rationale — not left dangling as `pending`).
   6. No regression in Phase 5 success criteria #1-#8 — the existing diff-lifecycle and capacity-gate behaviors continue to hold after the fixes.
+  7. **(HARDEN-03 closure):** After `mlpstorage init <org> <results-dir>`, the subsequent `mlpstorage closed|open ...` command against the same `-rd` does NOT require `MLPSTORAGE_ORGNAME` exported — `capture_or_verify_code_image` consults `args.orgname` (populated by LAY-03 gate from the sentinel) BEFORE falling back to env. SYSTEMNAME read symmetric. The full-CLI integration test in `tests/integration/test_canonical_layout_end_to_end.py` proves the wiring end-to-end.
+  8. **(HARDEN-04 closure):** Under real OpenMPI 4.x `mpirun --tag-output --host 127.0.0.1:1,127.0.0.1:1 -n 2`, the launcher's tag-strip regex correctly consumes BOTH the `[rank,jobid]` bracketed identifier AND the optional `<channel>:` marker (`<stdout>:`, `<stderr>:`, `<stddiag>:`). All four integration tests in `tests/integration/test_shared_fs_probe_real_mpi.py` pass GREEN on dev box; the production launcher and all four test sites consume a shared `_strip_tag_output_prefix` helper as single source of truth.
 
-**Plans:** 2/2 plans complete
-Plans:
+**Plans:** 2/4 plans complete (HARDEN-03 + HARDEN-04 added 2026-06-24 as gap closure after Phase 5.1's own UAT)
 **Wave 1**
 
 - [x] 05.1-01-PLAN.md — HARDEN-01: lock E201 (cluster_information AttributeError) regression via RED/GREEN pair; mutate 05-UAT.md Resolutions + create 05.1-UAT.md Test 1
+- [ ] 05.1-03-PLAN.md — HARDEN-03: `capture_or_verify_code_image` at code_image.py:552 consults args.orgname before env fallback (closes UAT Test 1 / E101 init↔validator gap); symmetric SYSTEMNAME fix; RED-first via full-CLI integration test in tests/integration/test_canonical_layout_end_to_end.py + unit-level args-first precedence tests in mlpstorage_py/tests/test_capture_or_verify_code_image.py
+- [ ] 05.1-04-PLAN.md — HARDEN-04: fix tag-strip regex for OpenMPI 4.x `[rank,jobid]<channel>:` prefix (closes UAT Test 2 / REVIEW-CR-02 regression introduced in 086b2a9); RED-first via OpenMPI 4.x byte-string fixture in tests/unit/test_cluster_collector.py + the 4 already-failing integration tests at tests/integration/test_shared_fs_probe_real_mpi.py; REFACTOR extracts `_strip_tag_output_prefix` helper as single source of truth
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -231,4 +238,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
 | 5. Logical Diff Lifecycle + Capacity Gate | 5/5 | Plans complete; awaiting verify | - |
-| 5.1. Phase 5 Hardening & UAT Closeout | 2/2 | Complete   | 2026-06-25 |
+| 5.1. Phase 5 Hardening & UAT Closeout | 2/4 | Gap-closure (HARDEN-03 + HARDEN-04) plans ready; awaiting execute | - |
