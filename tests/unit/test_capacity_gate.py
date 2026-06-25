@@ -347,7 +347,9 @@ class TestTrainingBenchmarkRequiredBytes:
         assert order == ["gate", "calc"]
 
     def test_required_bytes_lazy_collects_cluster_information_when_missing(self):
-        """Phase 5.1 / Gap fix: datagen path doesn't pre-collect cluster info
+        """HARDEN-01 regression guard: locks the 754763a + 29f1062 fix in place (Phase 5.1).
+
+        Phase 5.1 / Gap fix: datagen path doesn't pre-collect cluster info
         (Benchmark._collect_cluster_start short-circuits for
         args.command in ('datagen','configview')), yet
         Benchmark.run() still fires _pre_execution_gate after that
