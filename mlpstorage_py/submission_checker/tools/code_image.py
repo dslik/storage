@@ -242,11 +242,23 @@ def capture_code_image(source_root: Path, target_dir: Path, log) -> CodeImage:
     # tmp tree and only logs a warning. Wrap hash + JSON-write + rename in
     # try/except BaseException so KeyboardInterrupt / SystemExit also clean up.
     try:
-        # Behavior 3/4: Hash the captured copy
-        digest = compute_code_tree_md5(str(code_tmp), log)
+        # Hash source_root directly, not the just-made copy in code_tmp/. (#505)
+        #
+        # verify_source_against_image at runtime calls
+        # compute_code_tree_md5(source_root) and compares to this stored digest.
+        # If we hash code_tmp here, the comparison only succeeds when
+        # shutil.copytree's `ignore` callback walks the tree byte-for-byte
+        # identically to compute_code_tree_md5's filtered os.walk — any
+        # divergence (and real trees DO diverge: differing handling of
+        # `.egg-info`, symlinks, deep prefix matches, etc.) silently breaks
+        # CLOSED-run verification on the very first re-invocation. Hashing
+        # source_root on both sides eliminates the walker-parity dependency by
+        # construction; the code_tmp/ → code/ copy remains for archival
+        # forensics.
+        digest = compute_code_tree_md5(str(source_root), log)
         if digest is None:
-            # This shouldn't happen if _atomic_capture succeeded, but for safety:
-            raise SourceRootNotFound(f"Failed to hash captured tree at {code_tmp}")
+            # source_root vanished between _atomic_capture and the hash call.
+            raise SourceRootNotFound(f"Failed to hash source tree at {source_root}")
 
         # Behavior 6: Build payload
         payload = {
