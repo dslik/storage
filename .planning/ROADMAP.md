@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Chassis Model + Networking Coverage** — Extend the auto-filled YAML with DMI chassis `model_name` and a `networking[]` block sourced from sysfs.
 - [x] **Phase 4: Sysctl, Environment, and Drives Coverage** — Extend the auto-filled YAML with curated sysctl snapshot, redacted environment variables, and `lsblk`-sourced drive entries.
 - [ ] **Phase 5: Logical Diff Lifecycle + Capacity Gate** — On re-runs, diff the in-memory image against the on-disk YAML for collector-owned fields and fail on drift; preserve user-filled blanks when unchanged; refuse to start `datagen` if the dataset destination directory lacks free space.
-- [ ] **Phase 5.1: Phase 5 Hardening & UAT Closeout** *(INSERTED)* — Fix two regressions blocking Phase 5 sign-off: the CAP-01 `cluster_information` E201 crash on the `datagen` path, and the CAP-02 shared-FS probe's launch-host-local `output_file` defect that misleads when rank 0 lands on a remote host (REVIEW-CR-02).
+- [x] **Phase 5.1: Phase 5 Hardening & UAT Closeout** *(INSERTED)* — Fix two regressions blocking Phase 5 sign-off: the CAP-01 `cluster_information` E201 crash on the `datagen` path, and the CAP-02 shared-FS probe's launch-host-local `output_file` defect that misleads when rank 0 lands on a remote host (REVIEW-CR-02). (completed 2026-06-25)
 
 ## Phase Details
 
@@ -209,7 +209,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. `05-UAT.md` is updated: the failed gap (E201) is marked resolved with the fixing commit, and Test 4 transitions from `pending` to `passed` (or to an explicit hardware-blocked status with rationale — not left dangling as `pending`).
   6. No regression in Phase 5 success criteria #1-#8 — the existing diff-lifecycle and capacity-gate behaviors continue to hold after the fixes.
 
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 **Wave 1**
 
@@ -217,7 +217,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05.1-02-PLAN.md — HARDEN-02: replace CAP-02 launcher file transport with stdout markers + --tag-output; delete file-based code; add silence test + localhost real-mpirun integration test; add 05.1-UAT.md Test 2
+- [x] 05.1-02-PLAN.md — HARDEN-02: replace CAP-02 launcher file transport with stdout markers + --tag-output; delete file-based code; add silence test + localhost real-mpirun integration test; add 05.1-UAT.md Test 2
 
 ## Progress
 
@@ -231,4 +231,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Chassis Model + Networking Coverage | 5/5 | Plans complete; awaiting verify | - |
 | 4. Sysctl, Environment, and Drives Coverage | 5/5 | Complete | 2026-06-23 |
 | 5. Logical Diff Lifecycle + Capacity Gate | 5/5 | Plans complete; awaiting verify | - |
-| 5.1. Phase 5 Hardening & UAT Closeout | 1/2 | In Progress|  |
+| 5.1. Phase 5 Hardening & UAT Closeout | 2/2 | Complete   | 2026-06-25 |
