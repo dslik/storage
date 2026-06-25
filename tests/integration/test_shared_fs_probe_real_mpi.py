@@ -101,17 +101,25 @@ class TestSharedFsProbeRealMpi:
         """B-3 Option A primary lock: two ranks on a single shared local
         directory see the same (st_dev, st_ino) → cardinality 1 → status='ok'
         → exit 0. Sentinel file is unlinked in the finally block (D-44).
+
+        HARDEN-02 (Plan 05.1-02): argv signature is now 2-positional
+        (data_dir, run_uuid). Rank 0 emits the JSON result via
+        __CAP02_RESULT_BEGIN__/__CAP02_RESULT_END__ markers on stdout
+        (D-54/D-55), not via a file. --tag-output is passed for per-line
+        PRRTE atomicity.
         """
+        import re
+
         script_path = _write_probe_script(tmp_path)
-        output_json = tmp_path / 'probe_output.json'
         run_uuid = 'test-uuid-cardone'
 
         # subprocess.run mpirun with -n 2 ranks on localhost.
+        # HARDEN-02: --tag-output + 2 positionals (no output_file).
         result = subprocess.run(
-            ['mpirun', '-n', '2', '--allow-run-as-root',
+            ['mpirun', '-n', '2', '--allow-run-as-root', '--tag-output',
              sys.executable, str(script_path),
-             str(tmp_path), run_uuid, str(output_json)],
-            capture_output=True, timeout=120,
+             str(tmp_path), run_uuid],
+            capture_output=True, text=True, timeout=120,
         )
         # The probe body returns 0 on status='ok'.
         assert result.returncode == 0, (
@@ -119,9 +127,16 @@ class TestSharedFsProbeRealMpi:
             f"stderr={result.stderr!r}"
         )
 
-        # Rank 0 writes the JSON output.
-        assert output_json.exists(), "expected JSON output file at " + str(output_json)
-        parsed = json.loads(output_json.read_text())
+        # Rank 0 emits markers on stdout (HARDEN-02 D-54/D-55).
+        assert '__CAP02_RESULT_BEGIN__' in result.stdout
+        assert '__CAP02_RESULT_END__' in result.stdout
+        m = re.search(
+            r'__CAP02_RESULT_BEGIN__\s*\n(.*?)\n.*?__CAP02_RESULT_END__',
+            result.stdout, re.DOTALL,
+        )
+        assert m is not None, f"no marker payload extractable: {result.stdout!r}"
+        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        parsed = json.loads(payload)
         assert parsed.get('status') == 'ok', f"expected status='ok', got {parsed!r}"
 
         # All ranks reported the same (st_dev, st_ino) — cardinality 1.
@@ -147,17 +162,21 @@ class TestSharedFsProbeRealMpi:
         Proves the quiesce is OBSERVABLE at runtime, not just textually present
         in the heredoc body (the W-1 grep test at the unit layer locks the
         latter; this locks the former).
+
+        HARDEN-02 (Plan 05.1-02): argv signature is 2-positional; status
+        parsed from stdout markers, not from output_json file.
         """
+        import re
+
         script_path = _write_probe_script(tmp_path)
-        output_json = tmp_path / 'probe_output.json'
         run_uuid = 'test-uuid-d49quiesce'
 
         wall_start = time.monotonic()
         result = subprocess.run(
-            ['mpirun', '-n', '2', '--allow-run-as-root',
+            ['mpirun', '-n', '2', '--allow-run-as-root', '--tag-output',
              sys.executable, str(script_path),
-             str(tmp_path), run_uuid, str(output_json)],
-            capture_output=True, timeout=60,
+             str(tmp_path), run_uuid],
+            capture_output=True, text=True, timeout=60,
         )
         wall_seconds = time.monotonic() - wall_start
 
@@ -175,11 +194,17 @@ class TestSharedFsProbeRealMpi:
             f"(expected < 30s)"
         )
 
-        # Sanity: status='ok' on the local tmp_path.
+        # Sanity: status='ok' parsed from stdout markers.
         assert result.returncode == 0, (
             f"unexpected non-zero exit: stderr={result.stderr!r}"
         )
-        parsed = json.loads(output_json.read_text())
+        m = re.search(
+            r'__CAP02_RESULT_BEGIN__\s*\n(.*?)\n.*?__CAP02_RESULT_END__',
+            result.stdout, re.DOTALL,
+        )
+        assert m is not None, f"no marker payload extractable: {result.stdout!r}"
+        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        parsed = json.loads(payload)
         assert parsed.get('status') == 'ok'
 
     def test_cr02_rank0_result_arrives_via_stdout_markers_not_file(self, tmp_path):
@@ -266,28 +291,37 @@ class TestSharedFsProbeRealMpi:
         string and assert it appears in the parsed output's sentinel path.
 
         Since the heredoc does not echo the sentinel path in the JSON output
-        directly, we use the failure_summary text on a forced-failure case OR
-        rely on observable side-effects. Here we use the simpler lock: the
-        run_uuid we pass IS the one consumed by the script — verified by
-        the success outcome (a mismatched UUID would prevent rank 0 from
-        creating the sentinel that rank 1 then stats, producing per-rank
-        failure with mode='sentinel_stat'; but since both ranks share the
-        same argv, they share the same UUID and succeed).
+        directly, we use the simpler lock: the run_uuid we pass IS the one
+        consumed by the script — verified by the success outcome (a
+        mismatched UUID would prevent rank 0 from creating the sentinel
+        that rank 1 then stats, producing per-rank failure with
+        mode='sentinel_stat'; but since both ranks share the same argv,
+        they share the same UUID and succeed).
+
+        HARDEN-02 (Plan 05.1-02): argv signature is 2-positional; status
+        parsed from stdout markers, not from output_json file.
         """
+        import re
+
         script_path = _write_probe_script(tmp_path)
-        output_json = tmp_path / 'probe_output.json'
         distinctive_uuid = 'unique-uuid-deadbeef-abc123'
 
         result = subprocess.run(
-            ['mpirun', '-n', '2', '--allow-run-as-root',
+            ['mpirun', '-n', '2', '--allow-run-as-root', '--tag-output',
              sys.executable, str(script_path),
-             str(tmp_path), distinctive_uuid, str(output_json)],
-            capture_output=True, timeout=120,
+             str(tmp_path), distinctive_uuid],
+            capture_output=True, text=True, timeout=120,
         )
         assert result.returncode == 0, (
             f"UUID flow-through test failed: stderr={result.stderr!r}"
         )
-        parsed = json.loads(output_json.read_text())
+        m = re.search(
+            r'__CAP02_RESULT_BEGIN__\s*\n(.*?)\n.*?__CAP02_RESULT_END__',
+            result.stdout, re.DOTALL,
+        )
+        assert m is not None, f"no marker payload extractable: {result.stdout!r}"
+        payload = re.sub(r'^\[[^\]]+\]\s*', '', m.group(1).strip())
+        parsed = json.loads(payload)
         # Success → UUID was consumed identically by both ranks.
         assert parsed.get('status') == 'ok'
 

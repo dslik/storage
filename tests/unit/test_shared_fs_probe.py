@@ -117,24 +117,32 @@ class TestSingleHostShortCircuit:
 
 
 # =============================================================================
-# Helper: stage a mocked mpirun that writes a JSON output file
+# Helper: stage a mocked mpirun that emits a JSON payload via stdout markers
 # =============================================================================
 
 
 def _mock_subprocess_writes(output_payload, returncode=0):
-    """Build a side_effect for subprocess.run that writes ``output_payload`` to
-    the output_file argv position discovered in the cmd string passed in."""
+    """Build a side_effect for subprocess.run that emits ``output_payload``
+    between __CAP02_RESULT_BEGIN__/__CAP02_RESULT_END__ markers on stdout.
+
+    HARDEN-02 (Plan 05.1-02 / D-54/D-55): the launcher now parses rank-0
+    JSON from result.stdout via the marker regex. The mocked subprocess
+    therefore sets result.stdout to the marker-framed payload (mirroring
+    what a real mpirun --tag-output would forward from rank 0). The
+    leading [host:rank] tag prefix is omitted here — the launcher's
+    re.sub(r'^\\[[^\\]]+\\]\\s*', ...) tolerates either presence.
+    """
     def _side_effect(cmd_str, **kwargs):
-        # The launcher passes the cmd as a single shell string; the last
-        # whitespace-separated token is the output_file path.
-        tokens = cmd_str.split()
-        output_file = tokens[-1]
-        with open(output_file, "w") as f:
-            json.dump(output_payload, f)
+        payload_json = json.dumps(output_payload, separators=(",", ":"))
+        stdout_str = (
+            "__CAP02_RESULT_BEGIN__\n"
+            + payload_json
+            + "\n__CAP02_RESULT_END__\n"
+        )
         result = MagicMock()
         result.returncode = returncode
         result.stderr = ""
-        result.stdout = ""
+        result.stdout = stdout_str
         return result
     return _side_effect
 
@@ -686,14 +694,16 @@ class TestSentinelNamingD43:
 
         def _capture(cmd_str, **kwargs):
             captured_cmds.append(cmd_str)
-            # Write a successful payload so the test path completes.
-            tokens = cmd_str.split()
-            output_file = tokens[-1]
-            with open(output_file, "w") as f:
-                json.dump(_OK_PAYLOAD_TWO_HOSTS, f)
+            # HARDEN-02 D-54/D-55: emit successful payload via stdout markers.
+            payload_json = json.dumps(_OK_PAYLOAD_TWO_HOSTS, separators=(",", ":"))
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
+            result.stdout = (
+                "__CAP02_RESULT_BEGIN__\n"
+                + payload_json
+                + "\n__CAP02_RESULT_END__\n"
+            )
             return result
 
         # Patch the stdlib uuid module's uuid4 to detect any UUID generation

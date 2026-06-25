@@ -2549,17 +2549,23 @@ if __name__ == '__main__':
 #   - Pitfall 8: mpi4py ImportError → write error-marker JSON + sys.exit(1)
 #     (mirrors MPI_COLLECTOR_SCRIPT).
 #
-# argv contract:
+# argv contract (HARDEN-02 / D-54: 2 positionals; stdout-marker transport):
 #   argv[1] = data_dir     (the destination to probe — typically args.data_dir
 #                           or the resolved per-benchmark _capacity_gate_destination)
 #   argv[2] = run_uuid     (the uuid.uuid4().hex suffix for the sentinel filename;
 #                           supplied by the caller — the launcher MUST pass this
 #                           through unchanged; the script MUST NOT generate its own)
-#   argv[3] = output_file  (where rank 0 writes the JSON result; the launcher
-#                           reads this back to construct the user-facing
-#                           FileSystemError message)
 #
-# JSON output schema (written by rank 0 only):
+# Result transport (HARDEN-02 / D-54 / D-55 stdout markers):
+#   rank 0 emits three lines to stdout (flushed):
+#     __CAP02_RESULT_BEGIN__
+#     <single-line compact JSON payload>
+#     __CAP02_RESULT_END__
+#   Non-rank-0 ranks emit NOTHING to stdout (enforced by
+#   tests/unit/test_cluster_collector.py::TestSharedFsProbeNonRank0Silence).
+#   The launcher parses subprocess.run(...).stdout via the marker regex.
+#
+# JSON output schema (rank 0 only, between BEGIN/END markers):
 #   {
 #     "status": "ok" | "fail",
 #     "ranks": [
@@ -2658,36 +2664,46 @@ def _build_per_rank_message(payloads):
 
 
 def main():
-    """Probe entry point. argv[1]=data_dir, argv[2]=run_uuid, argv[3]=output_file."""
-    if len(sys.argv) < 4:
-        # Pre-MPI error — write the error marker and bail.
+    """Probe entry point. argv[1]=data_dir, argv[2]=run_uuid (HARDEN-02 D-54: 2 positionals)."""
+    if len(sys.argv) < 3:
+        # Pre-MPI error — emit error marker via stdout (rank-0 only convention
+        # does not apply here: this fires BEFORE the mpi4py import succeeds,
+        # so we cannot determine rank. Emitting on all ranks is acceptable
+        # because every rank fails the same way and the launcher's regex
+        # picks up the FIRST marker pair via non-greedy .*?).
+        # CAP-02 stdout transport (D-54/D-55).
         try:
-            with open(sys.argv[3] if len(sys.argv) > 3 else "/tmp/cap02_err.json", "w") as f:
-                json.dump({
-                    "_argv_error": True,
-                    "_error_message": "expected 3 argv positions: data_dir run_uuid output_file",
-                    "_hostname": socket.gethostname(),
-                }, f)
+            print("__CAP02_RESULT_BEGIN__", flush=True)
+            print(json.dumps({
+                "_argv_error": True,
+                "_error_message": "expected 2 argv positions: data_dir run_uuid",
+                "_hostname": socket.gethostname(),
+            }, separators=(",", ":")), flush=True)
+            print("__CAP02_RESULT_END__", flush=True)
         except Exception:
             pass
         sys.exit(1)
 
     data_dir = sys.argv[1]
     run_uuid = sys.argv[2]
-    output_file = sys.argv[3]
 
     # mpi4py import (deferred per Pitfall 8 / MPI_COLLECTOR_SCRIPT analog).
     try:
         from mpi4py import MPI
     except ImportError as e:
+        # CAP-02 stdout transport (D-54/D-55): emitted on every rank that
+        # cannot import mpi4py. Acceptable because the launcher's regex picks
+        # up the FIRST marker pair (non-greedy .*?), and all ranks failing
+        # mpi4py-import yield identical error_output dicts.
         error_output = {
             "_mpi_import_error": True,
             "_error_message": "mpi4py not available: {0}".format(e),
             "_hostname": socket.gethostname(),
         }
         try:
-            with open(output_file, "w") as f:
-                json.dump(error_output, f, indent=2)
+            print("__CAP02_RESULT_BEGIN__", flush=True)
+            print(json.dumps(error_output, separators=(",", ":")), flush=True)
+            print("__CAP02_RESULT_END__", flush=True)
         except Exception:
             pass
         sys.exit(1)
@@ -2807,20 +2823,25 @@ def main():
         # starts simultaneously on every rank.
         comm.Barrier()
 
-    # ---- Step J: rank 0 writes the JSON result; all ranks exit per status.
+    # ---- Step J: rank 0 emits the JSON result via stdout markers; all ranks exit per status.
+    # CAP-02 stdout transport (D-54/D-55): rank-0 only; non-rank-0 ranks MUST NOT
+    # print to stdout — enforced by TestSharedFsProbeNonRank0Silence.
     if rank == 0:
         try:
-            with open(output_file, "w") as f:
-                json.dump({
-                    "status": status if status is not None else "fail",
-                    "ranks": all_payloads,
-                    "failure_summary": rank0_failure_summary,
-                    "unlink_warning": unlink_warning,
-                }, f, indent=2)
+            _result = {
+                "status": status if status is not None else "fail",
+                "ranks": all_payloads,
+                "failure_summary": rank0_failure_summary,
+                "unlink_warning": unlink_warning,
+            }
+            # Compact single-line JSON to stay under PIPE_BUF and avoid framing ambiguity.
+            print("__CAP02_RESULT_BEGIN__", flush=True)
+            print(json.dumps(_result, separators=(",", ":")), flush=True)
+            print("__CAP02_RESULT_END__", flush=True)
         except Exception as e:
             try:
                 sys.stderr.write(
-                    "WARNING: rank-0 failed to write probe output: {0}\\n".format(e)
+                    "WARNING: rank-0 failed to emit probe output: {0}\\n".format(e)
                 )
             except Exception:
                 pass
@@ -3342,20 +3363,11 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
     # ---- Stage the probe script: local tempfile + (optional) SCP to remotes.
     local_script_path = _write_probe_script_to_tempfile(SHARED_FS_PROBE_SCRIPT)
 
-    # The output file rank 0 writes; lives on the launch host alongside
-    # the staged script so the launcher can read it without an SCP round-trip.
+    # HARDEN-02 D-54/D-57: stdout-marker transport replaces the launch-host-local
+    # result file. Rank 0 prints __CAP02_RESULT_BEGIN__/END framed JSON to
+    # stdout; the launcher parses subprocess.run(...).stdout via the marker
+    # regex below. No launch-host-local result-file tempfile, no cross-host file dependency.
     import tempfile
-    out_fd, output_file = tempfile.mkstemp(
-        prefix="mlps_cap02_probe_out_", suffix=".json"
-    )
-    os.close(out_fd)
-    # Remove the empty tempfile so rank 0's open(output_file, "w") is the
-    # canonical write (json.dump would overwrite, but explicit unlink keeps
-    # the contract clean).
-    try:
-        os.unlink(output_file)
-    except OSError:
-        pass
 
     # Unique hosts (strip slot counts like 'host:4' → 'host').
     unique_hosts = []
@@ -3441,6 +3453,11 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
         "-host", host_slots,
         "--bind-to", "none",
         "--map-by", "node",
+        # HARDEN-02 D-55.1: --tag-output gives PRRTE per-line atomicity and
+        # prefixes each forwarded line with [hostname:rank]. The launcher's
+        # marker regex tolerates the prefix. Must appear BEFORE
+        # --allow-run-as-root per OpenMPI's accepted arg ordering.
+        "--tag-output",
     ]
     if allow_run_as_root:
         cmd_parts.append("--allow-run-as-root")
@@ -3449,7 +3466,8 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
         remote_script_path,
         destination,
         run_uuid,
-        output_file,
+        # HARDEN-02 D-54: result-file positional REMOVED; rank-0 emits result
+        # via stdout markers parsed below.
     ]
     cmd_str = " ".join(cmd_parts)
 
@@ -3486,12 +3504,30 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
             code=ErrorCode.FS_INVALID_STRUCTURE,
         )
 
-    # ---- Parse the rank-0 JSON output.
-    if not os.path.exists(output_file):
+    # ---- Parse the rank-0 JSON output from stdout markers (HARDEN-02 D-54/D-55).
+    # The probe heredoc emits three lines on rank 0:
+    #     __CAP02_RESULT_BEGIN__
+    #     <compact single-line JSON payload>
+    #     __CAP02_RESULT_END__
+    # --tag-output may prefix each line with [hostname:rank]; the non-greedy
+    # regex tolerates the prefix on the marker lines, and the post-extract
+    # re.sub strips a single leading [host:rank] tag from the payload line.
+    _marker_re = re.compile(
+        r"__CAP02_RESULT_BEGIN__\s*\n(?P<payload>.*?)\n.*?__CAP02_RESULT_END__",
+        re.DOTALL,
+    )
+    _m = _marker_re.search(result.stdout or "")
+    if _m is None:
+        # Markers absent → real mpirun failure (mpi4py missing on a remote
+        # host, mpirun crashed, etc.). Surface the ACTUAL cause (returncode +
+        # stderr tail) — the old code raised a misleading "mpi4py not
+        # installed" message even when the probe semantically succeeded.
+        _stderr_tail = (result.stderr or "").strip()
         msg = (
-            "CAP-02: shared-FS probe failed to produce output; check "
-            "mpi4py is installed on all hosts. mpirun returncode={0}, "
-            "stderr={1}".format(result.returncode, result.stderr.strip())
+            "CAP-02: shared-FS probe produced no rank-0 result markers in "
+            "stdout. mpirun returncode={0}, stderr={1}".format(
+                result.returncode, _stderr_tail
+            )
         )
         logger.error(msg)
         raise FileSystemError(
@@ -3501,12 +3537,15 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
             code=ErrorCode.FS_INVALID_STRUCTURE,
         )
 
+    # Strip a single leading [host:rank] tag from --tag-output if present.
+    _payload_raw = _m.group("payload").strip()
+    _payload = re.sub(r"^\[[^\]]+\]\s*", "", _payload_raw)
+
     try:
-        with open(output_file, "r") as f:
-            probe_output = json.load(f)
-    except (OSError, ValueError) as e:
+        probe_output = json.loads(_payload)
+    except ValueError as e:
         msg = (
-            "CAP-02: shared-FS probe output unreadable: {0}".format(e)
+            "CAP-02: shared-FS probe rank-0 payload unreadable: {0}".format(e)
         )
         logger.error(msg)
         raise FileSystemError(
