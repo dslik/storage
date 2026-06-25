@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Phase 5.1 context gathered
-last_updated: "2026-06-25T01:22:25.309Z"
+last_updated: "2026-06-25T14:33:08.047Z"
 last_activity: 2026-06-25 -- Phase 05.1 execution started
 progress:
   total_phases: 6
   completed_phases: 6
-  total_plans: 28
-  completed_plans: 28
+  total_plans: 30
+  completed_plans: 30
   percent: 100
 ---
 
@@ -67,6 +67,7 @@ Progress (Phase 5): [██████████] 100% (5/5 plans complete; P
 | Phase 05 P05 | 18 | 2 tasks | 2 files (1 created + 1 modified) |
 | Phase 05.1 P01 | 5min | 3 tasks | 3 files |
 | Phase 05.1 P02 | 15min | 3 tasks | 5 files |
+| Phase 05.1 P04 | 36min | 4 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -187,6 +188,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 5.1 Plan 01: Adopted PATTERNS.md path (a) — extended existing tests/unit/test_capacity_gate.py::TestTrainingBenchmarkRequiredBytes (HARDEN-01 traceability comment) rather than creating the non-existent tests/unit/test_benchmarks_dlio.py named in CONTEXT D-51.
 - [Phase ?]: Phase 5.1 Plan 01: GREEN commit was --allow-empty per planner resolution; must_haves require dlio.py byte-identical pre/post.
 - [Phase ?]: HARDEN-02: stdout-marker transport replaces file transport (D-54); --tag-output + BEGIN/END markers + parametrized silence test as belt-and-suspenders (D-55); file-based code DELETED in same commit (D-57)
+- [Phase ?]: HARDEN-04: Extracted _strip_tag_output_prefix helper as single source of truth for OpenMPI 4.x tag-strip regex; consumed by production launcher + 4 integration tests + 2 unit tests
 
 ### Pending Todos
 
@@ -212,7 +214,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-25T01:22:21.722Z
+Last session: 2026-06-25T14:33:00.966Z
 Stopped at: Phase 5.1 context gathered
 Resume file: .planning/phases/05.1-phase-5-hardening-uat-closeout/05.1-CONTEXT.md
 Next-session options:
