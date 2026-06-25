@@ -12,7 +12,8 @@ Design decisions (D-01..D-20):
 - D-05: SourceRootNotFound raised at filesystem root.
 - D-07: .code-hash.json schema (hash, algorithm, captured_at, mlpstorage_version, git_sha).
 - D-08: git_sha captured via best-effort 'git rev-parse HEAD'.
-- D-09: algorithm identifier 'md5-tree-v1' is stable.
+- D-09: algorithm identifier 'md5-tree-vN' is stable within a major version
+  and bumped whenever the hash semantics change (currently v2 — see #505).
 - D-10: captured_at in canonical ISO-8601 UTC 'Z' form.
 - D-11: Runtime check hashes live source against captured image.
 - D-12: Submission check hashes captured tree against its own JSON.
@@ -140,7 +141,15 @@ class CodeImage:
 _HASH_FILENAME = ".code-hash.json"
 _TMP_SUFFIX = "code.tmp"
 _CODE_DIRNAME = "code"
-_ALGORITHM = "md5-tree-v1"
+# Bumped to v2 alongside the source-vs-copy hash-target fix in PR #512.
+# A v1 .code-hash.json was computed against the captured code/ copy via a
+# walker that disagreed with the verifier's; the post-#512 codebase computes
+# the digest against source_root directly. Any v1 capture sitting on disk
+# from before #512 merged will fail _read_hash_file's algorithm check and
+# get the actionable "delete code/ and re-run" error instead of the
+# misleading "changes to the codebase are not allowed" content-mismatch
+# error. Bump again whenever the hash semantics change. (#505)
+_ALGORITHM = "md5-tree-v2"
 _GIT_TIMEOUT_SEC = 5
 _HASH_HEX_LEN = 32
 _GIT_SHA_LEN = 40
@@ -242,11 +251,23 @@ def capture_code_image(source_root: Path, target_dir: Path, log) -> CodeImage:
     # tmp tree and only logs a warning. Wrap hash + JSON-write + rename in
     # try/except BaseException so KeyboardInterrupt / SystemExit also clean up.
     try:
-        # Behavior 3/4: Hash the captured copy
-        digest = compute_code_tree_md5(str(code_tmp), log)
+        # Hash source_root directly, not the just-made copy in code_tmp/. (#505)
+        #
+        # verify_source_against_image at runtime calls
+        # compute_code_tree_md5(source_root) and compares to this stored digest.
+        # If we hash code_tmp here, the comparison only succeeds when
+        # shutil.copytree's `ignore` callback walks the tree byte-for-byte
+        # identically to compute_code_tree_md5's filtered os.walk — any
+        # divergence (and real trees DO diverge: differing handling of
+        # `.egg-info`, symlinks, deep prefix matches, etc.) silently breaks
+        # CLOSED-run verification on the very first re-invocation. Hashing
+        # source_root on both sides eliminates the walker-parity dependency by
+        # construction; the code_tmp/ → code/ copy remains for archival
+        # forensics.
+        digest = compute_code_tree_md5(str(source_root), log)
         if digest is None:
-            # This shouldn't happen if _atomic_capture succeeded, but for safety:
-            raise SourceRootNotFound(f"Failed to hash captured tree at {code_tmp}")
+            # source_root vanished between _atomic_capture and the hash call.
+            raise SourceRootNotFound(f"Failed to hash source tree at {source_root}")
 
         # Behavior 6: Build payload
         payload = {
@@ -711,7 +732,7 @@ def capture_or_verify_code_image(args, env, log):
         matched = verify_source_against_image(source_root, code_dir, log)
     except (MissingHashFile, MalformedHashFile) as e:
         log.error(str(e))
-        log.error(f"code image at: {code_dir}")
+        log.error(f"affected code image at: {code_dir}")
         log.error(
             "either delete `code/` and re-run to re-capture, "
             "or restore the original capture."
@@ -728,5 +749,5 @@ def capture_or_verify_code_image(args, env, log):
     else:  # mode == "open"
         msg = "all runs of this type must use the same codebase"
     log.error(msg)
-    log.error(f"code image at: {code_dir}")
+    log.error(f"the running code does not match the captured code image at: {code_dir}")
     raise CodeImageError(msg)

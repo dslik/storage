@@ -263,7 +263,10 @@ class TestRuntimeMismatchCLOSED:
             for e in mock_logger.errors
         ), mock_logger.errors
         code_dir = tmp_path / "closed" / "acme" / "code"
-        assert any(f"code image at: {code_dir}" in e for e in mock_logger.errors), mock_logger.errors
+        assert any(
+            f"the running code does not match the captured code image at: {code_dir}" in e
+            for e in mock_logger.errors
+        ), mock_logger.errors
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +304,10 @@ class TestRuntimeMismatchOPEN:
             tmp_path / "open" / "acme" / "results" / "sys-1"
             / "training" / "unet3d" / "code"
         )
-        assert any(f"code image at: {code_dir}" in e for e in mock_logger.errors), mock_logger.errors
+        assert any(
+            f"the running code does not match the captured code image at: {code_dir}" in e
+            for e in mock_logger.errors
+        ), mock_logger.errors
 
 
 # ---------------------------------------------------------------------------

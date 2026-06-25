@@ -6,6 +6,17 @@ from ..loader import SubmissionLogs
 from ..rule_registry import rule
 from .helpers import _check_filesystem_separation, _check_code_image_layered
 
+# Shared with the in-process verifier (mlpstorage_py.rules.run_checkers.training)
+# so both checkers stay in lockstep about which dotted-keys the mlpstorage
+# tool injects on the user's behalf and therefore must NOT count as user
+# overrides. Drift between the two checkers is what surfaced as bugs 2 and 3
+# in #503 — the run_checkers side was fixed in commit 0b3d370 (PR #496) but
+# this submission_checker side was missed.
+from mlpstorage_py.rules.run_checkers.training import (
+    TrainingRunRulesChecker as _TrainingRunRulesChecker,
+)
+_TOOL_INJECTED_PARAMS = _TrainingRunRulesChecker.TOOL_INJECTED_PARAMS
+
 import os
 import hashlib
 import re
@@ -568,6 +579,12 @@ class TrainingCheck(BaseCheck):
                 params_dict = metadata.get("params_dict", {})
 
                 for param_key in params_dict.keys():
+                    # Tool-injected params (skip_listing, data_folder derived
+                    # from --data-dir, object-storage backend keys, …) are not
+                    # user overrides and must not count against the CLOSED
+                    # allow-list. See _TOOL_INJECTED_PARAMS comment above. (#503)
+                    if param_key in _TOOL_INJECTED_PARAMS:
+                        continue
                     if param_key not in allowed_params:
                         self.log_violation(
                             "3.6.2", "trainingClosedSubmissionParameters", self.path,
@@ -577,7 +594,7 @@ class TrainingCheck(BaseCheck):
                         valid = False
 
         return valid
-    
+
     @rule("3.6.3", "trainingOpenSubmissionParameters")
     def open_submission_parameters(self):
         """
@@ -625,6 +642,12 @@ class TrainingCheck(BaseCheck):
                 params_dict = metadata.get("params_dict", {})
 
                 for param_key in params_dict.keys():
+                    # Tool-injected params (skip_listing, data_folder derived
+                    # from --data-dir, object-storage backend keys, …) are not
+                    # user overrides and must not count against the OPEN
+                    # allow-list. See _TOOL_INJECTED_PARAMS comment above. (#503)
+                    if param_key in _TOOL_INJECTED_PARAMS:
+                        continue
                     if param_key not in allowed_params:
                         self.log_violation(
                             "3.6.3", "trainingOpenSubmissionParameters", self.path,

@@ -83,6 +83,19 @@ def calculate_training_data_size(args, cluster_information, dataset_params, read
 
     # Find the amount of memory in the cluster via args or measurements
     if not args:
+        if cluster_information is None:
+            # Loaded-from-disk runs (reportgen path) may lack the live
+            # ClusterInformation that an in-process run collects. Without
+            # total_memory_bytes the 5×memory rule cannot be enforced — raise
+            # a clear error so the caller (check_num_files_train) can turn it
+            # into a non-fatal "skipped" notice rather than crashing the entire
+            # verification with an AttributeError. (#503)
+            raise ValueError(
+                "calculate_training_data_size requires either args or a "
+                "non-None cluster_information; both were missing (typical when "
+                "loading benchmark runs from on-disk metadata that lacks "
+                "cluster_information)"
+            )
         total_mem_bytes = cluster_information.total_memory_bytes
     elif hasattr(args, 'client_host_memory_in_gb') and args.client_host_memory_in_gb and \
          hasattr(args, 'num_client_hosts') and args.num_client_hosts:
