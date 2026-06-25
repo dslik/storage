@@ -12,7 +12,8 @@ Design decisions (D-01..D-20):
 - D-05: SourceRootNotFound raised at filesystem root.
 - D-07: .code-hash.json schema (hash, algorithm, captured_at, mlpstorage_version, git_sha).
 - D-08: git_sha captured via best-effort 'git rev-parse HEAD'.
-- D-09: algorithm identifier 'md5-tree-v1' is stable.
+- D-09: algorithm identifier 'md5-tree-vN' is stable within a major version
+  and bumped whenever the hash semantics change (currently v2 — see #505).
 - D-10: captured_at in canonical ISO-8601 UTC 'Z' form.
 - D-11: Runtime check hashes live source against captured image.
 - D-12: Submission check hashes captured tree against its own JSON.
@@ -140,7 +141,15 @@ class CodeImage:
 _HASH_FILENAME = ".code-hash.json"
 _TMP_SUFFIX = "code.tmp"
 _CODE_DIRNAME = "code"
-_ALGORITHM = "md5-tree-v1"
+# Bumped to v2 alongside the source-vs-copy hash-target fix in PR #512.
+# A v1 .code-hash.json was computed against the captured code/ copy via a
+# walker that disagreed with the verifier's; the post-#512 codebase computes
+# the digest against source_root directly. Any v1 capture sitting on disk
+# from before #512 merged will fail _read_hash_file's algorithm check and
+# get the actionable "delete code/ and re-run" error instead of the
+# misleading "changes to the codebase are not allowed" content-mismatch
+# error. Bump again whenever the hash semantics change. (#505)
+_ALGORITHM = "md5-tree-v2"
 _GIT_TIMEOUT_SEC = 5
 _HASH_HEX_LEN = 32
 _GIT_SHA_LEN = 40
