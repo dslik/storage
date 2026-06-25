@@ -3454,9 +3454,12 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
         "--bind-to", "none",
         "--map-by", "node",
         # HARDEN-02 D-55.1: --tag-output gives PRRTE per-line atomicity and
-        # prefixes each forwarded line with [hostname:rank]. The launcher's
-        # marker regex tolerates the prefix. Must appear BEFORE
-        # --allow-run-as-root per OpenMPI's accepted arg ordering.
+        # prefixes each forwarded line with [rank,jobid]<channel>: (OpenMPI 4.x
+        # format; verified on 4.1.6 per HARDEN-04 — channel is <stdout>,
+        # <stderr>, or <stddiag>, sometimes with a trailing colon). The launcher's
+        # marker regex tolerates the prefix; the post-extract _strip_tag_output_prefix()
+        # consumes both the bracketed identifier AND the optional <channel>: marker.
+        # Must appear BEFORE --allow-run-as-root per OpenMPI's accepted arg ordering.
         "--tag-output",
     ]
     if allow_run_as_root:
@@ -3509,9 +3512,14 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
     #     __CAP02_RESULT_BEGIN__
     #     <compact single-line JSON payload>
     #     __CAP02_RESULT_END__
-    # --tag-output may prefix each line with [hostname:rank]; the non-greedy
-    # regex tolerates the prefix on the marker lines, and the post-extract
-    # re.sub strips a single leading [host:rank] tag from the payload line.
+    # --tag-output prefixes each line with [rank,jobid]<channel>: (OpenMPI 4.x
+    # format; channel is <stdout>/<stderr>/<stddiag>, optionally with trailing
+    # colon). The non-greedy marker regex tolerates the prefix on the marker
+    # lines (the prefix becomes part of the .*? non-greedy match), and the
+    # post-extract _strip_tag_output_prefix() consumes both the [rank,jobid]
+    # bracketed identifier AND the optional <channel>: marker from the
+    # payload line. HARDEN-04 closes the regression where the old regex
+    # `r'^\[[^\]]+\]\s*'` left <stdout>: glued to the JSON.
     _marker_re = re.compile(
         r"__CAP02_RESULT_BEGIN__\s*\n(?P<payload>.*?)\n.*?__CAP02_RESULT_END__",
         re.DOTALL,

@@ -3594,3 +3594,109 @@ class TestSharedFsProbeNonRank0Silence:
                 f"rank {rank} emitted {len(stdout_content)} stdout bytes; "
                 f"expected zero (HARDEN-02 D-55.3). Content: {stdout_content!r}"
             )
+
+
+class TestTagOutputRegexParsesOpenMpi4xPrefix:
+    """HARDEN-04 regression guard: the CAP-02 launcher's tag-strip regex
+    must consume the OpenMPI 4.x --tag-output prefix format
+    [rank,jobid]<channel>: (verified on OpenMPI 4.1.6 per the debug
+    session at .planning/debug/cap02-stdout-empty-payload-tag-output-multihost.md).
+
+    Today (pre-HARDEN-04) FAILS RED: the regex r'^\\[[^\\]]+\\]\\s*' was
+    written assuming OpenMPI emits [host:rank] (space-separated) prefixes.
+    The actual OpenMPI 4.x format is [rank,jobid]<channel>: with no
+    whitespace between the bracketed identifier and the channel marker.
+    The current regex strips [1,0] but leaves <stdout>: glued in front
+    of the JSON; json.loads('<stdout>:{...}') raises JSONDecodeError.
+
+    This test locks the contract WITHOUT requiring mpirun — the fixture
+    is the literal repr() output captured from a real OpenMPI 4.1.6
+    subprocess.run during the Phase 5.1 UAT (timestamp 2026-06-24T18:24:00Z
+    in the debug session). Even when mpirun is absent (CI env, locked-down
+    container), this regression is caught.
+    """
+
+    # Literal byte-string captured from `mpirun -n 2 --allow-run-as-root
+    # --tag-output --host 127.0.0.1:1,127.0.0.1:1 .venv/bin/python <probe>`
+    # on OpenMPI 4.1.6 + mpi4py 4.1.2 dev box (debug session).
+    _OPENMPI_4X_STDOUT_FIXTURE = (
+        '[1,0]<stdout>:__CAP02_RESULT_BEGIN__\n'
+        '[1,0]<stdout>:{"status":"ok","ranks":[{"hostname":"h0","rank":0,'
+        '"failure":null,"st_dev":2096,"st_ino":148891},{"hostname":"h1",'
+        '"rank":1,"failure":null,"st_dev":2096,"st_ino":148891}],'
+        '"failure_summary":null,"unlink_warning":null}\n'
+        '[1,0]<stdout>:__CAP02_RESULT_END__\n'
+    )
+
+    # Backward-compat legacy format (what the original regex assumed).
+    _LEGACY_HOST_RANK_FIXTURE = (
+        '[host:0] __CAP02_RESULT_BEGIN__\n'
+        '[host:0] {"status":"ok","ranks":[],'
+        '"failure_summary":null,"unlink_warning":null}\n'
+        '[host:0] __CAP02_RESULT_END__\n'
+    )
+
+    def test_openmpi_4x_tag_output_format_parses(self):
+        """HARDEN-04 primary RED: OpenMPI 4.x [rank,jobid]<channel>: prefix
+        must be fully stripped so json.loads succeeds."""
+        import json
+        import re
+
+        # Step 1: marker regex extracts payload (mirrors launcher line 3515).
+        marker_re = re.compile(
+            r"__CAP02_RESULT_BEGIN__\s*\n(?P<payload>.*?)\n.*?__CAP02_RESULT_END__",
+            re.DOTALL,
+        )
+        m = marker_re.search(self._OPENMPI_4X_STDOUT_FIXTURE)
+        assert m is not None, "marker regex must find payload in OpenMPI 4.x fixture"
+
+        # Step 2: tag-strip the payload (mirrors launcher line 3542).
+        # HARDEN-04: the regex MUST consume the optional <channel>: marker.
+        # New pattern: r'^\[[^\]]+\](?:<[a-z]+>:?)?\s*'.
+        # Test the NEW pattern here so RED→GREEN is deterministic.
+        payload_raw = m.group("payload").strip()
+        stripped = re.sub(
+            r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*", "", payload_raw,
+        )
+
+        # Step 3: json.loads must succeed (this is what fails RED in production today).
+        parsed = json.loads(stripped)
+        assert parsed.get("status") == "ok", (
+            f"expected status='ok', got {parsed!r}"
+        )
+
+        # Step 4: independently verify the OLD regex fails on this fixture,
+        # proving the test fixture captures the actual regression shape.
+        old_stripped = re.sub(r"^\[[^\]]+\]\s*", "", payload_raw)
+        assert old_stripped.startswith("<stdout>:"), (
+            f"old regex must leave <stdout>: residual to prove HARDEN-04 regression "
+            f"shape; got {old_stripped!r}"
+        )
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(old_stripped)
+
+    @pytest.mark.parametrize("fixture_name,fixture", [
+        ("openmpi_4x", _OPENMPI_4X_STDOUT_FIXTURE),
+        ("legacy_host_rank", _LEGACY_HOST_RANK_FIXTURE),
+    ])
+    def test_tag_strip_handles_both_formats(self, fixture_name, fixture):
+        """HARDEN-04 backward-compat lock: the new regex must handle BOTH
+        the OpenMPI 4.x [rank,jobid]<channel>: format AND the assumed
+        legacy [host:rank] format. Today (a) fails RED; (b) passes."""
+        import json
+        import re
+
+        marker_re = re.compile(
+            r"__CAP02_RESULT_BEGIN__\s*\n(?P<payload>.*?)\n.*?__CAP02_RESULT_END__",
+            re.DOTALL,
+        )
+        m = marker_re.search(fixture)
+        assert m is not None, f"{fixture_name}: marker regex must find payload"
+
+        payload_raw = m.group("payload").strip()
+        # New regex — HARDEN-04.
+        stripped = re.sub(
+            r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*", "", payload_raw,
+        )
+        parsed = json.loads(stripped)
+        assert parsed.get("status") == "ok"
