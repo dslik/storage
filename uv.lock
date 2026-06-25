@@ -237,7 +237,7 @@ wheels = [
 [[package]]
 name = "dlio-benchmark"
 version = "3.0.2"
-source = { git = "https://github.com/mlcommons/DLIO_local_changes.git?branch=main#3667ed11e7ad36ca2c5def65c6cf2ae0559ec9f6" }
+source = { git = "https://github.com/mlcommons/DLIO_local_changes.git?branch=main#ae1247a6d430f50acc8552856462d75dd88b8b52" }
 dependencies = [
     { name = "dgen-py", marker = "sys_platform == 'linux'" },
     { name = "h5py", marker = "sys_platform == 'linux'" },
@@ -518,7 +518,7 @@ wheels = [
 
 [[package]]
 name = "mlpstorage"
-version = "3.0.19"
+version = "3.0.20"
 source = { editable = "." }
 dependencies = [
     { name = "dlio-benchmark", marker = "sys_platform == 'linux'" },
