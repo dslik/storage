@@ -20,6 +20,7 @@ from mlpstorage_py.cluster_collector import (
     TimeSeriesCollector,
     MultiHostTimeSeriesCollector,
     MPI_COLLECTOR_SCRIPT,
+    _strip_tag_output_prefix,
 )
 from mlpstorage_py.interfaces.collector import CollectionResult
 
@@ -3650,14 +3651,11 @@ class TestTagOutputRegexParsesOpenMpi4xPrefix:
         m = marker_re.search(self._OPENMPI_4X_STDOUT_FIXTURE)
         assert m is not None, "marker regex must find payload in OpenMPI 4.x fixture"
 
-        # Step 2: tag-strip the payload (mirrors launcher line 3542).
-        # HARDEN-04: the regex MUST consume the optional <channel>: marker.
-        # New pattern: r'^\[[^\]]+\](?:<[a-z]+>:?)?\s*'.
-        # Test the NEW pattern here so RED→GREEN is deterministic.
+        # Step 2: tag-strip the payload via the production helper
+        # (HARDEN-04 REFACTOR: tests consume the production single source
+        # of truth, not a duplicated regex pattern).
         payload_raw = m.group("payload").strip()
-        stripped = re.sub(
-            r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*", "", payload_raw,
-        )
+        stripped = _strip_tag_output_prefix(payload_raw)
 
         # Step 3: json.loads must succeed (this is what fails RED in production today).
         parsed = json.loads(stripped)
@@ -3694,9 +3692,7 @@ class TestTagOutputRegexParsesOpenMpi4xPrefix:
         assert m is not None, f"{fixture_name}: marker regex must find payload"
 
         payload_raw = m.group("payload").strip()
-        # New regex — HARDEN-04.
-        stripped = re.sub(
-            r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*", "", payload_raw,
-        )
+        # HARDEN-04 REFACTOR: call production helper, not duplicated regex.
+        stripped = _strip_tag_output_prefix(payload_raw)
         parsed = json.loads(stripped)
         assert parsed.get("status") == "ok"

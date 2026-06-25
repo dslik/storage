@@ -3304,6 +3304,40 @@ def _write_probe_script_to_tempfile(script_str):
     return path
 
 
+# Compiled once at module load; consumed by run_shared_fs_probe AND by the
+# four integration tests at tests/integration/test_shared_fs_probe_real_mpi.py
+# — single source of truth prevents the HARDEN-04 regression from recurring.
+_TAG_OUTPUT_PREFIX_RE = re.compile(r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*")
+
+
+def _strip_tag_output_prefix(line: str) -> str:
+    """Strip the OpenMPI ``--tag-output`` prefix from a single line.
+
+    Consumes both the ``[rank,jobid]`` bracketed identifier AND the
+    optional ``<channel>:`` marker (OpenMPI 4.x emits ``<stdout>:``,
+    ``<stderr>:``, ``<stddiag>:`` glued directly to the bracketed
+    identifier; OpenMPI 5.x sometimes omits the trailing colon).
+
+    HARDEN-04 background: the original regex ``r'^\\[[^\\]]+\\]\\s*'``
+    (from HARDEN-02 GREEN at 086b2a9) assumed the OpenMPI prefix was
+    ``[host:rank] `` (space-separated). That was wrong for OpenMPI 4.x;
+    verified on 4.1.6 per the debug session at
+    ``.planning/debug/cap02-stdout-empty-payload-tag-output-multihost.md``.
+    This helper is the consolidated fix consumed by both the CAP-02
+    launcher and all four integration tests at
+    ``tests/integration/test_shared_fs_probe_real_mpi.py``.
+
+    Args:
+        line: A single stdout line possibly carrying the --tag-output
+            prefix. Whitespace-stripped is recommended before calling.
+
+    Returns:
+        The line with the prefix consumed, or the original line if no
+        prefix was present (backward-compat with non-tagged output).
+    """
+    return _TAG_OUTPUT_PREFIX_RE.sub("", line)
+
+
 def run_shared_fs_probe(destination, hosts, run_uuid, logger,
                         mpi_bin=None, allow_run_as_root=False,
                         timeout_seconds=60, ssh_username=None):
@@ -3547,7 +3581,7 @@ def run_shared_fs_probe(destination, hosts, run_uuid, logger,
 
     # Strip a single leading [host:rank] tag from --tag-output if present.
     _payload_raw = _m.group("payload").strip()
-    _payload = re.sub(r"^\[[^\]]+\](?:<[a-z]+>:?)?\s*", "", _payload_raw)
+    _payload = _strip_tag_output_prefix(_payload_raw)
 
     try:
         probe_output = json.loads(_payload)
