@@ -665,6 +665,12 @@ class BenchmarkInstanceExtractor:
         """Extract BenchmarkRunData from a Benchmark instance."""
         if hasattr(benchmark, 'combined_params'):
             parameters = benchmark.combined_params
+        elif hasattr(benchmark, 'metadata'):
+            # Issue #537: non-DLIO benchmarks (e.g. kvcache, vectordb) lack
+            # combined_params but publish their workload config via the
+            # metadata property. Fall back to metadata['parameters'] so live
+            # run-checkers see the same dict reportgen reads on disk.
+            parameters = benchmark.metadata.get('parameters', {})
         else:
             parameters = {}
 
