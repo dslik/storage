@@ -259,6 +259,35 @@ class TestKVCacheMetadata:
         assert 'generation_mode' in meta
         assert 'performance_profile' in meta
 
+    def test_metadata_parameters_populated_for_run_checker(self, base_args, mock_logger, tmp_path):
+        """Issue #537: KVCacheRunRulesChecker reads workload config from
+        metadata['parameters']. KVCache has no DLIO combined_params so the base
+        class falls back to {}, and reportgen then classifies every run INVALID
+        with 'Missing model parameter'. The kvcache metadata must populate
+        ['parameters'] with the workload config keys the checker consults."""
+        with patch('mlpstorage_py.benchmarks.base.generate_output_location') as mock_gen, \
+             patch('mlpstorage_py.benchmarks.kvcache.KVCacheBenchmark._collect_cluster_information') as mock_cluster:
+            output_dir = str(tmp_path / "output")
+            mock_gen.return_value = output_dir
+            mock_cluster.return_value = None
+
+            from mlpstorage_py.benchmarks.kvcache import KVCacheBenchmark
+            bm = KVCacheBenchmark(base_args, logger=mock_logger, run_datetime="20250124_120000")
+            meta = bm.metadata
+
+        params = meta.get('parameters')
+        assert isinstance(params, dict) and params, \
+            "metadata['parameters'] must be a non-empty dict so reportgen can read workload config"
+
+        # Keys the KVCacheRunRulesChecker reads via self.benchmark_run.parameters.get(...)
+        assert params.get('model') == 'llama3.1-8b'
+        assert params.get('num_users') == 100
+        assert params.get('duration') == 60
+        assert params.get('gpu_mem_gb') == 16.0
+        assert params.get('cpu_mem_gb') == 32.0
+        assert params.get('generation_mode') == 'realistic'
+        assert params.get('performance_profile') == 'latency'
+
     def test_metadata_includes_distributed_info(self, base_args, mock_logger, tmp_path):
         """Verify metadata includes distributed execution info."""
         base_args.exec_type = EXEC_TYPE.MPI

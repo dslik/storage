@@ -133,6 +133,37 @@ class TestBenchmarkInstanceExtractor:
 
         assert result.metrics is None
 
+    def test_extract_falls_back_to_metadata_parameters(self):
+        """Issue #537: KVCacheBenchmark (and any non-DLIO benchmark) lacks
+        combined_params, so the extractor's pre-fix behavior produces an empty
+        parameters dict. The live-verification run-checker then can't see the
+        workload config it was built to validate. When combined_params is
+        absent, fall back to benchmark.metadata['parameters'] so live and
+        on-disk reportgen paths agree."""
+        mock_benchmark = MagicMock(spec=['BENCHMARK_TYPE', 'args', 'run_datetime',
+                                         'params_dict', 'metadata'])
+        mock_benchmark.BENCHMARK_TYPE = BENCHMARK_TYPES.kv_cache
+        mock_benchmark.args.model = 'llama3.1-8b'
+        mock_benchmark.args.command = 'run'
+        mock_benchmark.args.num_processes = 4
+        mock_benchmark.run_datetime = '20260626_120000'
+        mock_benchmark.params_dict = {}
+        mock_benchmark.metadata = {
+            'parameters': {
+                'model': 'llama3.1-8b',
+                'num_users': 100,
+                'duration': 60,
+            },
+        }
+
+        result = BenchmarkInstanceExtractor.extract(mock_benchmark)
+
+        assert result.parameters == {
+            'model': 'llama3.1-8b',
+            'num_users': 100,
+            'duration': 60,
+        }
+
 
 class TestDLIOResultParser:
     """Tests for DLIOResultParser class."""
