@@ -740,6 +740,23 @@ class KVCacheBenchmark(Benchmark):
             'num_processes': self.num_processes,  # Include for distributed runs
         })
 
+        # Issue #537: KVCacheRunRulesChecker and reportgen read workload config
+        # from metadata['parameters']. KVCache has no DLIO combined_params, so
+        # the base class fills parameters with {} and every closed run lands as
+        # INVALID 'Missing model parameter'. Mirror the workload keys into
+        # parameters so both live verification and reportgen see the real run
+        # config instead of the run-checker's hard-coded defaults.
+        base_metadata['parameters'] = {
+            'model': self.model,
+            'num_users': self.num_users,
+            'duration': self.duration,
+            'gpu_mem_gb': self.gpu_mem_gb,
+            'cpu_mem_gb': self.cpu_mem_gb,
+            'cache_dir': self.cache_dir,
+            'generation_mode': self.generation_mode,
+            'performance_profile': self.performance_profile,
+        }
+
         # Add execution info for distributed runs
         exec_type = getattr(self.args, 'exec_type', None)
         if exec_type:
