@@ -41,6 +41,9 @@ class TestKVCacheClusterCollection:
             verbose=False,
             what_if=False,
             stream_log_level='INFO',
+            mode='closed',
+            orgname='Acme',
+            systemname='sys-v1',
             results_dir=str(tmp_path),
             model='llama3.1-8b',
             command='run',
@@ -107,6 +110,9 @@ class TestKVCacheNumProcessesStorage:
             verbose=False,
             what_if=False,
             stream_log_level='INFO',
+            mode='closed',
+            orgname='Acme',
+            systemname='sys-v1',
             results_dir=str(tmp_path),
             model='llama3.1-8b',
             command='run',
@@ -174,6 +180,9 @@ class TestKVCacheMetadata:
             verbose=False,
             what_if=False,
             stream_log_level='INFO',
+            mode='closed',
+            orgname='Acme',
+            systemname='sys-v1',
             results_dir=str(tmp_path),
             model='llama3.1-8b',
             command='run',
@@ -376,6 +385,13 @@ def _make_run_benchmark(tmp_path, what_if=False):
         verbose=False,
         what_if=what_if,
         stream_log_level='INFO',
+        # mode='open' here so the strict CLOSED-mode override checks in
+        # KVCacheBenchmark._execute_run (seed/trials/inter-option-delay)
+        # don't fire — these tests deliberately override those args.
+        # TestClosedEnforcement sets mode='closed' on bm.args explicitly.
+        mode='open',
+        orgname='Acme',
+        systemname='sys-v1',
         results_dir=str(tmp_path),
         command='run',
         npernode=2,
@@ -1672,3 +1688,77 @@ class TestProbeResultsDirShared:
              patch.object(bm, 'write_metadata'):
             bm._execute_run()
         mock_probe.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 02 / Plan 02-05 — non-DLIO regression: assert the shared
+# Benchmark.run() systemname.yaml write hook fires for KVCacheBenchmark.
+# ---------------------------------------------------------------------------
+
+
+class TestKVCacheSystemnameYamlHook:
+    """KVCacheBenchmark inherits Benchmark.run() — the LIFE-01 hook must
+    fire for it just as for DLIO-based benchmarks. If a future refactor
+    overrides run() on the subclass and accidentally drops the hook, these
+    tests catch the regression.
+
+    The shared fixture `_make_run_benchmark` uses `mode='open'` (see its
+    docstring: the strict CLOSED-mode override checks in _execute_run would
+    otherwise fire on tests that deliberately override those args). We
+    therefore assert the file lands at `<tmp>/open/Acme/systems/sys-v1.yaml`.
+    """
+
+    def _install_cluster_info_mock(self, bm):
+        """Mock _collect_cluster_start so it populates self._cluster_info_start
+        with a one-host MagicMock fleet — the production write hook reads
+        host_info_list from this attribute."""
+        from mlpstorage_py.rules.models import HostCPUInfo, HostInfo, HostMemoryInfo
+        from mlpstorage_py.cluster_collector import HostSystemInfo
+
+        host = HostInfo(
+            hostname='h0',
+            cpu=HostCPUInfo(
+                model='Intel(R) Xeon Platinum 8480+',
+                num_cores=56, num_logical_cores=112, num_sockets=2,
+                architecture='x86_64',
+            ),
+            memory=HostMemoryInfo(total=274_877_906_944),
+            system=HostSystemInfo(
+                hostname='h0',
+                os_release={'NAME': 'Rocky Linux', 'VERSION_ID': '9.5'},
+            ),
+        )
+        cluster_info_mock = MagicMock(host_info_list=[host])
+
+        def _side_effect():
+            bm._cluster_info_start = cluster_info_mock
+            bm._collection_method = 'mpi'
+
+        bm._collect_cluster_start = MagicMock(side_effect=_side_effect)
+
+    def _mock_remaining_lifecycle(self, bm):
+        bm._validate_environment = MagicMock()
+        bm._start_timeseries_collection = MagicMock()
+        bm._stop_timeseries_collection = MagicMock()
+        bm._collect_cluster_end = MagicMock()
+        bm.write_timeseries_data = MagicMock()
+        bm._run = MagicMock(return_value=0)
+
+    def test_kvcache_run_writes_systemname_yaml(self, tmp_path):
+        """KVCacheBenchmark.run() must write systemname.yaml at the canonical
+        path (Phase 02 LIFE-01, regression coverage for the shared base hook
+        on non-DLIO benchmarks)."""
+        bm = _make_run_benchmark(tmp_path)
+        # Fixture uses mode='open', orgname='Acme', systemname='sys-v1' —
+        # see _make_run_benchmark docstring.
+        self._install_cluster_info_mock(bm)
+        self._mock_remaining_lifecycle(bm)
+
+        rc = bm.run()
+        assert rc == 0
+
+        target = tmp_path / 'open' / 'Acme' / 'systems' / 'sys-v1.yaml'
+        assert target.exists(), (
+            f"KVCacheBenchmark.run() should have written systemname.yaml at "
+            f"{target}; this is the LIFE-01 non-DLIO regression coverage."
+        )
